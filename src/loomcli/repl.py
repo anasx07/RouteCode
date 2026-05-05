@@ -6,9 +6,10 @@ import concurrent.futures
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.completion import WordCompleter
-from prompt_toolkit.styles import Style
+from prompt_toolkit.styles import Style, DynamicStyle
 from prompt_toolkit.formatted_text import to_formatted_text
 from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
+from prompt_toolkit.output.color_depth import ColorDepth
 from rich.markdown import Markdown
 from rich.live import Live
 
@@ -49,15 +50,15 @@ class _ConsoleProxy:
     """Proxy that always delegates to _ui.console, even after apply_theme reassigns it."""
     def __getattr__(self, name):
         return getattr(_ui.console, name)
+    def __enter__(self):
+        return _ui.console.__enter__()
+    def __exit__(self, *args):
+        return _ui.console.__exit__(*args)
 
 console = _ConsoleProxy()
 
 
-class FullScreenPromptSession(PromptSession):
-    def _create_application(self, editing_mode, erase_when_done):
-        app = super()._create_application(editing_mode, erase_when_done)
-        app.full_screen = True
-        return app
+
 
 
 class LoomREPL:
@@ -75,23 +76,56 @@ class LoomREPL:
             sentence=True
         )
         
-        bg = get_theme_bg()
-        self.style = Style.from_dict({
-            "": f"bg:{bg}",
-            "toolbar": "#ffffff bg:#12121f",
-            "accent": "#ffaf00",
-            "logo_clickable": "bg:#ffaf00 #000000",
-        })
+        self.style = Style.from_dict({"": "bg:#1a1a2e"})  # placeholder, overwritten below
+        self._set_terminal_background()
+        
+        # Force VT100 output so ANSI bg colors work (Win32Output ignores them)
+        import sys as _sys
+        try:
+            from prompt_toolkit.output.vt100 import Vt100_Output
+            from prompt_toolkit.output.defaults import create_output
+            _win32_output = create_output()
+            pt_output = Vt100_Output(_sys.stdout, lambda: _win32_output.get_size())
+            
+            # Monkey-patch erase_end_of_line to FORCE the background color to paint the rest of the line
+            original_erase = pt_output.erase_end_of_line
+            def _erase_with_bg():
+                bg = get_theme_bg()
+                try:
+                    r, g, b = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
+                    pt_output.write_raw(f"\033[48;2;{r};{g};{b}m")
+                except:
+                    pass
+                original_erase()
+            pt_output.erase_end_of_line = _erase_with_bg
+            
+            # Also patch reset_attributes to prevent terminal default bg from leaking in
+            original_reset = pt_output.reset_attributes
+            def _reset_with_bg():
+                original_reset()
+                bg = get_theme_bg()
+                try:
+                    r, g, b = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
+                    pt_output.write_raw(f"\033[48;2;{r};{g};{b}m")
+                except:
+                    pass
+            pt_output.reset_attributes = _reset_with_bg
+        except Exception:
+            pt_output = None
         
         history_file = CONFIG_DIR / "history"
-        self.session = FullScreenPromptSession(
+        session_kwargs = dict(
             history=FileHistory(str(history_file)),
             completer=self.completer,
             complete_while_typing=True,
             bottom_toolbar=self._get_bottom_toolbar,
-            style=self.style,
+            style=DynamicStyle(lambda: self.style),
             mouse_support=True,
+            color_depth=ColorDepth.TRUE_COLOR,
         )
+        if pt_output:
+            session_kwargs["output"] = pt_output
+        self.session = PromptSession(**session_kwargs)
         self.provider = None
         self.messages = []
         self.auto_save_counter = 0
@@ -141,13 +175,31 @@ class LoomREPL:
     def _set_terminal_background(self):
         """Update prompt_toolkit style to match the active theme background."""
         bg = get_theme_bg()
+        # Derive a slightly lighter toolbar background from the theme bg
+        try:
+            r = int(bg[1:3], 16)
+            g = int(bg[3:5], 16)
+            b = int(bg[5:7], 16)
+            # Lighten each channel by ~12 for subtle contrast
+            tr = min(r + 12, 255)
+            tg = min(g + 12, 255)
+            tb = min(b + 12, 255)
+            toolbar_bg = f"#{tr:02x}{tg:02x}{tb:02x}"
+        except (ValueError, IndexError):
+            toolbar_bg = bg
         self.style = Style.from_dict({
-            "": f"bg:{bg}",
-            "toolbar": "#ffffff bg:#12121f",
-            "accent": "#ffaf00",
-            "logo_clickable": "bg:#ffaf00 #000000",
+            "":                      f"bg:{bg}",
+            "prompt":                f"bg:{bg} #ffffff",
+            "bottom-toolbar":        f"bg:{toolbar_bg} #aaaaaa",
+            "bottom-toolbar.text":   f"bg:{toolbar_bg} #aaaaaa",
+            "toolbar":               f"#aaaaaa bg:{toolbar_bg}",
+            "accent":                "#ffaf00",
+            "logo_clickable":        "bg:#ffaf00 #000000",
+            "completion-menu":       f"bg:{toolbar_bg} #ffffff",
+            "completion-menu.completion.current": "bg:#ffaf00 #000000",
+            "scrollbar.background":  f"bg:{toolbar_bg}",
+            "scrollbar.button":      f"bg:{bg}",
         })
-        self.session.style = self.style
 
     def run(self):
         from .ui import apply_theme
@@ -155,7 +207,9 @@ class LoomREPL:
         self._set_terminal_background()
         state.start_time = time.time()
         state.session_messages = []
-        os.system('cls' if os.name == 'nt' else 'clear')
+        import sys
+        sys.stdout.write("\033[2J\033[H")
+        sys.stdout.flush()
         
         print_welcome_screen(getpass.getuser(), config.model, config.provider)
         
@@ -167,8 +221,20 @@ class LoomREPL:
 
         while True:
             try:
+                def pre_run():
+                    import sys
+                    from .ui import get_theme_bg
+                    bg = get_theme_bg()
+                    try:
+                        r, g, b = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
+                        sys.stdout.write(f"\r\033[48;2;{r};{g};{b}m\033[K")
+                        sys.stdout.flush()
+                    except Exception:
+                        pass
+
                 user_input = self.session.prompt(
                     [("class:accent", "┃ "), ("class:prompt", "> ")],
+                    pre_run=pre_run
                 ).strip()
                 
                 if not user_input:

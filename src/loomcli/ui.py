@@ -1,7 +1,7 @@
 import os
 import json
 from typing import Any, List, Dict, Optional
-from rich.console import Console
+from rich.console import Console, Group
 from rich.theme import Theme
 from rich.panel import Panel
 from rich.columns import Columns
@@ -109,7 +109,7 @@ def _set_terminal_bg(hex_color):
     b = int(hex_color[5:7], 16)
     import sys
     # OSC 11 sets the terminal default background (most modern terminals)
-    sys.stdout.write(f"\033]11;rgb:{r:02x}/{g:02x}/{b:02x}\033\\")
+    sys.stdout.write(f"\033]11;#{r:02x}{g:02x}{b:02x}\007")
     # SGR 48;2 sets background for subsequent text
     sys.stdout.write(f"\033[48;2;{r};{g};{b}m")
     sys.stdout.flush()
@@ -126,6 +126,32 @@ def apply_theme(name: str = "lava"):
 
     # Recreate the console so every Rich print inherits the background
     console = Console(theme=loom_theme, style=f"on {bg}")
+
+    # Patch sys.stdout.write to ensure all scrolled/new lines explicitly paint the rest of the line
+    import sys
+    if not hasattr(sys.stdout, "_bg_fill_patched"):
+        _original_write = sys.stdout.write
+        def _bg_fill_write(s):
+            current_bg = get_theme_bg()
+            if current_bg and isinstance(s, str):
+                try:
+                    r, g, b = int(current_bg[1:3], 16), int(current_bg[3:5], 16), int(current_bg[5:7], 16)
+                    bg_seq = f"\033[48;2;{r};{g};{b}m"
+                    
+                    # 1. Force rich's animation clear sequences to use the background color
+                    if "\x1b[2K" in s:
+                        s = s.replace("\x1b[2K", f"{bg_seq}\x1b[2K")
+                    if "\x1b[K" in s:
+                        s = s.replace("\x1b[K", f"{bg_seq}\x1b[K")
+                        
+                    # 2. Force newlines to clear the rest of the line with the background color
+                    if "\n" in s:
+                        s = s.replace("\n", f"{bg_seq}\x1b[K\n")
+                except Exception:
+                    pass
+            _original_write(s)
+        sys.stdout.write = _bg_fill_write
+        sys.stdout._bg_fill_patched = True
 
 
 loom_theme = Theme(THEMES["lava"])
@@ -197,19 +223,25 @@ class LoadingRenderable:
         self.face = LoomFace()
 
     def __rich_console__(self, console, options):
+        bg = get_theme_bg()
+        panel_style = f"on {bg}"
+        
         if self.info:
-            yield Panel(Text(self.info, style="dim"), border_style="dim", padding=(0, 1))
+            yield Panel(Text(self.info, style="dim"), border_style="dim", padding=(0, 1), style=panel_style)
         elif self.markdown and self.markdown.markup:
-            yield self.markdown
+            yield Panel(self.markdown, border_style="dim", style=panel_style)
         elif self.thought:
             yield Panel(
                 Text(f" {self.face}  {self.thought}", style="thought"),
-                border_style="dim", padding=(0, 1)
+                border_style="dim", padding=(0, 1), style=panel_style
             )
         else:
-            yield Text(f" {self.face}\n\n", style="accent")
-            yield self.progress
-
+            # For the main Thinking... indicator
+            content = Group(
+                Text(f" {self.face}\n", style="accent"),
+                self.progress
+            )
+            yield Panel(content, border_style=f"on {bg}", style=panel_style, padding=(0, 1))
 
 def get_thinking_indicator():
     progress = Progress(
@@ -225,7 +257,6 @@ def get_thinking_indicator():
 
 
 def print_welcome_screen(user_name: str, model: str, provider: str):
-    os.system('cls' if os.name == 'nt' else 'clear')
     logo = get_logo()
 
     content = Text()
@@ -262,8 +293,18 @@ def print_welcome_screen(user_name: str, model: str, provider: str):
     footer_text = Text(f"{os.getcwd()}", style="dim")
     layout["footer"].update(Align.left(footer_text, vertical="bottom"))
 
-    h = console.height or 24
-    console.print(layout, height=max(15, h - 4))
+    h = 24
+    try:
+        from prompt_toolkit.output.defaults import create_output
+        h = create_output().get_size().rows
+    except Exception:
+        import shutil
+        h = shutil.get_terminal_size().lines
+    
+    # tip_box takes 8 lines. The prompt and toolbar take 2 lines.
+    # Total printed lines before the prompt should be h - 2.
+    # So layout height should be (h - 2) - 8 = h - 10.
+    console.print(layout, height=max(15, h - 10))
     console.print(tip_box)
 
 

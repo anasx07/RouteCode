@@ -162,7 +162,17 @@ def handle_tools(args: List[str]):
     _ui.console.print(table)
 
 def handle_clear(args: List[str]):
-    os.system('cls' if os.name == 'nt' else 'clear')
+    import sys
+    sys.stdout.write("\033[2J\033[H")
+    h = 24
+    try:
+        from prompt_toolkit.output.defaults import create_output
+        h = create_output().get_size().rows
+    except Exception:
+        import shutil
+        h = shutil.get_terminal_size().lines
+    sys.stdout.write("\n" * (h - 2))
+    sys.stdout.flush()
 
 def handle_history(args: List[str]):
     from .state import state
