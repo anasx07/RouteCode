@@ -594,37 +594,8 @@ class LoomREPL:
         return False
 
     def _get_git_context(self) -> str:
-        try:
-            import subprocess
-            from concurrent.futures import ThreadPoolExecutor
-
-            def run_git(cmd):
-                try:
-                    # Reduced timeout to 3s per command since they run in parallel
-                    return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=3).stdout.strip()
-                except Exception:
-                    return ""
-
-            with ThreadPoolExecutor(max_workers=3) as executor:
-                f_status = executor.submit(run_git, "git status --short")
-                f_log = executor.submit(run_git, "git log --oneline -5")
-                f_branch = executor.submit(run_git, "git rev-parse --abbrev-ref HEAD")
-                
-                status = f_status.result()
-                log = f_log.result()
-                branch = f_branch.result()
-
-            parts = []
-            if branch:
-                parts.append(f"Current branch: {branch}")
-            if status:
-                lines = status.split("\n")[:20]
-                parts.append(f"Changed files ({len(lines)}):\n" + "\n".join(lines))
-            if log:
-                parts.append(f"Recent commits:\n{log[:500]}")
-            return "## Git Context\n" + "\n".join(parts) if parts else ""
-        except Exception:
-            return ""
+        from .git import get_git_context
+        return get_git_context()
 
     def _partition_tools(self, tool_inputs: list) -> list:
         batches = []
@@ -646,12 +617,13 @@ class LoomREPL:
 
     def _append_tool_result(self, tc_id: str, name: str, result: dict):
         from .ui import print_diff
+        from .storage import AtomicJsonStore
         MAX_CHARS = 50000
         content = json.dumps(result)
         if len(content) > MAX_CHARS:
             path = CONFIG_DIR / "tool_results" / f"{tc_id}.json"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8")
+            store = AtomicJsonStore(path)
+            store.save(result)
             result["content"] = f"[Result too large, saved to {path}]\n{result.get('content', '')[:2000]}"
             content = json.dumps(result)
 

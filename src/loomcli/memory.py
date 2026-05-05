@@ -3,6 +3,7 @@ import time
 import re
 from pathlib import Path
 from typing import Dict, List, Optional
+from .storage import AtomicJsonStore
 from .config import CONFIG_DIR
 
 
@@ -15,18 +16,14 @@ MAX_MEMORY_CHARS = 500
 class MemoryManager:
     def __init__(self):
         self._memories: Dict[str, str] = {}
+        self.store = AtomicJsonStore(MEMORY_INDEX)
         self._load()
 
     def _load(self):
-        if MEMORY_INDEX.exists():
-            try:
-                self._memories = json.loads(MEMORY_INDEX.read_text(encoding="utf-8"))
-            except Exception:
-                self._memories = {}
+        self._memories = self.store.load()
 
     def _save(self):
-        MEMORY_DIR.mkdir(parents=True, exist_ok=True)
-        MEMORY_INDEX.write_text(json.dumps(self._memories, indent=2), encoding="utf-8")
+        self.store.save(self._memories)
 
     def remember(self, key: str, value: str) -> str:
         key = key.strip().lower().replace(" ", "_")[:40]

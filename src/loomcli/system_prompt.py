@@ -74,21 +74,8 @@ def _build_context_section() -> str:
 
 
 def _build_git_section() -> str:
-    try:
-        status = subprocess.run("git status --short", shell=True, capture_output=True, text=True, timeout=5).stdout.strip()
-        log = subprocess.run("git log --oneline -5", shell=True, capture_output=True, text=True, timeout=5).stdout.strip()
-        branch = subprocess.run("git rev-parse --abbrev-ref HEAD", shell=True, capture_output=True, text=True, timeout=5).stdout.strip()
-        parts = []
-        if branch:
-            parts.append(f"Current branch: {branch}")
-        if status:
-            lines = status.split("\n")[:20]
-            parts.append(f"Changed files ({len(lines)}):\n" + "\n".join(lines))
-        if log:
-            parts.append(f"Recent commits:\n{log[:500]}")
-        return "## Git Context\n" + "\n".join(parts) if parts else ""
-    except Exception:
-        return ""
+    from .git import get_git_context
+    return get_git_context()
 
 
 def _build_skill_section() -> str:

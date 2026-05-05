@@ -212,33 +212,26 @@ def handle_save(args: List[str], state):
         print_error("No conversation to save.")
         return
 
-    sessions_dir = CONFIG_DIR / "sessions"
-    sessions_dir.mkdir(parents=True, exist_ok=True)
-
+    from .state import save_session
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     if args:
         name = "_".join(args).replace("/", "_")
     else:
         name = f"session_{timestamp}"
-    save_path = sessions_dir / f"{name}.json"
-
-    data = {
-        "saved_at": timestamp,
-        "provider": config.provider,
-        "model": config.model,
-        "tokens_used": state.tokens_used,
-        "messages": state.session_messages,
-    }
-    save_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    print_success(f"Session saved to {save_path}")
+    
+    try:
+        save_session(state, name)
+        print_success(f"Session saved: {name}")
+    except Exception as e:
+        print_error(f"Failed to save session: {e}")
 
 def handle_load(args: List[str], state):
-    sessions_dir = CONFIG_DIR / "sessions"
-    if not sessions_dir.exists():
+    from .state import SESSIONS_DIR, load_session
+    if not SESSIONS_DIR.exists():
         print_error("No saved sessions found.")
         return
 
-    session_files = sorted(sessions_dir.glob("*.json"), reverse=True)
+    session_files = sorted(SESSIONS_DIR.glob("*.json"), reverse=True)
     if not session_files:
         print_error("No saved sessions found.")
         return
@@ -246,11 +239,13 @@ def handle_load(args: List[str], state):
     choices = []
     for sf in session_files[:20]:
         try:
-            data = json.loads(sf.read_text(encoding="utf-8"))
-            label = f"{sf.stem} ({data.get('model', '?')}, {data.get('saved_at', '?')})"
-            choices.append((str(sf), label))
+            # We still need to peek for labels, but we'll use AtomicJsonStore's load for safety
+            from .storage import AtomicJsonStore
+            data = AtomicJsonStore(sf).load()
+            label = f"{sf.stem} ({data.get('saved_at', '?')})"
+            choices.append((sf.stem, label))
         except Exception:
-            choices.append((str(sf), sf.stem))
+            choices.append((sf.stem, sf.stem))
 
     result = LoomDialog(
         title="Load Session",
@@ -261,14 +256,18 @@ def handle_load(args: List[str], state):
 
     if result:
         try:
-            data = json.loads(Path(result).read_text(encoding="utf-8"))
-            state.session_messages = data.get("messages", [])
-            state.tokens_used = data.get("tokens_used", 0)
-            config.provider = data.get("provider", config.provider)
-            config.model = data.get("model", config.model)
-            print_success(f"Loaded session: {Path(result).stem}")
+            new_state = load_session(result)
+            if new_state:
+                state.session_messages = new_state.session_messages
+                state.tokens_used = new_state.tokens_used
+                state.estimated_cost = new_state.estimated_cost
+                state.commands_run = new_state.commands_run
+                state.tools_called = new_state.tools_called
+                print_success(f"Loaded session: {result}")
+            else:
+                print_error(f"Failed to load session: {result}")
         except Exception as e:
-            print_error(f"Failed to load session: {e}")
+            print_error(f"Error loading session: {e}")
 
 def handle_exit(args: List[str], state):
     handle_save([], state)

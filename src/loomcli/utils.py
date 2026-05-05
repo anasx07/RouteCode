@@ -1,7 +1,37 @@
 import os
-from typing import Optional
+import re
+from typing import Optional, Dict, Tuple
 
 DEFAULT_WORKSPACE = os.path.abspath(os.getcwd())
+
+
+def parse_frontmatter(text: str) -> Tuple[Dict[str, str], str]:
+    """
+    Parses YAML-like frontmatter from a string.
+    Expects format:
+    ---
+    key: value
+    ---
+    content
+    
+    Returns (metadata_dict, content_string).
+    """
+    pattern = r'^---\s*\n(.*?)\n---\s*\n?(.*)'
+    match = re.match(pattern, text, re.DOTALL | re.MULTILINE)
+    
+    if not match:
+        return {}, text
+    
+    frontmatter_raw = match.group(1)
+    content = match.group(2)
+    
+    metadata = {}
+    for line in frontmatter_raw.split('\n'):
+        if ':' in line:
+            key, value = line.split(':', 1)
+            metadata[key.strip()] = value.strip()
+            
+    return metadata, content
 
 
 def safe_resolve_path(file_path: str, workspace: Optional[str] = None) -> tuple:
@@ -25,13 +55,23 @@ def safe_resolve_path(file_path: str, workspace: Optional[str] = None) -> tuple:
     return resolved, None
 
 
+TEXT_EXTENSIONS = {
+    ".py", ".ts", ".tsx", ".js", ".jsx", ".rs", ".go", ".java",
+    ".c", ".cpp", ".h", ".hpp", ".cs", ".rb", ".php", ".swift",
+    ".kt", ".md", ".txt", ".json", ".yaml", ".yml",
+    ".toml", ".cfg", ".ini", ".xml", ".html", ".css", ".scss",
+    ".sql", ".sh", ".bat", ".ps1", ".env", ".gitignore", ".lock",
+    ".pyw", ".r", ".m", ".mm", ".pl", ".pm", ".lua", ".scala",
+    ".clj", ".ex", ".exs", ".hs", ".nim", ".zig", ".cjs", ".mjs",
+    ".csv", ".log", ".conf", ".gradle", ".vue", ".svelte", ".astro",
+    ".mts", ".cts"
+}
+
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg"}
+
+PDF_EXTENSIONS = {".pdf"}
+
+
 def is_text_file(file_path: str) -> bool:
     _, ext = os.path.splitext(file_path)
-    text_extensions = {".py", ".ts", ".tsx", ".js", ".jsx", ".rs", ".go", ".java",
-                       ".c", ".cpp", ".h", ".hpp", ".cs", ".rb", ".php", ".swift",
-                       ".kt", ".md", ".txt", ".json", ".yaml", ".yml",
-                       ".toml", ".cfg", ".ini", ".xml", ".html", ".css", ".scss",
-                       ".sql", ".sh", ".bat", ".ps1", ".env", ".gitignore", ".lock",
-                       ".pyw", ".r", ".m", ".mm", ".pl", ".pm", ".lua", ".scala",
-                       ".clj", ".ex", ".exs", ".hs", ".nim", ".zig", ".cjs", ".mjs"}
-    return ext.lower() in text_extensions or not ext
+    return ext.lower() in TEXT_EXTENSIONS or not ext

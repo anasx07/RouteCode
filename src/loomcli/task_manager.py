@@ -20,7 +20,7 @@ class TaskRecord:
     thread: Optional[threading.Thread] = None
 
 
-def _generate_task_id() -> str:
+def generate_task_id() -> str:
     prefix = random.choice(string.ascii_lowercase)
     suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=7))
     return f"{prefix}{suffix}"
@@ -33,7 +33,7 @@ class TaskManager:
 
     def create(self, description: str, thread: Optional[threading.Thread] = None, task_id: Optional[str] = None) -> str:
         if task_id is None:
-            task_id = _generate_task_id()
+            task_id = generate_task_id()
         with self._lock:
             self._tasks[task_id] = TaskRecord(
                 task_id=task_id,

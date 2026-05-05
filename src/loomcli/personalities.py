@@ -50,19 +50,7 @@ BUILTIN_PERSONALITIES = {
 }
 
 
-def _parse_frontmatter(content: str) -> tuple:
-    fm_match = re.match(r'^---\s*\n(.*?)\n---\s*\n?(.*)', content, re.DOTALL)
-    if not fm_match:
-        return {}, content.strip()
-    frontmatter = fm_match.group(1)
-    body = fm_match.group(2).strip()
-    fm = {}
-    for line in frontmatter.split("\n"):
-        line = line.strip()
-        if ":" in line:
-            key, _, value = line.partition(":")
-            fm[key.strip().lower()] = value.strip().strip('"').strip("'")
-    return fm, body
+from .utils import parse_frontmatter
 
 
 def load_personalities() -> dict:
@@ -74,12 +62,15 @@ def load_personalities() -> dict:
         if base.exists():
             for f in sorted(base.glob("*.md")):
                 try:
-                    fm, body = _parse_frontmatter(f.read_text(encoding="utf-8"))
+                    fm, body = parse_frontmatter(f.read_text(encoding="utf-8"))
+                    # Normalize keys to lower case and strip quotes from values
+                    fm = {k.lower(): v.strip('"').strip("'") for k, v in fm.items()}
+                    
                     name = fm.get("name", f.stem)
                     personalities[name] = Personality(
                         name=name,
                         description=fm.get("description", ""),
-                        prompt=body,
+                        prompt=body.strip(),
                         keep_base_instructions=fm.get("keep-base-instructions", "true").lower() == "true",
                     )
                 except Exception:

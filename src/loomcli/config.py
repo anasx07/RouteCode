@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 from typing import Dict, Optional
 
+from .storage import AtomicJsonStore
+
 CONFIG_DIR = Path.home() / ".loomcli"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
@@ -15,27 +17,24 @@ class Config:
         self.allowlist: list = []
         self.denylist: list = []
         self.api_keys: Dict[str, str] = {}
+        self.store = AtomicJsonStore(CONFIG_FILE)
         self._load()
         self._load_env_keys()
 
     def _load(self):
-        if CONFIG_FILE.exists():
-            try:
-                with open(CONFIG_FILE, "r") as f:
-                    data = json.load(f)
-                if not os.environ.get("LOOM_PROVIDER"):
-                    self.provider = data.get("provider", self.provider)
-                if not os.environ.get("LOOM_MODEL"):
-                    self.model = data.get("model", self.model)
-                if not os.environ.get("LOOM_PERSONALITY"):
-                    self.personality = data.get("personality", self.personality)
-                if not os.environ.get("LOOM_THEME"):
-                    self.theme = data.get("theme", self.theme)
-                self.allowlist = data.get("allowlist", [])
-                self.denylist = data.get("denylist", [])
-                self.api_keys = data.get("api_keys", {})
-            except Exception:
-                pass
+        data = self.store.load()
+        if data:
+            if not os.environ.get("LOOM_PROVIDER"):
+                self.provider = data.get("provider", self.provider)
+            if not os.environ.get("LOOM_MODEL"):
+                self.model = data.get("model", self.model)
+            if not os.environ.get("LOOM_PERSONALITY"):
+                self.personality = data.get("personality", self.personality)
+            if not os.environ.get("LOOM_THEME"):
+                self.theme = data.get("theme", self.theme)
+            self.allowlist = data.get("allowlist", [])
+            self.denylist = data.get("denylist", [])
+            self.api_keys = data.get("api_keys", {})
 
     def _load_env_keys(self):
         for provider in ("openrouter", "openai", "anthropic", "google", "deepseek", "opencode", "opencode-go"):
@@ -50,7 +49,6 @@ class Config:
                 self.api_keys["opencode-go"] = opencode_key
 
     def save(self):
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         data = {
             "provider": self.provider,
             "model": self.model,
@@ -58,8 +56,7 @@ class Config:
             "theme": self.theme,
             "api_keys": self.api_keys
         }
-        with open(CONFIG_FILE, "w") as f:
-            json.dump(data, f, indent=4)
+        self.store.save(data)
 
     def set_api_key(self, provider: str, key: str):
         self.api_keys[provider] = key

@@ -13,6 +13,9 @@ SKILL_DIRS = [
 ]
 
 
+from .utils import parse_frontmatter
+
+
 class Skill:
     def __init__(self, path: Path):
         self.path = path
@@ -26,37 +29,30 @@ class Skill:
 
     def _parse(self):
         content = self.path.read_text(encoding="utf-8")
-        # Parse YAML frontmatter (between --- delimiters)
-        fm_match = re.match(r'^---\s*\n(.*?)\n---\s*\n?(.*)', content, re.DOTALL)
-        if not fm_match:
+        metadata, body = parse_frontmatter(content)
+        
+        if not metadata:
             self.name = self.path.stem
-            self.description = ""
             self.prompt = content
             return
 
-        frontmatter = fm_match.group(1)
-        body = fm_match.group(2).strip()
-
-        for line in frontmatter.split("\n"):
-            line = line.strip()
-            if ":" in line:
-                key, _, value = line.partition(":")
-                key = key.strip().lower()
-                value = value.strip().strip('"').strip("'")
-                if key == "name":
-                    self.name = value
-                elif key == "description":
-                    self.description = value
-                elif key == "context":
-                    self.context = value if value in ("inline", "fork") else "inline"
-                elif key == "model":
-                    self.model = value if value else None
-                elif key == "tools":
-                    self.tools = [t.strip() for t in value.split(",") if t.strip()]
+        for key, value in metadata.items():
+            key = key.lower()
+            value = value.strip('"').strip("'")
+            if key == "name":
+                self.name = value
+            elif key == "description":
+                self.description = value
+            elif key == "context":
+                self.context = value if value in ("inline", "fork") else "inline"
+            elif key == "model":
+                self.model = value if value else None
+            elif key == "tools":
+                self.tools = [t.strip() for t in value.split(",") if t.strip()]
 
         if not self.name:
             self.name = self.path.stem
-        self.prompt = body
+        self.prompt = body.strip()
 
 
 def discover_skills() -> Dict[str, Skill]:

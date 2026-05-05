@@ -138,13 +138,6 @@ def _run_sub_agent(task: str, max_iterations: int, task_id: str, state):
     task_manager.complete(task_id, {"success": True, "output": output})
 
 
-def _generate_task_id() -> str:
-    import random, string
-    prefix = random.choice(string.ascii_lowercase)
-    suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=7))
-    return f"{prefix}{suffix}"
-
-
 class TaskTool(BaseTool):
     name = "task"
     description = "Launch an autonomous sub-agent to complete a complex multi-step task. The sub-agent has access to all tools."
@@ -159,7 +152,8 @@ class TaskTool(BaseTool):
         return f"Task({task[:50]})"
 
     def execute(self, task: str, max_iterations: int = 10, run_in_background: bool = False, state=None) -> Dict[str, Any]:
-        task_id = _generate_task_id()
+        from ..task_manager import generate_task_id
+        task_id = generate_task_id()
         if state is None:
             from ..state import SessionState
             state = SessionState()

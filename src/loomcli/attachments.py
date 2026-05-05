@@ -4,23 +4,14 @@ from pathlib import Path
 from typing import Dict, Optional
 
 
-TEXT_EXTENSIONS = {".py", ".ts", ".js", ".jsx", ".tsx", ".rs", ".go", ".java", ".c", ".cpp",
-                   ".h", ".hpp", ".cs", ".rb", ".php", ".swift", ".kt", ".md", ".txt",
-                   ".json", ".yaml", ".yml", ".toml", ".cfg", ".ini", ".xml", ".html",
-                   ".css", ".scss", ".sql", ".sh", ".bat", ".ps1", ".env",
-                   ".csv", ".log", ".cfg", ".conf", ".gradle", ".lock", ".vue", ".svelte",
-                   ".astro", ".mjs", ".cjs", ".mts", ".cts"}
-
-IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg"}
-
-PDF_EXTENSION = {".pdf"}
+from .utils import TEXT_EXTENSIONS, IMAGE_EXTENSIONS, PDF_EXTENSIONS
 
 
 def get_attachment_type(path: str) -> str:
     ext = os.path.splitext(path)[1].lower()
     if ext in IMAGE_EXTENSIONS:
         return "image"
-    if ext in PDF_EXTENSION:
+    if ext in PDF_EXTENSIONS:
         return "pdf"
     if ext in TEXT_EXTENSIONS or not ext:
         return "text"

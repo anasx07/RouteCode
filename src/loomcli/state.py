@@ -2,25 +2,13 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, Optional, List
 
-MODEL_PRICING = {
+# Minimal fallback for core models when the database is unavailable or missing a entry.
+# Primary pricing should always come from models_db.py (models_api.json).
+FALLBACK_PRICING = {
     "gpt-4o": (2.50, 10.00, 128000),
-    "gpt-4o-2024-08-06": (2.50, 10.00, 128000),
-    "gpt-4o-mini": (0.15, 0.60, 128000),
-    "gpt-4-turbo": (10.00, 30.00, 128000),
-    "gpt-4": (30.00, 60.00, 8192),
-    "gpt-3.5-turbo": (0.50, 1.50, 16384),
     "claude-3.5-sonnet": (3.00, 15.00, 200000),
-    "claude-3-sonnet": (3.00, 15.00, 200000),
-    "claude-3-haiku": (0.25, 1.25, 200000),
-    "claude-3-opus": (15.00, 75.00, 200000),
-    "claude-3.5-haiku": (0.80, 4.00, 200000),
-    "deepseek-chat": (0.27, 1.10, 65536),
-    "deepseek-reasoner": (0.55, 2.19, 65536),
     "gemini-1.5-pro": (1.25, 5.00, 1048576),
-    "gemini-1.5-flash": (0.075, 0.30, 1048576),
-    "gemini-2.0-flash": (0.10, 0.40, 1048576),
-    "mistral-large": (4.00, 12.00, 128000),
-    "mistral-medium": (2.70, 8.10, 32000),
+    "deepseek-chat": (0.27, 1.10, 65536),
 }
 
 DEFAULT_INPUT_PRICE = 2.00
@@ -29,17 +17,21 @@ DEFAULT_CONTEXT_LIMIT = 32000
 
 
 def get_model_pricing(model: str) -> tuple:
+    """Retrieves pricing info for a model, prioritizing the models_db."""
     try:
         from .models_db import get_model_pricing as db_pricing
         prices = db_pricing(model)
-        if prices[0] != DEFAULT_INPUT_PRICE:
+        # If the DB returned non-default values, we assume it found the model
+        if prices[0] != DEFAULT_INPUT_PRICE or prices[2] != DEFAULT_CONTEXT_LIMIT:
             return prices
     except Exception:
         pass
 
-    for key, prices in MODEL_PRICING.items():
+    # Fallback to a very small list of well-known models
+    for key, prices in FALLBACK_PRICING.items():
         if key in model.lower():
             return prices
+            
     return (DEFAULT_INPUT_PRICE, DEFAULT_OUTPUT_PRICE, DEFAULT_CONTEXT_LIMIT)
 
 
@@ -81,4 +73,48 @@ class SessionState:
                 self.context_warned = True
                 return pct
         return None
+
+    def to_dict(self) -> dict:
+        return {
+            "tokens_used": self.tokens_used,
+            "estimated_cost": self.estimated_cost,
+            "commands_run": self.commands_run,
+            "tools_called": self.tools_called,
+            "messages": self.session_messages,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'SessionState':
+        return cls(
+            tokens_used=data.get("tokens_used", 0),
+            estimated_cost=data.get("estimated_cost", 0.0),
+            commands_run=data.get("commands_run", 0),
+            tools_called=data.get("tools_called", 0),
+            session_messages=data.get("messages", []),
+        )
+
+
+from .storage import AtomicJsonStore
+from .config import CONFIG_DIR
+
+SESSIONS_DIR = CONFIG_DIR / "sessions"
+
+
+def save_session(state: SessionState, name: str):
+    """Save a session state atomically."""
+    path = SESSIONS_DIR / f"{name}.json"
+    store = AtomicJsonStore(path)
+    data = state.to_dict()
+    data["saved_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    store.save(data)
+
+
+def load_session(name: str) -> Optional[SessionState]:
+    """Load a session state from a file."""
+    path = SESSIONS_DIR / f"{name}.json"
+    store = AtomicJsonStore(path)
+    data = store.load()
+    if not data:
+        return None
+    return SessionState.from_dict(data)
 
