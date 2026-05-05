@@ -1,5 +1,5 @@
 import json
-from typing import List, Dict, Any, Optional, Generator
+from typing import List, Dict, Any, Optional, AsyncGenerator
 from .protocol import LoomMessage, MessageAdapter
 from .base import AIProvider
 
@@ -81,7 +81,7 @@ class AnthropicProvider(AIProvider):
         self.api_version = "2023-06-01"
         self.adapter = AnthropicAdapter()
 
-    def ask(self, messages: List[Dict[str, Any]], model: str, stream: bool = True, tools: Optional[List[Dict[str, Any]]] = None) -> Generator[Dict[str, Any], None, None]:
+    async def ask(self, messages: List[Dict[str, Any]], model: str, stream: bool = True, tools: Optional[List[Dict[str, Any]]] = None) -> AsyncGenerator[Dict[str, Any], None]:
         # Convert dict messages to LoomMessage objects
         loom_messages = [LoomMessage(**m) for m in messages]
         system, converted = self.adapter.to_provider(loom_messages)
@@ -105,7 +105,7 @@ class AnthropicProvider(AIProvider):
 
         current_tool_block = None
 
-        for data in self.transport.stream_post(self.base_url, headers, payload):
+        async for data in self.transport.stream_post(self.base_url, headers, payload):
             if data == "[DONE]":
                 break
 

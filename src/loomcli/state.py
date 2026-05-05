@@ -109,11 +109,30 @@ def save_session(state: SessionState, name: str):
     store.save(data)
 
 
+async def save_session_async(state: SessionState, name: str):
+    """Asynchronously save a session state atomically."""
+    path = SESSIONS_DIR / f"{name}.json"
+    store = AtomicJsonStore(path)
+    data = state.to_dict()
+    data["saved_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    await store.save_async(data)
+
+
 def load_session(name: str) -> Optional[SessionState]:
     """Load a session state from a file."""
     path = SESSIONS_DIR / f"{name}.json"
     store = AtomicJsonStore(path)
     data = store.load()
+    if not data:
+        return None
+    return SessionState.from_dict(data)
+
+
+async def load_session_async(name: str) -> Optional[SessionState]:
+    """Asynchronously load a session state from a file."""
+    path = SESSIONS_DIR / f"{name}.json"
+    store = AtomicJsonStore(path)
+    data = await store.load_async()
     if not data:
         return None
     return SessionState.from_dict(data)

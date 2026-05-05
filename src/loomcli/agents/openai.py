@@ -1,6 +1,6 @@
 import json
 import httpx
-from typing import Generator, List, Dict, Any, Optional
+from typing import AsyncGenerator, List, Dict, Any, Optional
 from .base import AIProvider
 from .protocol import LoomMessage, MessageAdapter
 
@@ -43,7 +43,7 @@ class OpenAIProvider(AIProvider):
             "Content-Type": "application/json"
         }
 
-    def ask(self, messages: List[Dict[str, Any]], model: str, stream: bool = True, tools: Optional[List[Dict[str, Any]]] = None) -> Generator[Dict[str, Any], None, None]:
+    async def ask(self, messages: List[Dict[str, Any]], model: str, stream: bool = True, tools: Optional[List[Dict[str, Any]]] = None) -> AsyncGenerator[Dict[str, Any], None]:
         # Convert dict messages to LoomMessage objects
         loom_messages = [LoomMessage(**m) for m in messages]
         converted_messages = self.adapter.to_provider(loom_messages)
@@ -60,7 +60,7 @@ class OpenAIProvider(AIProvider):
         tool_calls = {}
         yielded_indices = set()
 
-        for data in self.transport.stream_post(self.base_url, headers, payload):
+        async for data in self.transport.stream_post(self.base_url, headers, payload):
             if data == "[DONE]":
                 break
 

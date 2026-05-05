@@ -1,5 +1,7 @@
 from typing import Callable, Dict, List, Any
 import logging
+import asyncio
+import inspect
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +26,15 @@ class EventBus:
             
         for handler in self._handlers[event]:
             try:
-                handler(**data)
+                if inspect.iscoroutinefunction(handler):
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(handler(**data))
+                    except RuntimeError:
+                        # No loop running, run it in a new one if possible or just ignore
+                        pass
+                else:
+                    handler(**data)
             except Exception as e:
                 logger.error(f"Error in event handler for {event}: {e}")
 

@@ -45,7 +45,7 @@ from prompt_toolkit.layout.containers import Window, HSplit, VSplit, FloatContai
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.layout import Layout as PTLayout
 from prompt_toolkit.widgets import RadioList, Button, Dialog, Label
-from prompt_toolkit.application import Application
+from prompt_toolkit.application import Application, get_app
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.formatted_text import ANSI
 from prompt_toolkit.output.defaults import create_output
@@ -118,13 +118,19 @@ class HoverCompletionsMenu(CompletionsMenu):
 class HoverRadioList(RadioList):
     """A RadioList that highlights items on mouse hover (MOUSE_MOVE), not just click."""
     
+    def __init__(self, values):
+        super().__init__(values)
+        from prompt_toolkit.layout import ScrollOffsets
+        # Keep a margin so the viewport scrolls BEFORE the cursor hits the edge
+        self.window.scroll_offsets = ScrollOffsets(top=3, bottom=3)
+    
     def _get_text_fragments(self):
         """Override to add MOUSE_MOVE handling for true hover support."""
         from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
         from prompt_toolkit.formatted_text import to_formatted_text
         
         def mouse_handler(mouse_event: MouseEvent) -> None:
-            """Handle both hover (MOUSE_MOVE) and click (MOUSE_UP) per-row."""
+            """Handle hover (MOUSE_MOVE), click (MOUSE_UP), and scroll."""
             if mouse_event.event_type == MouseEventType.MOUSE_MOVE:
                 # Hover: just move the highlight, don't select
                 self._selected_index = mouse_event.position.y
@@ -132,6 +138,12 @@ class HoverRadioList(RadioList):
                 # Click: move highlight AND select
                 self._selected_index = mouse_event.position.y
                 self._handle_enter()
+            elif mouse_event.event_type == MouseEventType.SCROLL_UP:
+                self._selected_index = max(0, self._selected_index - 3)
+                get_app().invalidate()
+            elif mouse_event.event_type == MouseEventType.SCROLL_DOWN:
+                self._selected_index = min(len(self.values) - 1, self._selected_index + 3)
+                get_app().invalidate()
 
         result = []
         for i, value in enumerate(self.values):
@@ -195,6 +207,21 @@ class LoomDialog:
         return f"\033[2m{ansi_content}\033[0m"
 
     def run(self):
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                # This is tricky; we are in a loop but calling a sync method.
+                # If we are in a thread, we can use a new loop.
+                # But here we probably want to warn or just use run_async from the caller.
+                # For now, let's try to run it in a separate thread and wait.
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor() as executor:
+                    return executor.submit(asyncio.run, self.run_async()).result()
+        except RuntimeError:
+            return asyncio.run(self.run_async())
+
+    async def run_async(self):
         backdrop_ansi = self._get_backdrop_ansi()
         
         # Create dialog widgets
@@ -245,15 +272,13 @@ class LoomDialog:
 
         # Create the layered layout
         root_container = FloatContainer(
-            # The backdrop is just for display, it is non-focusable by default
             content=Window(content=FormattedTextControl(ANSI(backdrop_ansi)), align=WindowAlign.LEFT),
             floats=[
                 Float(content=dialog)
             ]
         )
 
-        # Force enable 'Any Event' mouse tracking for true hover support
-        # \033[?1003h enables tracking of all mouse events, including movement.
+        # Force enable 'Any Event' mouse tracking
         sys.stdout.write("\033[?1003h")
         sys.stdout.flush()
 
@@ -265,19 +290,35 @@ class LoomDialog:
             mouse_support=True
         )
         try:
-            app.run()
+            await app.run_async()
         finally:
-            # Disable any-event mouse tracking on exit to avoid garbage in the terminal
             sys.stdout.write("\033[?1003l")
             sys.stdout.flush()
         
+        return self._handle_result()
+
+    def _handle_result(self):
         if self.dialog_type == "radio" and self.result == "ok":
             return self.radio_list.current_value
         if self.dialog_type == "input" and self.result == "ok":
             return self.text_area.text
         if self.dialog_type in ("radio", "input"):
-            return None  # Cancel / Ctrl-C → return None, not the string "cancel"
+            return None
         return self.result
+
+    def run(self):
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If already in a loop, we have a problem with blocking.
+                # For now, we still block, but this signals the need for full async.
+                return loop.run_until_complete(self.run_async())
+            else:
+                return asyncio.run(self.run_async())
+        except RuntimeError:
+            return asyncio.run(self.run_async())
+
 
 # Background color per theme (hex)
 THEME_BACKGROUNDS = {

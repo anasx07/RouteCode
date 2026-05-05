@@ -54,9 +54,23 @@ class Config:
             "model": self.model,
             "personality": self.personality,
             "theme": self.theme,
-            "api_keys": self.api_keys
+            "api_keys": self.api_keys,
+            "allowlist": self.allowlist,
+            "denylist": self.denylist
         }
         self.store.save(data)
+
+    async def save_async(self):
+        data = {
+            "provider": self.provider,
+            "model": self.model,
+            "personality": self.personality,
+            "theme": self.theme,
+            "api_keys": self.api_keys,
+            "allowlist": self.allowlist,
+            "denylist": self.denylist
+        }
+        await self.store.save_async(data)
 
     def set_api_key(self, provider: str, key: str):
         self.api_keys[provider] = key

@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Dict, Optional, Any, Generator
+from typing import List, Dict, Optional, Any, AsyncGenerator
 from .transport import SSETransport
 
 class AIProvider(ABC):
@@ -8,11 +8,11 @@ class AIProvider(ABC):
         self.transport = SSETransport()
 
     @abstractmethod
-    def ask(self, messages: List[Dict[str, str]], model: str, stream: bool = True, tools: Optional[List[Dict[str, Any]]] = None) -> Generator[Dict[str, Any], None, None]:
+    async def ask(self, messages: List[Dict[str, str]], model: str, stream: bool = True, tools: Optional[List[Dict[str, Any]]] = None) -> AsyncGenerator[Dict[str, Any], None]:
         """
-        Send a prompt to the AI provider and return a generator for the response chunks.
+        Send a prompt to the AI provider and return an async generator for the response chunks.
         """
-        pass
+        yield {} # Placeholder for abstract method
 
-    def close(self):
-        self.transport.close()
+    async def close(self):
+        await self.transport.close()

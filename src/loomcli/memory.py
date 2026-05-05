@@ -7,23 +7,34 @@ from .storage import AtomicJsonStore
 from .config import CONFIG_DIR
 
 
-MEMORY_DIR = CONFIG_DIR / "memory"
-MEMORY_INDEX = MEMORY_DIR / "index.json"
 MAX_MEMORIES = 50
 MAX_MEMORY_CHARS = 500
 
 
 class MemoryManager:
-    def __init__(self):
+    def __init__(self, config_dir: Path):
+        self.config_dir = config_dir
+        self.memory_dir = config_dir / "memory"
+        self.memory_index = self.memory_dir / "index.json"
+        
+        # Ensure directory exists
+        self.memory_dir.mkdir(parents=True, exist_ok=True)
+        
         self._memories: Dict[str, str] = {}
-        self.store = AtomicJsonStore(MEMORY_INDEX)
-        self._load()
+        self.store = AtomicJsonStore(self.memory_index)
+        # self._load() is now called asynchronously via _load_async in the REPL
 
     def _load(self):
         self._memories = self.store.load()
 
+    async def _load_async(self):
+        self._memories = await self.store.load_async()
+
     def _save(self):
         self.store.save(self._memories)
+
+    async def _save_async(self):
+        await self.store.save_async(self._memories)
 
     def remember(self, key: str, value: str) -> str:
         key = key.strip().lower().replace(" ", "_")[:40]
@@ -81,4 +92,3 @@ class MemoryManager:
         return ""
 
 
-memory_manager = MemoryManager()

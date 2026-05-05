@@ -39,9 +39,8 @@ Tools like `bash`, `file_edit`, `file_write` run serially (one at a time).
 When you have multiple read operations, batch them together in one response."""
 
 
-def _build_memory_section() -> str:
-    from .memory import memory_manager
-    return memory_manager.get_relevant_context()
+def _build_memory_section(ctx: 'LoomContext') -> str:
+    return ctx.memory.get_relevant_context()
 
 
 def _build_loom_section() -> str:
@@ -97,21 +96,25 @@ User: {user}
 </env>"""
 
 
-def compute_system_prompt() -> str:
+def compute_system_prompt(ctx: 'LoomContext') -> str:
     from .personalities import get_personality_section, get_active_personality
+    if ctx.config.personality:
+        from .personalities import load_personalities
+        pers = load_personalities().get(ctx.config.personality)
+    else:
+        pers = get_active_personality()
 
-    p = get_active_personality()
     sections = [
         _build_identity_section(),
     ]
-    if p.keep_base_instructions:
+    if pers.keep_base_instructions:
         sections.append(_build_behavior_section())
     sections += [
         _build_tools_section(),
         _build_skill_section(),
         _build_env_section(),
         _build_loom_section(),
-        _build_memory_section(),
+        _build_memory_section(ctx),
         _build_git_section(),
         get_personality_section(),
         SYSTEM_PROMPT_DYNAMIC_BOUNDARY,

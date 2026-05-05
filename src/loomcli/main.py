@@ -46,14 +46,15 @@ def main(
             _ui.console.print(f"[error]Session not found: {resume}[/error]")
             raise typer.Exit(1)
 
+    import asyncio
     if print_mode:
         query = " ".join(sys.argv[sys.argv.index("--") + 1:]) if "--" in sys.argv else ""
         if not query:
             _ui.console.print("[error]Usage: loomcli --print -- <query>[/error]")
             raise typer.Exit(1)
-        repl.run_single(query)
+        asyncio.run(repl.run_single(query))
     else:
-        repl.run()
+        asyncio.run(repl.run())
 
 
 @app.command()

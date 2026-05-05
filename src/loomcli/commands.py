@@ -12,7 +12,7 @@ from . import ui as _ui
 from .ui import print_info, print_success, print_error, print_step, LoomDialog
 from .tools import registry
 from .context import LoomContext
-from .utils import load_attachment
+from .attachments import load_attachment
 
 PROVIDER_LIST = ["openrouter", "anthropic", "openai", "google", "deepseek", "opencode", "opencode-go"]
 
@@ -31,35 +31,36 @@ def handle_help(args: List[str], ctx: LoomContext):
     
     ctx.console.print(table)
 
-def handle_provider(args: List[str], ctx: LoomContext):
-    result = LoomDialog(
+async def handle_provider(args: List[str], ctx: LoomContext):
+    result = await LoomDialog(
         title="Select AI Provider",
         text=_ui.get_dialog_text("Choose the provider you want to use for this session:", "radio"),
         values=[(p, p.capitalize()) for p in PROVIDER_LIST],
         dialog_type="radio"
-    ).run()
+    ).run_async()
 
     if result:
         ctx.config.provider = result
-        ctx.config.save()
+        await ctx.config.save_async()
         ctx.console.print(f"\n[success]✔[/success] Provider switched to [bold cyan]{result}[/bold cyan]")
         
         # Check for API key
         if not ctx.config.get_api_key(result):
-            new_key = LoomDialog(
+            new_key = await LoomDialog(
                 title=f"Setup {result.capitalize()}",
                 text=_ui.get_dialog_text(f"No API key found for {result}. Please paste it here and press Enter:", "input"),
                 password=True,
                 dialog_type="input"
-            ).run()
+            ).run_async()
             if new_key:
                 ctx.config.set_api_key(result, new_key)
+                await ctx.config.save_async()
                 print_success(f"API key for {result} has been saved.")
 
-def handle_model(args: List[str], ctx: LoomContext):
+async def handle_model(args: List[str], ctx: LoomContext):
     if args:
         ctx.config.model = args[0]
-        ctx.config.save()
+        await ctx.config.save_async()
         ctx.console.print(f"Model set to: [bold green]{ctx.config.model}[/bold green]")
         return
 
@@ -76,28 +77,30 @@ def handle_model(args: List[str], ctx: LoomContext):
 
     print_step(f"Fetching models from {ctx.config.provider}...")
     provider = provider_cls(api_key)
+    # get_models might be sync for some adapters, but ideally it should be async.
+    # For now we'll call it and assume it's fast or in a thread if it's network-heavy.
     models = getattr(provider, "get_models", lambda: [])()
     if models:
         model_choices = [(m["id"], m.get("name", m["id"])) for m in models]
 
-        result = LoomDialog(
+        result = await LoomDialog(
             title="Select AI Model",
             text=_ui.get_dialog_text(f"Choose a model from {ctx.config.provider}:", "radio"),
             values=model_choices,
             dialog_type="radio"
-        ).run()
+        ).run_async()
 
         if result:
             ctx.config.model = result
-            ctx.config.save()
+            await ctx.config.save_async()
             ctx.console.print(f"\n[success]✔[/success] Model set to [bold cyan]{result}[/bold cyan]")
     else:
         ctx.console.print(f"[dim]Model listing not available for {ctx.config.provider}. "
                       f"Set the model manually: /model <name>[/dim]")
 
-def handle_config(args: List[str], ctx: LoomContext):
+async def handle_config(args: List[str], ctx: LoomContext):
     # If no args, show a management menu instead of just a table
-    action = LoomDialog(
+    action = await LoomDialog(
         title="LoomCLI Configuration",
         text=_ui.get_dialog_text("What would you like to do?", "button"),
         buttons=[
@@ -107,7 +110,7 @@ def handle_config(args: List[str], ctx: LoomContext):
             ("Back", "back")
         ],
         dialog_type="button"
-    ).run()
+    ).run_async()
 
     if action == "view":
         table = Table(title="Current Configuration", show_header=True, header_style="bold magenta")
@@ -121,21 +124,22 @@ def handle_config(args: List[str], ctx: LoomContext):
         ctx.console.print(table)
 
     elif action == "update":
-        p_to_update = LoomDialog(
+        p_to_update = await LoomDialog(
             title="Update API Key",
             text=_ui.get_dialog_text("Select which provider's key you want to update:", "radio"),
             values=[(p, p.capitalize()) for p in PROVIDER_LIST],
             dialog_type="radio"
-        ).run()
+        ).run_async()
         if p_to_update:
-            new_key = LoomDialog(
+            new_key = await LoomDialog(
                 title=f"Update {p_to_update.capitalize()}",
                 text=_ui.get_dialog_text(f"Paste your new {p_to_update} API key:", "input"),
                 password=True,
                 dialog_type="input"
-            ).run()
+            ).run_async()
             if new_key:
                 ctx.config.set_api_key(p_to_update, new_key)
+                await ctx.config.save_async()
                 print_success(f"Key for {p_to_update} has been replaced.")
 
     elif action == "delete":
@@ -208,12 +212,12 @@ def handle_history(args: List[str], ctx: LoomContext):
         table.add_row(str(i), role, display.replace("[", "\\["))
     ctx.console.print(table)
 
-def handle_save(args: List[str], ctx: LoomContext):
+async def handle_save(args: List[str], ctx: LoomContext):
     if not ctx.state.session_messages:
         print_error("No conversation to save.")
         return
 
-    from .state import save_session
+    from .state import save_session_async
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     if args:
         name = "_".join(args).replace("/", "_")
@@ -221,7 +225,7 @@ def handle_save(args: List[str], ctx: LoomContext):
         name = f"session_{timestamp}"
     
     try:
-        save_session(ctx.state, name)
+        await save_session_async(ctx.state, name)
         print_success(f"Session saved: {name}")
     except Exception as e:
         print_error(f"Failed to save session: {e}")
@@ -329,8 +333,7 @@ def handle_rewind(args: List[str], ctx: LoomContext):
     ctx.state.context_warned = False
     print_success(f"Rewound {count} turn(s). {len(kept) - 1} message(s) remaining (excluding system).")
 
-def handle_remember(args: List[str], ctx: LoomContext):
-    from .memory import memory_manager
+async def handle_remember(args: List[str], ctx: LoomContext):
     if not args:
         print_error("Usage: /remember <key> <value>")
         return
@@ -339,20 +342,20 @@ def handle_remember(args: List[str], ctx: LoomContext):
     if not value:
         print_error("Usage: /remember <key> <value>")
         return
-    msg = memory_manager.remember(key, value)
+    msg = ctx.memory.remember(key, value)
+    await ctx.memory._save_async()
     print_success(msg)
 
-def handle_forget(args: List[str], ctx: LoomContext):
-    from .memory import memory_manager
+async def handle_forget(args: List[str], ctx: LoomContext):
     if not args:
         print_error("Usage: /forget <key>")
         return
-    msg = memory_manager.forget(args[0])
+    msg = ctx.memory.forget(args[0])
+    await ctx.memory._save_async()
     ctx.console.print(f" [dim]{msg}[/dim]")
 
 def handle_memories(args: List[str], ctx: LoomContext):
-    from .memory import memory_manager
-    memories = memory_manager.list()
+    memories = ctx.memory.list()
     if not memories:
         _ui.console.print("[dim]No memories saved yet. Use /remember <key> <value> to save one.[/dim]")
         return
@@ -472,16 +475,15 @@ def handle_version(args: List[str], ctx: LoomContext):
     ctx.console.print("[accent]LoomCLI[/accent] [white]0.1.0[/white]")
     ctx.console.print(f"[dim]Python based, {len(COMMANDS)} commands[/dim]")
 
-def handle_theme(args: List[str], ctx: LoomContext):
+async def handle_theme(args: List[str], ctx: LoomContext):
     from .ui import THEMES, apply_theme
-    from prompt_toolkit.shortcuts import radiolist_dialog
 
     if args:
         name = args[0]
         if name in THEMES:
             apply_theme(name)
             ctx.config.theme = name
-            ctx.config.save()
+            await ctx.config.save_async()
             # Force a clear and re-print of welcome screen to unify the background
             import sys, getpass
             from .ui import get_theme_bg, print_welcome_screen
@@ -499,17 +501,17 @@ def handle_theme(args: List[str], ctx: LoomContext):
     active = ctx.config.theme
     choices = [(n, n.capitalize()) for n in THEMES]
 
-    result = LoomDialog(
+    result = await LoomDialog(
         title="Select Theme",
         text=_ui.get_dialog_text(f"Current: {active.capitalize()}", "radio"),
         values=choices,
         dialog_type="radio"
-    ).run()
+    ).run_async()
 
     if result:
         apply_theme(result)
         ctx.config.theme = result
-        ctx.config.save()
+        await ctx.config.save_async()
         
         # Force a clear and re-print of welcome screen to unify the background
         import sys, getpass
@@ -521,16 +523,15 @@ def handle_theme(args: List[str], ctx: LoomContext):
         print_welcome_screen(getpass.getuser(), ctx.config.model, ctx.config.provider, ctx.console)
         print_success(f"Theme set to: {result}")
 
-def handle_personality(args: List[str], ctx: LoomContext):
+async def handle_personality(args: List[str], ctx: LoomContext):
     from .personalities import load_personalities, get_active_personality
-    from prompt_toolkit.shortcuts import radiolist_dialog
 
     if args:
         name = args[0]
         personalities = load_personalities()
         if name in personalities:
             ctx.config.personality = name
-            ctx.config.save()
+            await ctx.config.save_async()
             print_success(f"Personality set to: {name}")
         else:
             avail = ", ".join(personalities.keys())
@@ -541,16 +542,16 @@ def handle_personality(args: List[str], ctx: LoomContext):
     active = get_active_personality()
     choices = [(n, f"{n}: {p.description}") for n, p in personalities.items()]
 
-    result = LoomDialog(
+    result = await LoomDialog(
         title="Select Personality",
         text=_ui.get_dialog_text(f"Current: {active.name} ({active.description})", "radio"),
         values=choices,
         dialog_type="radio"
-    ).run()
+    ).run_async()
 
     if result:
         ctx.config.personality = result
-        ctx.config.save()
+        await ctx.config.save_async()
         print_success(f"Personality set to: {result}")
 
 COMMANDS = {
@@ -604,9 +605,10 @@ def get_command_metadata() -> Dict[str, str]:
         "/exit": "Exit the session",
     }
 
-def execute_command(input_str: str, ctx: LoomContext) -> bool:
+async def execute_command(input_str: str, ctx: LoomContext) -> bool:
     from .skills import discover_skills
     from pathlib import Path
+    import inspect
     parts = input_str.split()
     if not parts: return False
     command = parts[0]
@@ -614,7 +616,11 @@ def execute_command(input_str: str, ctx: LoomContext) -> bool:
 
     if command in COMMANDS:
         ctx.state.commands_run += 1
-        COMMANDS[command](args, ctx)
+        handler = COMMANDS[command]
+        if inspect.iscoroutinefunction(handler):
+            await handler(args, ctx)
+        else:
+            handler(args, ctx)
         return True
 
     # Check for skill-based commands
@@ -628,6 +634,7 @@ def execute_command(input_str: str, ctx: LoomContext) -> bool:
         ctx.state.commands_run += 1
         ctx.console.print_tool_call(label, {})
         from .skills import run_skill
+        # Skills might be sync or async, but for now they are mostly sync
         result = run_skill(skill, arg_str)
         ctx.console.print_tool_result(result)
         return True

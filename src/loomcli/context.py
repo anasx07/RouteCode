@@ -3,6 +3,7 @@ from rich.console import Console
 from .state import SessionState
 from .config import Config
 from .task_manager import TaskManager
+from .memory import MemoryManager
 
 @dataclass
 class LoomContext:
@@ -14,3 +15,4 @@ class LoomContext:
     config: Config
     console: Console
     task_manager: TaskManager
+    memory: MemoryManager

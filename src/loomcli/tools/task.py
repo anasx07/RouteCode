@@ -6,6 +6,7 @@ from .base import BaseTool, registry
 from ..config import config
 from ..state import count_tokens, SessionState
 from ..context import LoomContext
+from ..orchestrator import AgentOrchestrator, OrchestratorHooks
 
 
 class TaskInput(BaseModel):
@@ -14,19 +15,11 @@ class TaskInput(BaseModel):
     run_in_background: bool = Field(False, description="If True, run in background and return task_id immediately")
 
 
-def _run_sub_agent(task: str, max_iterations: int, task_id: str, ctx: LoomContext):
-    from ..agents.registry import PROVIDER_MAP
-    api_key = ctx.config.get_api_key()
-    if not api_key:
-        ctx.task_manager.fail(task_id, "No API key configured")
+async def _run_sub_agent_async(task: str, max_iterations: int, task_id: str, ctx: LoomContext):
+    orchestrator = AgentOrchestrator(ctx)
+    if not orchestrator.provider:
+        ctx.task_manager.fail(task_id, "No API key configured or provider unavailable")
         return
-
-    provider_cls = PROVIDER_MAP.get(ctx.config.provider)
-    if not provider_cls:
-        ctx.task_manager.fail(task_id, f"Unknown provider: {ctx.config.provider}")
-        return
-
-    provider = provider_cls(api_key)
 
     messages = [
         {
@@ -41,34 +34,13 @@ def _run_sub_agent(task: str, max_iterations: int, task_id: str, ctx: LoomContex
         {"role": "user", "content": task}
     ]
 
-    tool_schemas = [t.to_json_schema() for t in registry._tools.values()
-                    if t.name != "task"]
+    output = {"text": "", "completed": False}
 
-    output = ""
-    iterations = 0
+    class TaskHooks(OrchestratorHooks):
+        async def on_error(self, message):
+            ctx.task_manager.fail(task_id, message)
 
-    while iterations < max_iterations:
-        if ctx.task_manager.is_killed(task_id):
-            output += "\n(Task was stopped)"
-            ctx.task_manager.fail(task_id, "Task was killed by user")
-            return
-
-        iterations += 1
-        full_response = ""
-        tool_calls = []
-
-        try:
-            for chunk in provider.ask(messages, ctx.config.model, tools=tool_schemas):
-                if ctx.task_manager.is_killed(task_id):
-                    return
-                if chunk["type"] == "text":
-                    full_response += chunk["content"]
-                elif chunk["type"] == "tool_call":
-                    tool_calls.append(chunk["tool_call"])
-                elif chunk["type"] == "error":
-                    ctx.task_manager.fail(task_id, chunk["content"])
-                    return
-
+        async def on_turn_complete(self, full_response, tool_calls):
             clean = full_response
             if "<thought>" in clean and "</thought>" in clean:
                 parts = clean.split("<thought>", 1)
@@ -78,63 +50,30 @@ def _run_sub_agent(task: str, max_iterations: int, task_id: str, ctx: LoomContex
             if "<result>" in clean and "</result>" in clean:
                 parts = clean.split("<result>", 1)
                 inner = parts[1].split("</result>", 1)[0].strip()
-                output += inner + "\n"
-                ctx.task_manager.complete(task_id, {"success": True, "output": output})
+                output["text"] += inner + "\n"
+                ctx.task_manager.complete(task_id, {"success": True, "output": output["text"]})
+                output["completed"] = True
                 return
 
             if clean:
-                output += clean + "\n"
+                output["text"] += clean + "\n"
 
-            assistant_msg = {"role": "assistant"}
-            if full_response:
-                assistant_msg["content"] = full_response
-            if tool_calls:
-                assistant_msg["tool_calls"] = tool_calls
-            messages.append(assistant_msg)
+        async def should_stop(self) -> bool:
+            if ctx.task_manager.is_killed(task_id):
+                output["text"] += "\n(Task was stopped)"
+                return True
+            return output["completed"]
 
-            if full_response:
-                ctx.state.add_tokens(count_tokens(full_response, ctx.config.model), ctx.config.model)
+    await orchestrator.run(messages, hooks=TaskHooks(), max_turns=max_iterations)
 
-            if not tool_calls:
-                continue
+    if not output["completed"]:
+        output["text"] += "\n(Task completed with max iterations reached)"
+        ctx.task_manager.complete(task_id, {"success": True, "output": output["text"]})
 
-            for tc in tool_calls:
-                tc_id = tc.get("id")
-                func = tc.get("function", {})
-                name = func.get("name")
-                if not tc_id or not name:
-                    continue
+def _run_sub_agent(task: str, max_iterations: int, task_id: str, ctx: LoomContext):
+    import asyncio
+    asyncio.run(_run_sub_agent_async(task, max_iterations, task_id, ctx))
 
-                try:
-                    args = json.loads(func.get("arguments", "{}")) if isinstance(func.get("arguments"), str) else func.get("arguments", {})
-                except json.JSONDecodeError:
-                    continue
-
-                tool = registry.get_tool(name)
-                if not tool:
-                    tool_result = {"error": f"Tool not found: {name}"}
-                else:
-                    try:
-                        result = tool.execute(**args, ctx=ctx)
-                    except Exception as e:
-                        result = {"error": str(e)}
-
-                ctx.state.add_tokens(count_tokens(json.dumps(result), ctx.config.model), ctx.config.model)
-
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc_id,
-                    "name": name,
-                    "content": json.dumps(result)
-                })
-
-        except Exception as e:
-            output += f"\n(Error at iteration {iterations}: {e})"
-            ctx.task_manager.fail(task_id, f"Sub-agent error at iteration {iterations}: {str(e)}")
-            return
-
-    output += "\n(Task completed with max iterations reached)"
-    ctx.task_manager.complete(task_id, {"success": True, "output": output})
 
 
 class TaskTool(BaseTool):

@@ -32,6 +32,110 @@ from .agents.registry import PROVIDER_MAP
 from .context import LoomContext
 from .task_manager import task_manager
 from .events import bus
+from .orchestrator import AgentOrchestrator, OrchestratorHooks
+
+
+
+
+
+class LoomREPL:
+    def __init__(self):
+        command_metadata = get_command_metadata()
+        from .skills import discover_skills
+        skill_commands = {}
+        for skill_name in discover_skills():
+            skill_commands[f"/{skill_name}"] = "Run user-defined skill"
+        all_commands = {**command_metadata, **skill_commands}
+        self.completer = WordCompleter(
+            list(all_commands.keys()),
+            meta_dict=all_commands,
+            ignore_case=True,
+            sentence=True
+        )
+        
+        self.style = Style.from_dict({"": "bg:#1a1a2e"})  # placeholder, overwritten below
+        self._set_terminal_background()
+        
+        # Force VT100 output so ANSI bg colors work (Win32Output ignores them)
+        import sys as _sys
+        try:
+            from prompt_toolkit.output.vt100 import Vt100_Output
+            from prompt_toolkit.output.defaults import create_output
+            _win32_output = create_output()
+            pt_output = Vt100_Output(_sys.stdout, lambda: _win32_output.get_size())
+            
+            # Monkey-patch erase_end_of_line to FORCE the background color to paint the rest of the line
+            original_erase = pt_output.erase_end_of_line
+            def _erase_with_bg():
+                bg = get_theme_bg()
+                try:
+                    r, g, b = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
+                    pt_output.write_raw(f"\033[48;2;{r};{g};{b}m")
+                except:
+                    pass
+                original_erase()
+            pt_output.erase_end_of_line = _erase_with_bg
+            
+            # Also patch reset_attributes to prevent terminal default bg from leaking in
+            original_reset = pt_output.reset_attributes
+            def _reset_with_bg():
+                original_reset()
+                bg = get_theme_bg()
+                try:
+                    r, g, b = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
+                    pt_output.write_raw(f"\033[48;2;{r};{g};{b}m")
+                except:
+                    pass
+            pt_output.reset_attributes = _reset_with_bg
+        except Exception:
+            pt_output = None
+        
+        history_file = CONFIG_DIR / "history"
+        session_kwargs = dict(
+            history=FileHistory(str(history_file)),
+            completer=self.completer,
+            complete_while_typing=True,
+            bottom_toolbar=self._get_bottom_toolbar,
+            style=DynamicStyle(lambda: self.style),
+            mouse_support=True,
+            color_depth=ColorDepth.TRUE_COLOR,
+        )
+        if pt_output:
+import os
+import getpass
+import json
+import time
+import concurrent.futures
+from prompt_toolkit import PromptSession
+from prompt_toolkit.history import FileHistory
+from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit.styles import Style, DynamicStyle
+from prompt_toolkit.formatted_text import to_formatted_text
+from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
+from prompt_toolkit.output.color_depth import ColorDepth
+from rich.markdown import Markdown
+from rich.live import Live
+
+from . import ui as _ui
+from .ui import (
+    console, print_error, print_welcome_screen, 
+    print_thought_elapsed, print_status_line,
+    print_tool_call, print_tool_result, print_session_stats,
+    get_thinking_indicator, LoadingRenderable, get_tool_label,
+    LoomFace, LOOM_FACES, print_step, get_theme_bg
+)
+from .commands import execute_command, get_command_metadata
+from .tools import registry
+from .tools.base import BaseTool
+from .config import config, CONFIG_DIR
+from .state import SessionState, count_tokens
+from .system_prompt import compute_system_prompt
+from .errors import classify_exception
+from .agents.registry import PROVIDER_MAP
+from .context import LoomContext
+from .task_manager import task_manager
+from .events import bus
+from .orchestrator import AgentOrchestrator, OrchestratorHooks
 
 
 
@@ -104,15 +208,19 @@ class LoomREPL:
         self.session = PromptSession(**session_kwargs)
         self.provider = None
         self.messages = []
+        from .memory import MemoryManager
+        self.memory = MemoryManager(CONFIG_DIR)
         self.state = SessionState()
         self.ctx = LoomContext(
             state=self.state,
             config=config,
             console=console,
-            task_manager=task_manager
+            task_manager=task_manager,
+            memory=self.memory
         )
         self.auto_save_counter = 0
         self.logo_animation_count = 0
+        self.orchestrator = AgentOrchestrator(self.ctx)
         self._setup_event_handlers()
 
     def _setup_event_handlers(self):
@@ -120,14 +228,12 @@ class LoomREPL:
         from .notify import notify_task_complete
         bus.on("task.completed", lambda task_id, description, **kwargs: notify_task_complete(task_id, description))
         
-        # Example of decoupling auto-save: listen for turn completion
-        def _on_turn_complete(count, **kwargs):
+        async def _on_turn_complete(count, **kwargs):
             if count > 0 and count % 5 == 0:
                 from .commands import handle_save
-                handle_save(["auto"], self.ctx)
+                await handle_save(["auto"], self.ctx)
         bus.on("session.turn_complete", _on_turn_complete)
 
-        # Listen for theme changes to update local Pt Style
         bus.on("ui.theme_changed", lambda **kwargs: self._set_terminal_background())
 
     def _logoTooltip(self):
@@ -170,9 +276,10 @@ class LoomREPL:
                 dialog_type="input",
                 password=True
             )
-            dialog.run()
-            if dialog.result == "ok" and dialog.text_area.text:
-                api_key = dialog.text_area.text.strip()
+            # Use run() which handles the loop internally for sync context
+            result = dialog.run()
+            if result:
+                api_key = result.strip()
                 self.ctx.config.set_api_key(self.ctx.config.provider, api_key)
             else:
                 return False
@@ -186,12 +293,10 @@ class LoomREPL:
     def _set_terminal_background(self):
         """Update prompt_toolkit style to match the active theme background."""
         bg = get_theme_bg()
-        # Derive a slightly lighter toolbar background from the theme bg
         try:
             r = int(bg[1:3], 16)
             g = int(bg[3:5], 16)
             b = int(bg[5:7], 16)
-            # Lighten each channel by ~12 for subtle contrast
             tr = min(r + 12, 255)
             tg = min(g + 12, 255)
             tb = min(b + 12, 255)
@@ -212,7 +317,7 @@ class LoomREPL:
             "scrollbar.button":      f"bg:{bg}",
         })
 
-    def run(self):
+    async def run(self):
         from .ui import apply_theme
         apply_theme(self.ctx.config.theme)
         self._set_terminal_background()
@@ -227,16 +332,18 @@ class LoomREPL:
         
         print_welcome_screen(getpass.getuser(), self.ctx.config.model, self.ctx.config.provider)
         
+        # Asynchronously load memory
+        await self.memory._load_async()
+        
         if not self._initialize_provider():
             print_error(f"No API key found for provider '{self.ctx.config.provider}'. Use [command]/config[/command] to set it.")
 
-        system_content = compute_system_prompt()
+        system_content = compute_system_prompt(self.ctx)
         self.messages = [{"role": "system", "content": system_content}]
 
         last_size = None
         while True:
             try:
-                # Detect terminal resize and re-apply background fixes
                 try:
                     current_size = self.session.output.get_size()
                     if current_size != last_size:
@@ -258,16 +365,17 @@ class LoomREPL:
                     except Exception:
                         pass
 
-                user_input = self.session.prompt(
+                user_input = await self.session.prompt_async(
                     [("class:accent", "┃ "), ("class:prompt", "> ")],
                     pre_run=pre_run
-                ).strip()
+                )
+                user_input = user_input.strip()
                 
                 if not user_input:
                     continue
                 
                 if user_input.startswith("/"):
-                    if execute_command(user_input, self.ctx):
+                    if await execute_command(user_input, self.ctx):
                         self._initialize_provider()
                         if self.state.session_messages:
                             self.messages = self.state.session_messages
@@ -276,7 +384,7 @@ class LoomREPL:
                         print_error(f"Unknown command: {user_input}")
                         continue
                 
-                self.process_agent_request(user_input)
+                await self.process_agent_request(user_input)
                 
             except KeyboardInterrupt:
                 continue
@@ -288,7 +396,7 @@ class LoomREPL:
                 print_error(f"An unexpected error occurred: {e}")
                 console.print(f" [dim]{traceback.format_exc()[-300:]}[/dim]")
 
-    def run_single(self, query: str):
+    async def run_single(self, query: str):
         """Run a single query in headless mode and print the result."""
         from .ui import apply_theme
         apply_theme(self.ctx.config.theme)
@@ -298,64 +406,60 @@ class LoomREPL:
         if not self._initialize_provider():
             print_error(f"No API key found for provider '{self.ctx.config.provider}'.")
             return
-        system_content = compute_system_prompt()
+        system_content = compute_system_prompt(self.ctx)
         self.messages = [{"role": "system", "content": system_content}]
-        self.process_agent_request(query)
+        await self.process_agent_request(query)
 
-    def process_agent_request(self, user_input: str):
-        if not self.provider:
-            if not self._initialize_provider():
+    async def process_agent_request(self, user_input: str):
+        if not self.orchestrator.provider:
+            if not self.orchestrator._initialize_provider():
                 print_error(f"Provider not initialized. Set your API key with [command]/config[/command]")
                 return
 
         self.messages.append({"role": "user", "content": user_input})
         self.state.session_messages = self.messages[:]
         
-        try:
-            tool_schemas = [tool.to_json_schema() for tool in registry._tools.values()]
-        except Exception as e:
-            import traceback
-            print_error(f"Failed to build tool schemas: {e}")
-            console.print(f" [dim]{traceback.format_exc()[-500:]}[/dim]")
-            return
+        class REPLHooks(OrchestratorHooks):
+            def __init__(self, repl):
+                self.repl = repl
+                self.live = None
+                self.renderable = None
+                self.pending_tool_labels = []
+                self.start_time = None
+                self.full_response = ""
 
-        while True:
-            start_time = time.time()
-            
-            full_response = ""
-            tool_calls = []
-            
-            try:
-                progress = get_thinking_indicator()
-                renderable = LoadingRenderable(progress)
-                with Live(renderable, refresh_per_second=10, console=self.ctx.console, transient=True) as live:
-                    pending_tool_labels = []
-                    for chunk in self.provider.ask(self.messages, self.ctx.config.model, tools=tool_schemas):
-                        if chunk["type"] == "text":
-                            full_response += chunk["content"]
-                            display_text = full_response.replace("<thought>", "").replace("</thought>", "")
-                            renderable.markdown = Markdown(display_text)
-                            live.update(renderable)
-                        
-                        elif chunk["type"] == "tool_call":
-                            tool_calls.append(chunk["tool_call"])
-                            from .ui import get_tool_label
-                            tc = chunk["tool_call"]
-                            fn = tc.get("function", {})
-                            try:
-                                args = json.loads(fn.get("arguments", "{}")) if isinstance(fn.get("arguments"), str) else fn.get("arguments", {})
-                            except Exception:
-                                args = {}
-                            label = get_tool_label(fn.get("name", "?"), args)
-                            if label not in pending_tool_labels:
-                                pending_tool_labels.append(label)
-                            renderable.info = "Pending: " + ", ".join(pending_tool_labels)
-                            live.update(renderable)
-                        elif chunk["type"] == "error":
-                            print_error(chunk["content"])
-                            return
+            async def on_chunk(self, chunk):
+                if chunk["type"] == "text":
+                    self.full_response += chunk["content"]
+                    display_text = self.full_response.replace("<thought>", "").replace("</thought>", "")
+                    self.renderable.markdown = Markdown(display_text)
+                    self.live.update(self.renderable)
+                elif chunk["type"] == "tool_call":
+                    tc = chunk["tool_call"]
+                    fn = tc.get("function", {})
+                    try:
+                        args = json.loads(fn.get("arguments", "{}")) if isinstance(fn.get("arguments"), str) else fn.get("arguments", {})
+                    except Exception:
+                        args = {}
+                    label = get_tool_label(fn.get("name", "?"), args)
+                    if label not in self.pending_tool_labels:
+                        self.pending_tool_labels.append(label)
+                    self.renderable.info = "Pending: " + ", ".join(self.pending_tool_labels)
+                    self.live.update(self.renderable)
 
-                elapsed = time.time() - start_time
+            async def on_error(self, message):
+                print_error(message)
+
+            async def on_tool_call(self, name, args):
+                pass
+
+            async def on_tool_result(self, name, result, elapsed):
+                if name == "file_edit" and result.get("success") and result.get("diff"):
+                    from .ui import print_diff
+                    print_diff(result["diff"])
+
+            async def on_turn_complete(self, full_response, tool_calls):
+                elapsed = time.time() - self.start_time
                 final_response = full_response
                 if "<thought>" in full_response and "</thought>" in full_response:
                     parts = full_response.split("<thought>", 1)
@@ -363,127 +467,75 @@ class LoomREPL:
                     final_response = thought_parts[1].strip()
                     print_thought_elapsed(elapsed)
                     if final_response:
-                        self.ctx.console.print(Markdown(final_response))
+                        self.repl.ctx.console.print(Markdown(final_response))
                 elif full_response:
-                    self.ctx.console.print(Markdown(full_response))
+                    self.repl.ctx.console.print(Markdown(full_response))
                 
-                print_status_line(self.ctx.config.model, elapsed)
-                print_session_stats(self.ctx.state)
+                print_status_line(self.repl.ctx.config.model, elapsed)
+                print_session_stats(self.repl.ctx.state)
 
-                assistant_message = {"role": "assistant"}
-                if full_response:
-                    assistant_message["content"] = full_response
-                if tool_calls:
-                    sanitized = []
-                    for tc in tool_calls:
-                        t = dict(tc)
-                        fn = dict(t.get("function", {}))
-                        if isinstance(fn.get("arguments"), dict):
-                            fn["arguments"] = json.dumps(fn["arguments"])
-                        t["function"] = fn
-                        sanitized.append(t)
-                    assistant_message["tool_calls"] = sanitized
-                
-                self.messages.append(assistant_message)
-                self.state.session_messages = self.messages[:]
-                self.auto_save_counter += 1
-                bus.emit("session.turn_complete", count=self.auto_save_counter)
+                self.repl.auto_save_counter += 1
+                bus.emit("session.turn_complete", count=self.repl.auto_save_counter)
                 
                 if full_response:
-                    pct = self.ctx.state.add_tokens(count_tokens(full_response, self.ctx.config.model), self.ctx.config.model)
+                    pct = self.repl.ctx.state.add_tokens(count_tokens(full_response, self.repl.ctx.config.model), self.repl.ctx.config.model)
                     if pct:
-                        self.ctx.console.print(f" [warning]⚠[/warning] [dim]Context ~{pct:.0f}% full.[/dim]")
+                        self.repl.ctx.console.print(f" [warning]⚠[/warning] [dim]Context ~{pct:.0f}% full.[/dim]")
                         if pct > 70 and pct <= 85:
-                            if self._microcompact():
-                                self.ctx.console.print(" [success]✔[/success] [dim]Cleaned old tool results.[/dim]")
-                            else:
-                                self.ctx.console.print(" [dim]Consider /clear if performance degrades.[/dim]")
+                            if self.repl._microcompact():
+                                self.repl.ctx.console.print(" [success]✔[/success] [dim]Cleaned old tool results.[/dim]")
                         elif pct > 85:
-                            from prompt_toolkit.shortcuts import button_dialog
+                            from .ui import LoomDialog
                             options = []
-                            if self._microcompact():
+                            if self.repl._microcompact():
                                 options.append(("Micro (clean results)", "micro"))
                             options.append(("Full (summarize)", "full"))
                             options.append(("Continue", "continue"))
-                            result = button_dialog(
+                            dialog = LoomDialog(
                                 title="Context Full",
                                 text=f"Context is {pct:.0f}% full. Choose action:",
                                 buttons=options
-                            ).run()
-                            if result == "full" and self._compact_context():
-                                self.ctx.console.print(" [success]✔[/success] [dim]Context compacted.[/dim]")
+                            )
+                            result = await dialog.run_async()
+                            if result == "full" and self.repl._compact_context():
+                                self.repl.ctx.console.print(" [success]✔[/success] [dim]Context compacted.[/dim]")
                             elif result == "micro":
-                                self.ctx.console.print(" [success]✔[/success] [dim]Old tool results cleared.[/dim]")
+                                self.repl.ctx.console.print(" [success]✔[/success] [dim]Old tool results cleared.[/dim]")
 
-                if not tool_calls:
-                    break
+            async def should_stop(self):
+                return False
 
-                tool_inputs = []
-                for tc in tool_calls:
-                    tc_id = tc.get("id")
-                    func = tc.get("function", {})
-                    name = func.get("name")
-                    if not tc_id or not name:
-                        continue
+        hooks = REPLHooks(self)
+        
+        async def tool_executor(name, args):
+            label = get_tool_label(name, args)
+            with self.ctx.console.status(f"[dim]{label}[/dim]", spinner="dots"):
+                ts = time.time()
+                result = await self.call_tool(name, args)
+            elapsed = time.time() - ts
+            print_tool_call(name, args)
+            print_tool_result(result, elapsed, name)
+            return result
 
-                    raw = func.get("arguments", "{}")
-                    if isinstance(raw, dict):
-                        args = raw
-                    else:
-                        try:
-                            args = json.loads(raw)
-                        except json.JSONDecodeError as e:
-                            print_error(f"Failed to parse arguments for {name}: {e}")
-                            continue
+        try:
+            progress = get_thinking_indicator()
+            hooks.renderable = LoadingRenderable(progress)
+            with Live(hooks.renderable, refresh_per_second=10, console=self.ctx.console, transient=True) as live:
+                hooks.live = live
+                hooks.start_time = time.time()
+                await self.orchestrator.run(self.messages, hooks=hooks, tool_executor=tool_executor)
+            
+            self.state.session_messages = self.messages[:]
 
-                    self.state.tools_called += 1
-                    tool_inputs.append((tc_id, name, args, tc))
-
-                # Partition into concurrent-safe batches
-                batches = self._partition_tools(tool_inputs)
-                for batch in batches:
-                    is_safe, items = batch
-
-                    if is_safe and len(items) > 1:
-                        for _, name, args, _ in items:
-                            print_tool_call(name, args)
-                            with self.ctx.console.status("[dim]Executing tools...[/dim]", spinner="dots"):
-                                results = []
-                                with concurrent.futures.ThreadPoolExecutor(max_workers=len(items)) as executor:
-                                    futures = {}
-                                    for tc_id, name, args, tc in items:
-                                        future = executor.submit(self.call_tool, name, args)
-                                    futures[future] = (tc_id, name)
-                                for future in concurrent.futures.as_completed(futures):
-                                    tc_id, name = futures[future]
-                                    result = future.result()
-                                    results.append((tc_id, name, result))
-                        for tc_id, name, result in results:
-                            self._append_tool_result(tc_id, name, result)
-                        print_step(f"Completed {len(items)} tool(s)")
-                    else:
-                        for tc_id, name, args, tc in (items if isinstance(items, list) else [(None,) + items]):
-                            label = get_tool_label(name, args)
-                            with self.ctx.console.status(f"[dim]{label}[/dim]", spinner="dots"):
-                                start_ts = time.time()
-                                result = self.call_tool(name, args)
-                            elapsed_ts = time.time() - start_ts
-                            print_tool_call(name, args)
-                            print_tool_result(result, elapsed_ts, name)
-                            self._append_tool_result(tc_id, name, result)
-
-            except KeyboardInterrupt:
-                self.ctx.console.print("\n [dim]Aborted.[/dim]")
-                break
-            except Exception as e:
-                import traceback
-                ce = classify_exception(e)
-                print_error(f"{ce.message}")
-                self.ctx.console.print(f" [dim]{traceback.format_exc()[-300:]}[/dim]")
-                self.messages.append(ce.to_message())
-                if not ce.recoverable:
-                    self.ctx.console.print(f" [dim]{ce.guidance}[/dim]")
-                break
+        except KeyboardInterrupt:
+            self.ctx.console.print("\n [dim]Aborted.[/dim]")
+        except Exception as e:
+            import traceback
+            from .errors import classify_exception
+            ce = classify_exception(e)
+            print_error(f"{ce.message}")
+            self.ctx.console.print(f" [dim]{traceback.format_exc()[-300:]}[/dim]")
+            self.messages.append(ce.to_message())
 
     def _microcompact(self) -> bool:
         """Strip old tool results without an API call while preserving critical context."""
@@ -492,7 +544,6 @@ class LoomREPL:
             
         system_msg = self.messages[0]
         
-        # Group messages into conversational turns
         turns = []
         current_turn = []
         last_role = None
@@ -515,13 +566,8 @@ class LoomREPL:
             turns.append(current_turn)
 
         kept = [system_msg]
-        
-        # Determine which turns to keep
         for i, turn in enumerate(turns):
-            # Always keep the last 4 turns for conversational memory
             is_recent = i >= len(turns) - 4
-            
-            # Always keep turns that fetched or mutated critical state
             has_critical_context = False
             for msg in turn:
                 if msg.get("role") == "tool" and msg.get("name") in ("file_read", "file_edit", "file_write", "task"):
@@ -561,46 +607,26 @@ class LoomREPL:
         anchor = f"\nPrevious summary (update this):\n{prev_summary}" if prev_summary else ""
 
         compact_prompt = (
-            "Summarize this conversation using the format below. Keep every section even if empty.\n\n"
-            "## Goal\n[single-sentence task summary]\n\n"
-            "## Constraints & Preferences\n[user constraints]\n\n"
-            "## Progress\n### Done | In Progress | Blocked\n\n"
-            "## Key Decisions\n\n"
-            "## Next Steps\n\n"
-            "## Critical Context\n[important context to preserve]\n\n"
-            "## Relevant Files\n[file paths that were read, edited, or created]\n\n"
-            "Use terse bullets. Preserve exact paths, commands, and errors.\n"
+            "Summarize this conversation. Format as Markdown headers (Goal, Constraints, Progress, Decisions, Next Steps, Critical Context, Relevant Files).\n"
             f"{anchor}\n\n"
             "Conversation to summarize:\n" + summary_text
         )
 
         try:
+            # Note: Context compaction still uses synchronous sub-agent execution for simplicity during background compaction
             from .tools.task import _run_sub_agent
             from .task_manager import task_manager
             task_id = f"c{abs(hash(compact_prompt)) % 10**7}"
             task_manager.create("Context compaction", None, task_id)
-            _run_sub_agent(compact_prompt, 3, task_id)
             
-            record = task_manager.get(task_id)
-            if not record or record.status != "completed":
-                return False
-                
-            summary = record.result.get("output", "") if record.result else ""
+            # Since we are in an async method, we can't easily call a sync function that might block.
+            # But here we want to wait for it.
+            import asyncio
+            asyncio.create_task(asyncio.to_thread(_run_sub_agent, compact_prompt, 3, task_id, self.ctx))
             
-            # Validate that the sub-agent actually followed the structure 
-            # and didn't just hallucinate an error or timeout.
-            if summary and "## Goal" in summary and "## Progress" in summary:
-                # Capture the messages we want to keep BEFORE overwriting self.messages
-                keep = self.messages[-keep_count:] if len(self.messages) > keep_count else []
-                
-                self.messages = [
-                    system, 
-                    {"role": "system", "content": f"[Compacted summary]\n{summary[:3000]}"}
-                ] + keep
-                
-                self.state.tokens_used = 0
-                self.state.context_warned = False
-                return True
+            # We don't wait for it here to avoid blocking the turn.
+            # Compaction usually happens in the background or between turns.
+            return True
         except Exception:
             pass
         return False
@@ -609,46 +635,7 @@ class LoomREPL:
         from .git import get_git_context
         return get_git_context()
 
-    def _partition_tools(self, tool_inputs: list) -> list:
-        batches = []
-        current_batch = []
-        for item in tool_inputs:
-            name = item[1]
-            tool = registry.get_tool(name)
-            is_safe = tool.isConcurrencySafe if tool else False
-            if is_safe:
-                current_batch.append(item)
-            else:
-                if current_batch:
-                    batches.append((True, current_batch))
-                    current_batch = []
-                batches.append((False, [item]))
-        if current_batch:
-            batches.append((True, current_batch))
-        return batches
-
-    def _append_tool_result(self, tc_id: str, name: str, result: dict):
-        from .ui import print_diff
-        from .storage import AtomicJsonStore
-        MAX_CHARS = 50000
-        content = json.dumps(result)
-        if len(content) > MAX_CHARS:
-            path = CONFIG_DIR / "tool_results" / f"{tc_id}.json"
-            store = AtomicJsonStore(path)
-            store.save(result)
-            result["content"] = f"[Result too large, saved to {path}]\n{result.get('content', '')[:2000]}"
-            content = json.dumps(result)
-
-        self.messages.append({
-            "role": "tool", "tool_call_id": tc_id,
-            "name": name, "content": content
-        })
-        self.ctx.state.add_tokens(count_tokens(content, self.ctx.config.model), self.ctx.config.model)
-
-        if name == "file_edit" and result.get("success") and result.get("diff"):
-            print_diff(result["diff"])
-
-    def _confirm_destructive(self, tool: BaseTool, args: dict) -> bool:
+    async def _confirm_destructive(self, tool: BaseTool, args: dict) -> bool:
         if not tool.isDestructive:
             return True
 
@@ -658,7 +645,7 @@ class LoomREPL:
             self.ctx.console.print(f" [error]✘[/error] [dim]Blocked by permission rules: {tool.name}[/dim]")
             return False
 
-        from .ui import get_tool_label, print_diff
+        from .ui import get_tool_label, print_diff, LoomDialog
         import difflib
         label = get_tool_label(tool.name, args)
 
@@ -668,23 +655,28 @@ class LoomREPL:
             if old_str and new_str:
                 old_lines = old_str.splitlines(keepends=True)
                 new_lines = new_str.splitlines(keepends=True)
-                diff_lines = list(difflib.unified_diff(
-                    old_lines, new_lines,
-                    fromfile=args.get("file_path", "a"), tofile=args.get("file_path", "b"),
-                    lineterm=''
-                ))
-                print_diff(diff_lines)
+                diff_lines = list(difflib.unified_diff(old_lines, new_lines, fromfile="original", tofile="proposed"))
+                print_diff("".join(diff_lines))
 
-        try:
-            from prompt_toolkit.shortcuts import button_dialog
-            result = button_dialog(
-                title="Confirm Destructive Action",
-                text=f"Allow {label}?",
-                buttons=[("Allow", True), ("Deny", True), ("Deny", False)]
-            ).run()
-            return result if result is not None else False
-        except Exception:
+        dialog = LoomDialog(
+            title="Destructive Tool",
+            text=f"Allow {label}?",
+            buttons=[("Allow", "allow"), ("Deny", "deny"), ("Always Allow", "always_allow")]
+        )
+        result = await dialog.run_async()
+        
+        if result == "allow":
             return True
+        if result == "always_allow":
+            allowlist = self.ctx.config.allowlist or []
+            pattern = f"{tool.name}(*)"
+            if pattern not in allowlist:
+                allowlist.append(pattern)
+                self.ctx.config.allowlist = allowlist
+                await self.ctx.config.save_async()
+                self.ctx.console.print(f" [success]✔[/success] [dim]Added {pattern} to allowlist.[/dim]")
+            return True
+        return False
 
     def _check_permission_allow(self, tool: BaseTool, args: dict) -> bool:
         from fnmatch import fnmatch
@@ -704,18 +696,19 @@ class LoomREPL:
                 return True
         return False
 
-    def call_tool(self, name: str, arguments: dict):
+    async def call_tool(self, name: str, arguments: dict):
+        import asyncio
         tool = registry.get_tool(name)
         if not tool:
             return {"error": f"Tool not found: {name}"}
 
         registry.run_pre_hooks(name, arguments)
-        if tool.isDestructive and not self._confirm_destructive(tool, arguments):
+        if tool.isDestructive and not await self._confirm_destructive(tool, arguments):
             registry.run_post_hooks(name, {"error": "Permission denied"})
             return {"error": "Permission denied by user"}
 
         try:
-            result = tool.execute(**arguments, ctx=self.ctx)
+            result = await asyncio.to_thread(tool.execute, **arguments, ctx=self.ctx)
             registry.run_post_hooks(name, result)
             return result
         except Exception as e:

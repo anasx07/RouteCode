@@ -1,5 +1,5 @@
 import json
-from typing import List, Dict, Any, Optional, Generator
+from typing import List, Dict, Any, Optional, AsyncGenerator
 from .protocol import LoomMessage, MessageAdapter
 from .base import AIProvider
 
@@ -66,7 +66,7 @@ class GoogleProvider(AIProvider):
         self.base_url = "https://generativelanguage.googleapis.com/v1beta/models"
         self.adapter = GoogleAdapter()
 
-    def ask(self, messages: List[Dict[str, Any]], model: str, stream: bool = True, tools: Optional[List[Dict[str, Any]]] = None) -> Generator[Dict[str, Any], None, None]:
+    async def ask(self, messages: List[Dict[str, Any]], model: str, stream: bool = True, tools: Optional[List[Dict[str, Any]]] = None) -> AsyncGenerator[Dict[str, Any], None]:
         # Convert dict messages to LoomMessage objects
         loom_messages = [LoomMessage(**m) for m in messages]
         system, contents = self.adapter.to_provider(loom_messages)
@@ -82,12 +82,10 @@ class GoogleProvider(AIProvider):
         url = f"{self.base_url}/{model}:streamGenerateContent?alt=sse&key={self.api_key}"
         headers = {"Content-Type": "application/json"}
 
-        for data in self.transport.stream_post(url, headers, payload):
+        async for data in self.transport.stream_post(url, headers, payload):
             try:
                 chunk = json.loads(data)
                 
-                # Check for transport errors (No longer needed, exceptions bubble up)
-
                 candidates = chunk.get("candidates", [])
                 if not candidates:
                     continue
