@@ -2,9 +2,12 @@ import subprocess
 import os
 import time
 import threading
-from typing import Any, Dict
+from typing import Any, Dict, Optional, TYPE_CHECKING
 from pydantic import BaseModel, Field
 from .base import BaseTool
+
+if TYPE_CHECKING:
+    from ..context import LoomContext
 
 class BashInput(BaseModel):
     command: str = Field(..., description="The shell command to execute")

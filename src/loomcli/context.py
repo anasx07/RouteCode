@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from rich.console import Console
 from .state import SessionState
-from .config import LoomConfig
+from .config import Config
 from .task_manager import TaskManager
 
 @dataclass
@@ -11,6 +11,6 @@ class LoomContext:
     Eliminates the need for reflection-based parameter detection.
     """
     state: SessionState
-    config: LoomConfig
+    config: Config
     console: Console
     task_manager: TaskManager

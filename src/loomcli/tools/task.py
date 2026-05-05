@@ -16,7 +16,7 @@ class TaskInput(BaseModel):
 
 def _run_sub_agent(task: str, max_iterations: int, task_id: str, ctx: LoomContext):
     from ..agents.registry import PROVIDER_MAP
-
+    api_key = ctx.config.get_api_key()
     if not api_key:
         ctx.task_manager.fail(task_id, "No API key configured")
         return
@@ -54,7 +54,10 @@ def _run_sub_agent(task: str, max_iterations: int, task_id: str, ctx: LoomContex
             return
 
         iterations += 1
-                try:
+        full_response = ""
+        tool_calls = []
+
+        try:
             for chunk in provider.ask(messages, ctx.config.model, tools=tool_schemas):
                 if ctx.task_manager.is_killed(task_id):
                     return
