@@ -432,6 +432,10 @@ def apply_theme(name: str = "lava"):
     console.set_instance(actual_console)
     mirror_console.set_instance(actual_mirror)
 
+    # Notify listeners of the theme change
+    from .events import bus
+    bus.emit("ui.theme_changed", name=name)
+
     # Patch sys.stdout.write to ensure all scrolled/new lines explicitly paint the rest of the line
     if not hasattr(sys.stdout, "_bg_fill_patched"):
         _original_write = sys.stdout.write

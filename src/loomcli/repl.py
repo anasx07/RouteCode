@@ -31,6 +31,7 @@ from .errors import classify_exception
 from .agents.registry import PROVIDER_MAP
 from .context import LoomContext
 from .task_manager import task_manager
+from .events import bus
 
 
 
@@ -112,6 +113,22 @@ class LoomREPL:
         )
         self.auto_save_counter = 0
         self.logo_animation_count = 0
+        self._setup_event_handlers()
+
+    def _setup_event_handlers(self):
+        """Register listeners for system events."""
+        from .notify import notify_task_complete
+        bus.on("task.completed", lambda task_id, description, **kwargs: notify_task_complete(task_id, description))
+        
+        # Example of decoupling auto-save: listen for turn completion
+        def _on_turn_complete(count, **kwargs):
+            if count > 0 and count % 5 == 0:
+                from .commands import handle_save
+                handle_save(["auto"], self.ctx)
+        bus.on("session.turn_complete", _on_turn_complete)
+
+        # Listen for theme changes to update local Pt Style
+        bus.on("ui.theme_changed", lambda **kwargs: self._set_terminal_background())
 
     def _logoTooltip(self):
         self.logo_animation_count += 1
@@ -370,8 +387,7 @@ class LoomREPL:
                 self.messages.append(assistant_message)
                 self.state.session_messages = self.messages[:]
                 self.auto_save_counter += 1
-                if self.auto_save_counter % 5 == 0:
-                    handle_save(["auto"], self.ctx)
+                bus.emit("session.turn_complete", count=self.auto_save_counter)
                 
                 if full_response:
                     pct = self.ctx.state.add_tokens(count_tokens(full_response, self.ctx.config.model), self.ctx.config.model)

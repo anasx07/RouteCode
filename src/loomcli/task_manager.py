@@ -6,6 +6,7 @@ import time
 from typing import Dict, Optional
 from dataclasses import dataclass, field
 from .config import config
+from .events import bus
 
 
 @dataclass
@@ -42,26 +43,27 @@ class TaskManager:
                 created_at=time.time(),
                 thread=thread,
             )
+            record = self._tasks[task_id]
+        bus.emit("task.created", task_id=task_id, description=record.description)
         return task_id
 
     def complete(self, task_id: str, result: dict):
         with self._lock:
             if task_id in self._tasks:
-                self._tasks[task_id].status = "completed"
-                self._tasks[task_id].completed_at = time.time()
-                self._tasks[task_id].result = result
-        try:
-            from .notify import notify_task_complete as _n
-            _n(task_id, self._tasks[task_id].description if task_id in self._tasks else "")
-        except Exception:
-            pass
+                record = self._tasks[task_id]
+                record.status = "completed"
+                record.completed_at = time.time()
+                record.result = result
+                bus.emit("task.completed", task_id=task_id, description=record.description, result=result)
 
     def fail(self, task_id: str, error: str):
         with self._lock:
             if task_id in self._tasks:
-                self._tasks[task_id].status = "failed"
-                self._tasks[task_id].completed_at = time.time()
-                self._tasks[task_id].error = error
+                record = self._tasks[task_id]
+                record.status = "failed"
+                record.completed_at = time.time()
+                record.error = error
+                bus.emit("task.failed", task_id=task_id, description=record.description, error=error)
 
     def kill(self, task_id: str) -> bool:
         with self._lock:
