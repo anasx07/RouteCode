@@ -12,6 +12,7 @@ from . import ui as _ui
 from .ui import print_info, print_success, print_error, print_step, LoomDialog
 from .tools import registry
 from .context import LoomContext
+from .utils import load_attachment
 
 PROVIDER_LIST = ["openrouter", "anthropic", "openai", "google", "deepseek", "opencode", "opencode-go"]
 
@@ -81,7 +82,7 @@ def handle_model(args: List[str], ctx: LoomContext):
 
         result = LoomDialog(
             title="Select AI Model",
-            text=_ui.get_dialog_text(f"Choose a model from {config.provider}:", "radio"),
+            text=_ui.get_dialog_text(f"Choose a model from {ctx.config.provider}:", "radio"),
             values=model_choices,
             dialog_type="radio"
         ).run()
@@ -192,7 +193,7 @@ def handle_history(args: List[str], ctx: LoomContext):
     table.add_column("Role", style="bold")
     table.add_column("Content")
 
-    for i, msg in enumerate(state.session_messages):
+    for i, msg in enumerate(ctx.state.session_messages):
         role = msg["role"]
         content = msg.get("content", "")
         if isinstance(content, list):
@@ -313,9 +314,9 @@ def handle_rewind(args: List[str], ctx: LoomContext):
 
     # Count actual assistant+turns (skip system)
     turns = 0
-    cut_at = len(state.session_messages)
-    for i in range(len(state.session_messages) - 1, -1, -1):
-        role = state.session_messages[i].get("role", "")
+    cut_at = len(ctx.state.session_messages)
+    for i in range(len(ctx.state.session_messages) - 1, -1, -1):
+        role = ctx.state.session_messages[i].get("role", "")
         if role in ("assistant", "user", "tool"):
             turns += 1
             if turns >= count:
@@ -372,6 +373,7 @@ def handle_edit(args: List[str], ctx: LoomContext):
         print_error("Usage: /edit <message_index>. Use /history to see indices.")
         return
 
+    if idx < 0 or idx >= len(ctx.state.session_messages):
         print_error(f"Index {idx} out of range (0-{len(ctx.state.session_messages) - 1}). Use /history to see indices.")
         return
 
