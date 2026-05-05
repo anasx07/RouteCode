@@ -9,7 +9,7 @@ from rich.markdown import Markdown
 from prompt_toolkit.shortcuts import radiolist_dialog, input_dialog, button_dialog, message_dialog
 
 from . import ui as _ui
-from .ui import print_info, print_success, print_error, print_step
+from .ui import print_info, print_success, print_error, print_step, LoomDialog
 from .tools import registry
 from .config import config, CONFIG_DIR
 
@@ -31,10 +31,11 @@ def handle_help(args: List[str]):
     _ui.console.print(table)
 
 def handle_provider(args: List[str]):
-    result = radiolist_dialog(
+    result = LoomDialog(
         title="Select AI Provider",
-        text="Choose the provider you want to use for this session:",
+        text=_ui.get_dialog_text("Choose the provider you want to use for this session:", "radio"),
         values=[(p, p.capitalize()) for p in PROVIDER_LIST],
+        dialog_type="radio"
     ).run()
 
     if result:
@@ -44,10 +45,11 @@ def handle_provider(args: List[str]):
         
         # Check for API key
         if not config.get_api_key(result):
-            new_key = input_dialog(
+            new_key = LoomDialog(
                 title=f"Setup {result.capitalize()}",
-                text=f"No API key found for {result}. Please paste it here and press Enter:",
-                password=True
+                text=_ui.get_dialog_text(f"No API key found for {result}. Please paste it here and press Enter:", "input"),
+                password=True,
+                dialog_type="input"
             ).run()
             if new_key:
                 config.set_api_key(result, new_key)
@@ -77,10 +79,11 @@ def handle_model(args: List[str]):
     if models:
         model_choices = [(m["id"], m.get("name", m["id"])) for m in models]
 
-        result = radiolist_dialog(
+        result = LoomDialog(
             title="Select AI Model",
-            text=f"Choose a model from {config.provider}:",
+            text=_ui.get_dialog_text(f"Choose a model from {config.provider}:", "radio"),
             values=model_choices,
+            dialog_type="radio"
         ).run()
 
         if result:
@@ -93,15 +96,16 @@ def handle_model(args: List[str]):
 
 def handle_config(args: List[str]):
     # If no args, show a management menu instead of just a table
-    action = button_dialog(
+    action = LoomDialog(
         title="LoomCLI Configuration",
-        text="What would you like to do?",
+        text=_ui.get_dialog_text("What would you like to do?", "button"),
         buttons=[
             ("View", "view"),
             ("Update Key", "update"),
             ("Delete Key", "delete"),
             ("Back", "back")
-        ]
+        ],
+        dialog_type="button"
     ).run()
 
     if action == "view":
@@ -116,16 +120,18 @@ def handle_config(args: List[str]):
         _ui.console.print(table)
 
     elif action == "update":
-        p_to_update = radiolist_dialog(
+        p_to_update = LoomDialog(
             title="Update API Key",
-            text="Select which provider's key you want to update:",
-            values=[(p, p.capitalize()) for p in PROVIDER_LIST]
+            text=_ui.get_dialog_text("Select which provider's key you want to update:", "radio"),
+            values=[(p, p.capitalize()) for p in PROVIDER_LIST],
+            dialog_type="radio"
         ).run()
         if p_to_update:
-            new_key = input_dialog(
+            new_key = LoomDialog(
                 title=f"Update {p_to_update.capitalize()}",
-                text=f"Paste your new {p_to_update} API key:",
-                password=True
+                text=_ui.get_dialog_text(f"Paste your new {p_to_update} API key:", "input"),
+                password=True,
+                dialog_type="input"
             ).run()
             if new_key:
                 config.set_api_key(p_to_update, new_key)
@@ -134,19 +140,21 @@ def handle_config(args: List[str]):
     elif action == "delete":
         existing_keys = list(config.api_keys.keys())
         if not existing_keys:
-            message_dialog(title="Error", text="No API keys found to delete.").run()
+            LoomDialog(title="Error", text=_ui.get_dialog_text("No API keys found to delete.", "message"), dialog_type="message").run()
             return
             
-        p_to_delete = radiolist_dialog(
+        p_to_delete = LoomDialog(
             title="Delete API Key",
-            text="Select which provider's key you want to remove:",
-            values=[(p, p.capitalize()) for p in existing_keys]
+            text=_ui.get_dialog_text("Select which provider's key you want to remove:", "radio"),
+            values=[(p, p.capitalize()) for p in existing_keys],
+            dialog_type="radio"
         ).run()
         if p_to_delete:
-            confirm = button_dialog(
+            confirm = LoomDialog(
                 title="Confirm Deletion",
-                text=f"Are you sure you want to delete the {p_to_delete} key?",
-                buttons=[("Yes", True), ("No", False)]
+                text=_ui.get_dialog_text(f"Are you sure you want to delete the {p_to_delete} key?", "button"),
+                buttons=[("Yes", True), ("No", False)],
+                dialog_type="button"
             ).run()
             if confirm:
                 del config.api_keys[p_to_delete]
@@ -247,10 +255,11 @@ def handle_load(args: List[str]):
         except Exception:
             choices.append((str(sf), sf.stem))
 
-    result = radiolist_dialog(
+    result = LoomDialog(
         title="Load Session",
-        text="Select a session to load:",
+        text=_ui.get_dialog_text("Select a session to load:", "radio"),
         values=choices,
+        dialog_type="radio"
     ).run()
 
     if result:
@@ -382,10 +391,11 @@ def handle_edit(args: List[str]):
 
     try:
         from prompt_toolkit.shortcuts import input_dialog
-        new_content = input_dialog(
+        new_content = LoomDialog(
             title=f"Edit Message {idx} (role: {msg['role']})",
-            text="Edit the message content:",
+            text=_ui.get_dialog_text("Edit the message content:", "input"),
             default=old_content,
+            dialog_type="input"
         ).run()
     except Exception:
         new_content = None
@@ -482,6 +492,14 @@ def handle_theme(args: List[str]):
             apply_theme(name)
             config.theme = name
             config.save()
+            # Force a clear and re-print of welcome screen to unify the background
+            import sys, getpass
+            from .ui import get_theme_bg, print_welcome_screen
+            bg = get_theme_bg()
+            r, g, b = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
+            sys.stdout.write(f"\033[48;2;{r};{g};{b}m\033[2J\033[H")
+            sys.stdout.flush()
+            print_welcome_screen(getpass.getuser(), config.model, config.provider)
             print_success(f"Theme set to: {name}")
         else:
             avail = ", ".join(THEMES.keys())
@@ -491,16 +509,26 @@ def handle_theme(args: List[str]):
     active = config.theme
     choices = [(n, n.capitalize()) for n in THEMES]
 
-    result = radiolist_dialog(
+    result = LoomDialog(
         title="Select Theme",
-        text=f"Current: {active.capitalize()}",
+        text=_ui.get_dialog_text(f"Current: {active.capitalize()}", "radio"),
         values=choices,
+        dialog_type="radio"
     ).run()
 
     if result:
         apply_theme(result)
         config.theme = result
         config.save()
+        
+        # Force a clear and re-print of welcome screen to unify the background
+        import sys, getpass
+        from .ui import get_theme_bg, print_welcome_screen
+        bg = get_theme_bg()
+        r, g, b = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
+        sys.stdout.write(f"\033[48;2;{r};{g};{b}m\033[2J\033[H")
+        sys.stdout.flush()
+        print_welcome_screen(getpass.getuser(), config.model, config.provider)
         print_success(f"Theme set to: {result}")
 
 def handle_personality(args: List[str]):
@@ -523,10 +551,11 @@ def handle_personality(args: List[str]):
     active = get_active_personality()
     choices = [(n, f"{n}: {p.description}") for n, p in personalities.items()]
 
-    result = radiolist_dialog(
+    result = LoomDialog(
         title="Select Personality",
-        text=f"Current: {active.name} ({active.description})",
+        text=_ui.get_dialog_text(f"Current: {active.name} ({active.description})", "radio"),
         values=choices,
+        dialog_type="radio"
     ).run()
 
     if result:

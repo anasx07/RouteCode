@@ -208,7 +208,10 @@ class LoomREPL:
         state.start_time = time.time()
         state.session_messages = []
         import sys
-        sys.stdout.write("\033[2J\033[H")
+        from .ui import get_theme_bg
+        bg = get_theme_bg()
+        r, g, b = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
+        sys.stdout.write(f"\033[48;2;{r};{g};{b}m\033[2J\033[H")
         sys.stdout.flush()
         
         print_welcome_screen(getpass.getuser(), config.model, config.provider)
@@ -219,8 +222,20 @@ class LoomREPL:
         system_content = compute_system_prompt()
         self.messages = [{"role": "system", "content": system_content}]
 
+        last_size = None
         while True:
             try:
+                # Detect terminal resize and re-apply background fixes
+                try:
+                    current_size = self.session.output.get_size()
+                    if current_size != last_size:
+                        from .ui import get_theme_bg, _set_terminal_bg
+                        bg = get_theme_bg()
+                        _set_terminal_bg(bg)
+                        last_size = current_size
+                except Exception:
+                    pass
+
                 def pre_run():
                     import sys
                     from .ui import get_theme_bg
