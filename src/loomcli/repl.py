@@ -12,12 +12,13 @@ from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
 from rich.markdown import Markdown
 from rich.live import Live
 
+from . import ui as _ui
 from .ui import (
-    console, print_error, print_welcome_screen, 
+    print_error, print_welcome_screen, 
     print_thought_elapsed, print_status_line,
     print_tool_call, print_tool_result, print_session_stats,
     get_thinking_indicator, LoadingRenderable, get_tool_label,
-    LoomFace, LOOM_FACES, print_step
+    LoomFace, LOOM_FACES, print_step, get_theme_bg
 )
 from .commands import execute_command, get_command_metadata
 from .tools import registry
@@ -44,6 +45,14 @@ PROVIDER_MAP = {
     "opencode": OpenCodeZenProvider,
 }
 
+class _ConsoleProxy:
+    """Proxy that always delegates to _ui.console, even after apply_theme reassigns it."""
+    def __getattr__(self, name):
+        return getattr(_ui.console, name)
+
+console = _ConsoleProxy()
+
+
 class FullScreenPromptSession(PromptSession):
     def _create_application(self, editing_mode, erase_when_done):
         app = super()._create_application(editing_mode, erase_when_done)
@@ -66,8 +75,9 @@ class LoomREPL:
             sentence=True
         )
         
+        bg = get_theme_bg()
         self.style = Style.from_dict({
-            "": "bg:#1a1a2e",
+            "": f"bg:{bg}",
             "toolbar": "#ffffff bg:#12121f",
             "accent": "#ffaf00",
             "logo_clickable": "bg:#ffaf00 #000000",
@@ -129,8 +139,15 @@ class LoomREPL:
         return False
 
     def _set_terminal_background(self):
-        """Full-screen mode handles background via prompt_toolkit style."""
-        pass
+        """Update prompt_toolkit style to match the active theme background."""
+        bg = get_theme_bg()
+        self.style = Style.from_dict({
+            "": f"bg:{bg}",
+            "toolbar": "#ffffff bg:#12121f",
+            "accent": "#ffaf00",
+            "logo_clickable": "bg:#ffaf00 #000000",
+        })
+        self.session.style = self.style
 
     def run(self):
         from .ui import apply_theme
@@ -332,7 +349,7 @@ class LoomREPL:
                     state.tools_called += 1
                     tool_inputs.append((tc_id, name, args, tc))
 
-                # Partition into concurrent-safe batches (Claude Code pattern)
+                # Partition into concurrent-safe batches
                 batches = self._partition_tools(tool_inputs)
                 for batch in batches:
                     is_safe, items = batch
@@ -379,7 +396,7 @@ class LoomREPL:
                 break
 
     def _microcompact(self) -> bool:
-        """Strip old tool results without an API call (Claude Code's microcompact pattern)."""
+        """Strip old tool results without an API call."""
         if len(self.messages) < 4:
             return False
         # Keep system prompt + last 3 user/assistant turns + their tool results

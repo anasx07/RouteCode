@@ -16,6 +16,15 @@ from rich.syntax import Syntax
 from rich.rule import Rule
 from .state import state
 
+# Background color per theme (hex)
+THEME_BACKGROUNDS = {
+    "lava":     "#1a1a2e",
+    "ocean":    "#0d1b2a",
+    "forest":   "#0b1a0b",
+    "sunset":   "#1f1008",
+    "midnight": "#0a0a14",
+}
+
 THEMES = {
     "lava": {
         "info": "bright_black", "warning": "yellow", "error": "bold red",
@@ -85,17 +94,42 @@ THEMES = {
 }
 
 
+_current_theme_name = "lava"
+
+
+def get_theme_bg(name=None):
+    """Return the hex background color for the given (or current) theme."""
+    return THEME_BACKGROUNDS.get(name or _current_theme_name, "#1a1a2e")
+
+
+def _set_terminal_bg(hex_color):
+    """Paint the entire terminal background using ANSI true-color sequences."""
+    r = int(hex_color[1:3], 16)
+    g = int(hex_color[3:5], 16)
+    b = int(hex_color[5:7], 16)
+    import sys
+    # OSC 11 sets the terminal default background (most modern terminals)
+    sys.stdout.write(f"\033]11;rgb:{r:02x}/{g:02x}/{b:02x}\033\\")
+    # SGR 48;2 sets background for subsequent text
+    sys.stdout.write(f"\033[48;2;{r};{g};{b}m")
+    sys.stdout.flush()
+
+
 def apply_theme(name: str = "lava"):
+    global _current_theme_name, loom_theme, console
+    _current_theme_name = name
     theme_dict = THEMES.get(name, THEMES["lava"])
-    global loom_theme
     loom_theme = Theme(theme_dict)
-    console._theme_stack._entries.clear()
-    console._theme_stack.push_theme(Theme({}), inherit=False)
-    console._theme_stack.push_theme(loom_theme)
+
+    bg = get_theme_bg(name)
+    _set_terminal_bg(bg)
+
+    # Recreate the console so every Rich print inherits the background
+    console = Console(theme=loom_theme, style=f"on {bg}")
 
 
 loom_theme = Theme(THEMES["lava"])
-console = Console(theme=loom_theme)
+console = Console(theme=loom_theme, style=f"on {THEME_BACKGROUNDS['lava']}")
 
 TOOL_STYLES = {
     "bash": "tool_bash",

@@ -2,11 +2,11 @@ import typer
 import sys
 from typing import Optional
 from .repl import LoomREPL
-from .ui import console
+from . import ui as _ui
 from .config import config
 from .state import state
 
-app = typer.Typer(help="LoomCLI: A Claude Code-like assistant in your terminal.", name="loomcli")
+app = typer.Typer(help="LoomCLI: An AI assistant for your terminal.", name="loomcli")
 
 
 @app.callback(invoke_without_command=True)
@@ -17,7 +17,7 @@ def main(
     resume: Optional[str] = typer.Option(None, "--resume", "-r", help="Resume a saved session by name"),
     print_mode: bool = typer.Option(False, "--print", help="Run a single query and print the result (headless)"),
 ):
-    """LoomCLI: A Claude Code-like assistant in your terminal."""
+    """LoomCLI: An AI assistant for your terminal."""
     if ctx.invoked_subcommand is not None:
         return
 
@@ -27,7 +27,7 @@ def main(
         if provider in ("openrouter", "openai", "anthropic", "google", "deepseek"):
             config.provider = provider
         else:
-            console.print(f"[error]Unknown provider: {provider}[/error]")
+            _ui.console.print(f"[error]Unknown provider: {provider}[/error]")
             raise typer.Exit(1)
 
     repl = LoomREPL()
@@ -42,15 +42,15 @@ def main(
             state.tokens_used = data.get("tokens_used", 0)
             config.provider = data.get("provider", config.provider)
             config.model = data.get("model", config.model)
-            console.print(f"[success]Resumed session: {resume}[/success]")
+            _ui.console.print(f"[success]Resumed session: {resume}[/success]")
         else:
-            console.print(f"[error]Session not found: {resume}[/error]")
+            _ui.console.print(f"[error]Session not found: {resume}[/error]")
             raise typer.Exit(1)
 
     if print_mode:
         query = " ".join(sys.argv[sys.argv.index("--") + 1:]) if "--" in sys.argv else ""
         if not query:
-            console.print("[error]Usage: loomcli --print -- <query>[/error]")
+            _ui.console.print("[error]Usage: loomcli --print -- <query>[/error]")
             raise typer.Exit(1)
         repl.run_single(query)
     else:
@@ -60,8 +60,8 @@ def main(
 @app.command()
 def version():
     """Show version info."""
-    console.print("[accent]LoomCLI[/accent] [white]0.1.0[/white]")
-    console.print("[dim]Python based, inspired by Claude Code[/dim]")
+    _ui.console.print("[accent]LoomCLI[/accent] [white]0.1.0[/white]")
+    _ui.console.print("[dim]Python based[/dim]")
 
 
 if __name__ == "__main__":

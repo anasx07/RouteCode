@@ -8,7 +8,8 @@ from rich.table import Table
 from rich.markdown import Markdown
 from prompt_toolkit.shortcuts import radiolist_dialog, input_dialog, button_dialog, message_dialog
 
-from .ui import console, print_info, print_success, print_error, print_step
+from . import ui as _ui
+from .ui import print_info, print_success, print_error, print_step
 from .tools import registry
 from .config import config, CONFIG_DIR
 
@@ -27,7 +28,7 @@ def handle_help(args: List[str]):
     table.add_row("/clear", "Clear the terminal screen")
     table.add_row("/exit", "Exit the session")
     
-    console.print(table)
+    _ui.console.print(table)
 
 def handle_provider(args: List[str]):
     result = radiolist_dialog(
@@ -39,7 +40,7 @@ def handle_provider(args: List[str]):
     if result:
         config.provider = result
         config.save()
-        console.print(f"\n[success]✔[/success] Provider switched to [bold cyan]{result}[/bold cyan]")
+        _ui.console.print(f"\n[success]✔[/success] Provider switched to [bold cyan]{result}[/bold cyan]")
         
         # Check for API key
         if not config.get_api_key(result):
@@ -56,7 +57,7 @@ def handle_model(args: List[str]):
     if args:
         config.model = args[0]
         config.save()
-        console.print(f"Model set to: [bold green]{config.model}[/bold green]")
+        _ui.console.print(f"Model set to: [bold green]{config.model}[/bold green]")
         return
 
     from .repl import PROVIDER_MAP
@@ -85,9 +86,9 @@ def handle_model(args: List[str]):
         if result:
             config.model = result
             config.save()
-            console.print(f"\n[success]✔[/success] Model set to [bold cyan]{result}[/bold cyan]")
+            _ui.console.print(f"\n[success]✔[/success] Model set to [bold cyan]{result}[/bold cyan]")
     else:
-        console.print(f"[dim]Model listing not available for {config.provider}. "
+        _ui.console.print(f"[dim]Model listing not available for {config.provider}. "
                       f"Set the model manually: /model <name>[/dim]")
 
 def handle_config(args: List[str]):
@@ -112,7 +113,7 @@ def handle_config(args: List[str]):
         for p, key in config.api_keys.items():
             masked_key = key[:4] + "*" * (max(0, len(key) - 8)) + key[-4:] if len(key) > 8 else "****"
             table.add_row(f"{p} API Key", masked_key)
-        console.print(table)
+        _ui.console.print(table)
 
     elif action == "update":
         p_to_update = radiolist_dialog(
@@ -158,7 +159,7 @@ def handle_tools(args: List[str]):
     table.add_column("Description")
     for name, desc in registry.list_tools().items():
         table.add_row(name, desc)
-    console.print(table)
+    _ui.console.print(table)
 
 def handle_clear(args: List[str]):
     os.system('cls' if os.name == 'nt' else 'clear')
@@ -166,7 +167,7 @@ def handle_clear(args: List[str]):
 def handle_history(args: List[str]):
     from .state import state
     if not state.session_messages:
-        console.print("[dim]No conversation history yet.[/dim]")
+        _ui.console.print("[dim]No conversation history yet.[/dim]")
         return
 
     table = Table(title="Conversation History", show_header=True, header_style="bold magenta")
@@ -187,7 +188,7 @@ def handle_history(args: List[str]):
         max_len = 120
         display = content[:max_len] + "..." if len(content) > max_len else content
         table.add_row(str(i), role, display.replace("[", "\\["))
-    console.print(table)
+    _ui.console.print(table)
 
 def handle_save(args: List[str]):
     from .state import state
@@ -255,14 +256,14 @@ def handle_load(args: List[str]):
 
 def handle_exit(args: List[str]):
     handle_save([])
-    console.print("[info]ℹ[/info] Goodbye!")
+    _ui.console.print("[info]ℹ[/info] Goodbye!")
     sys.exit(0)
 
 def handle_tasks(args: List[str]):
     from .task_manager import task_manager
     tasks = task_manager.list()
     if not tasks:
-        console.print("[dim]No active or recent tasks.[/dim]")
+        _ui.console.print("[dim]No active or recent tasks.[/dim]")
         return
     table = Table(title="Tasks", show_header=True, header_style="bold cyan")
     table.add_column("ID", style="bold yellow")
@@ -274,7 +275,7 @@ def handle_tasks(args: List[str]):
         elapsed = time.time() - t["created_at"]
         age = f"{elapsed:.0f}s" if elapsed < 120 else f"{elapsed/60:.0f}m"
         table.add_row(t["task_id"], t["description"][:60], f"[{status_style}]{t['status']}[/{status_style}]", age)
-    console.print(table)
+    _ui.console.print(table)
 
 def handle_task_stop(args: List[str]):
     from .task_manager import task_manager
@@ -334,20 +335,20 @@ def handle_forget(args: List[str]):
         print_error("Usage: /forget <key>")
         return
     msg = memory_manager.forget(args[0])
-    console.print(f" [dim]{msg}[/dim]")
+    _ui.console.print(f" [dim]{msg}[/dim]")
 
 def handle_memories(args: List[str]):
     from .memory import memory_manager
     memories = memory_manager.list()
     if not memories:
-        console.print("[dim]No memories saved yet. Use /remember <key> <value> to save one.[/dim]")
+        _ui.console.print("[dim]No memories saved yet. Use /remember <key> <value> to save one.[/dim]")
         return
     table = Table(title="Session Memory", show_header=True, header_style="bold cyan")
     table.add_column("Key", style="bold yellow")
     table.add_column("Value")
     for key, value in memories.items():
         table.add_row(key, value[:80])
-    console.print(table)
+    _ui.console.print(table)
 
 def handle_edit(args: List[str]):
     from .state import state
@@ -386,7 +387,7 @@ def handle_edit(args: List[str]):
         state.context_warned = False
         print_success(f"Message {idx} updated. Conversation truncated after edit.")
     elif new_content is not None:
-        console.print("[dim]No changes made.[/dim]")
+        _ui.console.print("[dim]No changes made.[/dim]")
 
 def handle_search(args: List[str]):
     from .state import state
@@ -396,7 +397,7 @@ def handle_search(args: List[str]):
         return
     term = " ".join(args)
     if not state.session_messages:
-        console.print("[dim]No conversation to search.[/dim]")
+        _ui.console.print("[dim]No conversation to search.[/dim]")
         return
 
     results = []
@@ -408,7 +409,7 @@ def handle_search(args: List[str]):
             results.append((i, msg["role"], content[:120]))
 
     if not results:
-        console.print(f"[dim]No matches for '{term}'.[/dim]")
+        _ui.console.print(f"[dim]No matches for '{term}'.[/dim]")
         return
 
     table = Table(title=f"Search: '{term}'", show_header=True, header_style="bold magenta")
@@ -417,7 +418,7 @@ def handle_search(args: List[str]):
     table.add_column("Content")
     for idx, role, content in results:
         table.add_row(str(idx), role, content.replace("[", "\\["))
-    console.print(table)
+    _ui.console.print(table)
 
 def handle_attach(args: List[str]):
     from .attachments import load_attachment
@@ -458,8 +459,8 @@ def handle_attach(args: List[str]):
         print_success(f"Attached: {att['name']}")
 
 def handle_version(args: List[str]):
-    console.print("[accent]LoomCLI[/accent] [white]0.1.0[/white]")
-    console.print(f"[dim]Python based, {len(COMMANDS)} commands, inspired by Claude Code[/dim]")
+    _ui.console.print("[accent]LoomCLI[/accent] [white]0.1.0[/white]")
+    _ui.console.print(f"[dim]Python based, {len(COMMANDS)} commands[/dim]")
 
 def handle_theme(args: List[str]):
     from .ui import THEMES, apply_theme
