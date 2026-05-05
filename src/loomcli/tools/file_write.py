@@ -1,7 +1,10 @@
 import os
-from typing import Any, Dict
+from typing import Any, Dict, Optional, TYPE_CHECKING
 from pydantic import BaseModel, Field
 from .base import BaseTool
+
+if TYPE_CHECKING:
+    from ..context import LoomContext
 from ..utils import safe_resolve_path
 
 class FileWriteInput(BaseModel):
@@ -18,7 +21,7 @@ class FileWriteTool(BaseTool):
         return ("- file_write: Create or overwrite a file with content. "
                 "Provide file_path and content. Creates parent directories automatically. Runs serially.")
 
-    def execute(self, file_path: str, content: str) -> Dict[str, Any]:
+    def execute(self, file_path: str, content: str, ctx: Optional["LoomContext"] = None) -> Dict[str, Any]:
         resolved, error = safe_resolve_path(file_path)
         if error:
             return {"success": False, "error": error}

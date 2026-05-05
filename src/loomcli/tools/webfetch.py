@@ -1,6 +1,9 @@
-from typing import Any, Dict
+from typing import Any, Dict, Optional, TYPE_CHECKING
 from pydantic import BaseModel, Field
 from .base import BaseTool
+
+if TYPE_CHECKING:
+    from ..context import LoomContext
 
 
 class WebFetchInput(BaseModel):
@@ -20,7 +23,7 @@ class WebFetchTool(BaseTool):
     def get_activity_description(self, url: str = "", **kwargs) -> str:
         return f"WebFetch({url[:40]})"
 
-    def execute(self, url: str) -> Dict[str, Any]:
+    def execute(self, url: str, ctx: Optional["LoomContext"] = None) -> Dict[str, Any]:
         try:
             import httpx
             response = httpx.get(url, follow_redirects=True, timeout=30.0)

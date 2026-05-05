@@ -1,8 +1,11 @@
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from pydantic import BaseModel, Field
 from .base import BaseTool
+
+if TYPE_CHECKING:
+    from ..context import LoomContext
 
 class GrepInput(BaseModel):
     pattern: str = Field(..., description="Regex pattern to search for in file contents")
@@ -20,7 +23,7 @@ class GrepTool(BaseTool):
         return ("- grep: Search file contents with regex patterns. "
                 "Use include='*.py' to filter by extension. Capped at 50 files. Safe for concurrent use.")
 
-    def execute(self, pattern: str, include: Optional[str] = None, path: Optional[str] = None) -> Dict[str, Any]:
+    def execute(self, pattern: str, include: Optional[str] = None, path: Optional[str] = None, ctx: Optional["LoomContext"] = None) -> Dict[str, Any]:
         import glob as glob_module
 
         try:

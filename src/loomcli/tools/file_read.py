@@ -1,8 +1,11 @@
 import os
 import difflib
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from pydantic import BaseModel, Field
 from .base import BaseTool
+
+if TYPE_CHECKING:
+    from ..context import LoomContext
 from ..utils import safe_resolve_path
 
 
@@ -53,7 +56,7 @@ class FileReadTool(BaseTool):
     def get_activity_description(self, file_path: str = "", **kwargs) -> str:
         return f"Read({file_path})"
 
-    def execute(self, file_path: str, offset: int = 0, limit: int = 0) -> Dict[str, Any]:
+    def execute(self, file_path: str, offset: int = 0, limit: int = 0, ctx: Optional["LoomContext"] = None) -> Dict[str, Any]:
         resolved, error = safe_resolve_path(file_path)
         if error:
             return {"success": False, "error": error}

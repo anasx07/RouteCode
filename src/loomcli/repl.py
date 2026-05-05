@@ -29,6 +29,8 @@ from .state import SessionState, count_tokens
 from .system_prompt import compute_system_prompt
 from .errors import classify_exception
 from .agents.registry import PROVIDER_MAP
+from .context import LoomContext
+from .task_manager import task_manager
 
 
 
@@ -102,6 +104,12 @@ class LoomREPL:
         self.provider = None
         self.messages = []
         self.state = SessionState()
+        self.ctx = LoomContext(
+            state=self.state,
+            config=config,
+            console=console,
+            task_manager=task_manager
+        )
         self.auto_save_counter = 0
         self.logo_animation_count = 0
 
@@ -126,7 +134,7 @@ class LoomREPL:
                 return None
 
         ft = to_formatted_text([
-            ("class:toolbar", f" Build \u00b7 {config.model} "),
+            ("class:toolbar", f" Build \u00b7 {self.ctx.config.model} "),
             ("class:toolbar", f" | {os.getcwd()} "),
             ("class:toolbar", task_info),
             ("class:accent", " LOOM ", _click_logo),
@@ -148,11 +156,11 @@ class LoomREPL:
             dialog.run()
             if dialog.result == "ok" and dialog.text_area.text:
                 api_key = dialog.text_area.text.strip()
-                config.set_api_key(config.provider, api_key)
+                self.ctx.config.set_api_key(self.ctx.config.provider, api_key)
             else:
                 return False
         
-        provider_class = PROVIDER_MAP.get(config.provider)
+        provider_class = PROVIDER_MAP.get(self.ctx.config.provider)
         if provider_class:
             self.provider = provider_class(api_key)
             return True
@@ -189,7 +197,7 @@ class LoomREPL:
 
     def run(self):
         from .ui import apply_theme
-        apply_theme(config.theme)
+        apply_theme(self.ctx.config.theme)
         self._set_terminal_background()
         self.state.start_time = time.time()
         self.state.session_messages = []
@@ -200,10 +208,10 @@ class LoomREPL:
         sys.stdout.write(f"\033[48;2;{r};{g};{b}m\033[2J\033[H")
         sys.stdout.flush()
         
-        print_welcome_screen(getpass.getuser(), config.model, config.provider)
+        print_welcome_screen(getpass.getuser(), self.ctx.config.model, self.ctx.config.provider)
         
         if not self._initialize_provider():
-            print_error(f"No API key found for provider '{config.provider}'. Use [command]/config[/command] to set it.")
+            print_error(f"No API key found for provider '{self.ctx.config.provider}'. Use [command]/config[/command] to set it.")
 
         system_content = compute_system_prompt()
         self.messages = [{"role": "system", "content": system_content}]
@@ -242,7 +250,7 @@ class LoomREPL:
                     continue
                 
                 if user_input.startswith("/"):
-                    if execute_command(user_input, self.state):
+                    if execute_command(user_input, self.ctx):
                         self._initialize_provider()
                         if self.state.session_messages:
                             self.messages = self.state.session_messages
@@ -266,12 +274,12 @@ class LoomREPL:
     def run_single(self, query: str):
         """Run a single query in headless mode and print the result."""
         from .ui import apply_theme
-        apply_theme(config.theme)
+        apply_theme(self.ctx.config.theme)
         self._set_terminal_background()
         self.state.start_time = time.time()
         self.state.session_messages = []
         if not self._initialize_provider():
-            print_error(f"No API key found for provider '{config.provider}'.")
+            print_error(f"No API key found for provider '{self.ctx.config.provider}'.")
             return
         system_content = compute_system_prompt()
         self.messages = [{"role": "system", "content": system_content}]
@@ -303,9 +311,9 @@ class LoomREPL:
             try:
                 progress = get_thinking_indicator()
                 renderable = LoadingRenderable(progress)
-                with Live(renderable, refresh_per_second=10, console=console, transient=True) as live:
+                with Live(renderable, refresh_per_second=10, console=self.ctx.console, transient=True) as live:
                     pending_tool_labels = []
-                    for chunk in self.provider.ask(self.messages, config.model, tools=tool_schemas):
+                    for chunk in self.provider.ask(self.messages, self.ctx.config.model, tools=tool_schemas):
                         if chunk["type"] == "text":
                             full_response += chunk["content"]
                             display_text = full_response.replace("<thought>", "").replace("</thought>", "")
@@ -338,12 +346,12 @@ class LoomREPL:
                     final_response = thought_parts[1].strip()
                     print_thought_elapsed(elapsed)
                     if final_response:
-                        console.print(Markdown(final_response))
+                        self.ctx.console.print(Markdown(final_response))
                 elif full_response:
-                    console.print(Markdown(full_response))
+                    self.ctx.console.print(Markdown(full_response))
                 
-                print_status_line(config.model, elapsed)
-                print_session_stats(self.state)
+                print_status_line(self.ctx.config.model, elapsed)
+                print_session_stats(self.ctx.state)
 
                 assistant_message = {"role": "assistant"}
                 if full_response:
@@ -363,18 +371,17 @@ class LoomREPL:
                 self.state.session_messages = self.messages[:]
                 self.auto_save_counter += 1
                 if self.auto_save_counter % 5 == 0:
-                    from .commands import handle_save
-                    handle_save(["auto"])
+                    handle_save(["auto"], self.ctx)
                 
                 if full_response:
-                    pct = self.state.add_tokens(count_tokens(full_response, config.model), config.model)
+                    pct = self.ctx.state.add_tokens(count_tokens(full_response, self.ctx.config.model), self.ctx.config.model)
                     if pct:
-                        console.print(f" [warning]⚠[/warning] [dim]Context ~{pct:.0f}% full.[/dim]")
+                        self.ctx.console.print(f" [warning]⚠[/warning] [dim]Context ~{pct:.0f}% full.[/dim]")
                         if pct > 70 and pct <= 85:
                             if self._microcompact():
-                                console.print(" [success]✔[/success] [dim]Cleaned old tool results.[/dim]")
+                                self.ctx.console.print(" [success]✔[/success] [dim]Cleaned old tool results.[/dim]")
                             else:
-                                console.print(" [dim]Consider /clear if performance degrades.[/dim]")
+                                self.ctx.console.print(" [dim]Consider /clear if performance degrades.[/dim]")
                         elif pct > 85:
                             from prompt_toolkit.shortcuts import button_dialog
                             options = []
@@ -388,9 +395,9 @@ class LoomREPL:
                                 buttons=options
                             ).run()
                             if result == "full" and self._compact_context():
-                                console.print(" [success]✔[/success] [dim]Context compacted.[/dim]")
+                                self.ctx.console.print(" [success]✔[/success] [dim]Context compacted.[/dim]")
                             elif result == "micro":
-                                console.print(" [success]✔[/success] [dim]Old tool results cleared.[/dim]")
+                                self.ctx.console.print(" [success]✔[/success] [dim]Old tool results cleared.[/dim]")
 
                 if not tool_calls:
                     break
@@ -424,12 +431,12 @@ class LoomREPL:
                     if is_safe and len(items) > 1:
                         for _, name, args, _ in items:
                             print_tool_call(name, args)
-                        with console.status("[dim]Executing tools...[/dim]", spinner="dots"):
-                            results = []
-                            with concurrent.futures.ThreadPoolExecutor(max_workers=len(items)) as executor:
-                                futures = {}
-                                for tc_id, name, args, tc in items:
-                                    future = executor.submit(self.call_tool, name, args)
+                            with self.ctx.console.status("[dim]Executing tools...[/dim]", spinner="dots"):
+                                results = []
+                                with concurrent.futures.ThreadPoolExecutor(max_workers=len(items)) as executor:
+                                    futures = {}
+                                    for tc_id, name, args, tc in items:
+                                        future = executor.submit(self.call_tool, name, args)
                                     futures[future] = (tc_id, name)
                                 for future in concurrent.futures.as_completed(futures):
                                     tc_id, name = futures[future]
@@ -441,7 +448,7 @@ class LoomREPL:
                     else:
                         for tc_id, name, args, tc in (items if isinstance(items, list) else [(None,) + items]):
                             label = get_tool_label(name, args)
-                            with console.status(f"[dim]{label}[/dim]", spinner="dots"):
+                            with self.ctx.console.status(f"[dim]{label}[/dim]", spinner="dots"):
                                 start_ts = time.time()
                                 result = self.call_tool(name, args)
                             elapsed_ts = time.time() - start_ts
@@ -450,16 +457,16 @@ class LoomREPL:
                             self._append_tool_result(tc_id, name, result)
 
             except KeyboardInterrupt:
-                console.print("\n [dim]Aborted.[/dim]")
+                self.ctx.console.print("\n [dim]Aborted.[/dim]")
                 break
             except Exception as e:
                 import traceback
                 ce = classify_exception(e)
                 print_error(f"{ce.message}")
-                console.print(f" [dim]{traceback.format_exc()[-300:]}[/dim]")
+                self.ctx.console.print(f" [dim]{traceback.format_exc()[-300:]}[/dim]")
                 self.messages.append(ce.to_message())
                 if not ce.recoverable:
-                    console.print(f" [dim]{ce.guidance}[/dim]")
+                    self.ctx.console.print(f" [dim]{ce.guidance}[/dim]")
                 break
 
     def _microcompact(self) -> bool:
@@ -620,7 +627,7 @@ class LoomREPL:
             "role": "tool", "tool_call_id": tc_id,
             "name": name, "content": content
         })
-        self.state.add_tokens(count_tokens(content, config.model), config.model)
+        self.ctx.state.add_tokens(count_tokens(content, self.ctx.config.model), self.ctx.config.model)
 
         if name == "file_edit" and result.get("success") and result.get("diff"):
             print_diff(result["diff"])
@@ -632,7 +639,7 @@ class LoomREPL:
         if self._check_permission_allow(tool, args):
             return True
         if self._check_permission_deny(tool, args):
-            console.print(f" [error]✘[/error] [dim]Blocked by permission rules: {tool.name}[/dim]")
+            self.ctx.console.print(f" [error]✘[/error] [dim]Blocked by permission rules: {tool.name}[/dim]")
             return False
 
         from .ui import get_tool_label, print_diff
@@ -664,9 +671,8 @@ class LoomREPL:
             return True
 
     def _check_permission_allow(self, tool: BaseTool, args: dict) -> bool:
-        from .config import config
         from fnmatch import fnmatch
-        allowlist = config.allowlist or []
+        allowlist = self.ctx.config.allowlist or []
         pattern = f"{tool.name}(*)"
         for rule in allowlist:
             if fnmatch(pattern, rule):
@@ -674,9 +680,8 @@ class LoomREPL:
         return False
 
     def _check_permission_deny(self, tool: BaseTool, args: dict) -> bool:
-        from .config import config
         from fnmatch import fnmatch
-        denylist = config.denylist or []
+        denylist = self.ctx.config.denylist or []
         pattern = f"{tool.name}(*)"
         for rule in denylist:
             if fnmatch(pattern, rule):
@@ -694,12 +699,7 @@ class LoomREPL:
             return {"error": "Permission denied by user"}
 
         try:
-            import inspect
-            sig = inspect.signature(tool.execute)
-            if "state" in sig.parameters:
-                result = tool.execute(**arguments, state=self.state)
-            else:
-                result = tool.execute(**arguments)
+            result = tool.execute(**arguments, ctx=self.ctx)
             registry.run_post_hooks(name, result)
             return result
         except Exception as e:

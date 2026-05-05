@@ -1,7 +1,10 @@
 import uuid
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, List, Optional, Type
+from typing import Any, Callable, Dict, List, Optional, Type, TYPE_CHECKING
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from ..context import LoomContext
 
 
 class BaseTool(ABC):
@@ -38,7 +41,7 @@ class BaseTool(ABC):
         return self.name
 
     @abstractmethod
-    def execute(self, **kwargs) -> Any:
+    def execute(self, ctx: Optional["LoomContext"] = None, **kwargs) -> Any:
         pass
 
     def validate_path(self, path: str) -> bool:

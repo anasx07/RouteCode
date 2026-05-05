@@ -11,11 +11,11 @@ from prompt_toolkit.shortcuts import radiolist_dialog, input_dialog, button_dial
 from . import ui as _ui
 from .ui import print_info, print_success, print_error, print_step, LoomDialog
 from .tools import registry
-from .config import config, CONFIG_DIR
+from .context import LoomContext
 
 PROVIDER_LIST = ["openrouter", "anthropic", "openai", "google", "deepseek", "opencode", "opencode-go"]
 
-def handle_help(args: List[str]):
+def handle_help(args: List[str], ctx: LoomContext):
     table = Table(title="Available Commands", show_header=True, header_style="bold magenta")
     table.add_column("Command", style="command")
     table.add_column("Description")
@@ -28,9 +28,9 @@ def handle_help(args: List[str]):
     table.add_row("/clear", "Clear the terminal screen")
     table.add_row("/exit", "Exit the session")
     
-    _ui.console.print(table)
+    ctx.console.print(table)
 
-def handle_provider(args: List[str]):
+def handle_provider(args: List[str], ctx: LoomContext):
     result = LoomDialog(
         title="Select AI Provider",
         text=_ui.get_dialog_text("Choose the provider you want to use for this session:", "radio"),
@@ -39,12 +39,12 @@ def handle_provider(args: List[str]):
     ).run()
 
     if result:
-        config.provider = result
-        config.save()
-        _ui.console.print(f"\n[success]✔[/success] Provider switched to [bold cyan]{result}[/bold cyan]")
+        ctx.config.provider = result
+        ctx.config.save()
+        ctx.console.print(f"\n[success]✔[/success] Provider switched to [bold cyan]{result}[/bold cyan]")
         
         # Check for API key
-        if not config.get_api_key(result):
+        if not ctx.config.get_api_key(result):
             new_key = LoomDialog(
                 title=f"Setup {result.capitalize()}",
                 text=_ui.get_dialog_text(f"No API key found for {result}. Please paste it here and press Enter:", "input"),
@@ -52,28 +52,28 @@ def handle_provider(args: List[str]):
                 dialog_type="input"
             ).run()
             if new_key:
-                config.set_api_key(result, new_key)
+                ctx.config.set_api_key(result, new_key)
                 print_success(f"API key for {result} has been saved.")
 
-def handle_model(args: List[str]):
+def handle_model(args: List[str], ctx: LoomContext):
     if args:
-        config.model = args[0]
-        config.save()
-        _ui.console.print(f"Model set to: [bold green]{config.model}[/bold green]")
+        ctx.config.model = args[0]
+        ctx.config.save()
+        ctx.console.print(f"Model set to: [bold green]{ctx.config.model}[/bold green]")
         return
 
     from .repl import PROVIDER_MAP
-    api_key = config.get_api_key()
+    api_key = ctx.config.get_api_key()
     if not api_key:
-        print_error(f"No API key found for {config.provider}. Set it first with [command]/config[/command]")
+        print_error(f"No API key found for {ctx.config.provider}. Set it first with [command]/config[/command]")
         return
 
-    provider_cls = PROVIDER_MAP.get(config.provider)
+    provider_cls = PROVIDER_MAP.get(ctx.config.provider)
     if not provider_cls:
-        print_error(f"Unknown provider: {config.provider}")
+        print_error(f"Unknown provider: {ctx.config.provider}")
         return
 
-    print_step(f"Fetching models from {config.provider}...")
+    print_step(f"Fetching models from {ctx.config.provider}...")
     provider = provider_cls(api_key)
     models = getattr(provider, "get_models", lambda: [])()
     if models:
@@ -87,14 +87,14 @@ def handle_model(args: List[str]):
         ).run()
 
         if result:
-            config.model = result
-            config.save()
-            _ui.console.print(f"\n[success]✔[/success] Model set to [bold cyan]{result}[/bold cyan]")
+            ctx.config.model = result
+            ctx.config.save()
+            ctx.console.print(f"\n[success]✔[/success] Model set to [bold cyan]{result}[/bold cyan]")
     else:
-        _ui.console.print(f"[dim]Model listing not available for {config.provider}. "
+        ctx.console.print(f"[dim]Model listing not available for {ctx.config.provider}. "
                       f"Set the model manually: /model <name>[/dim]")
 
-def handle_config(args: List[str]):
+def handle_config(args: List[str], ctx: LoomContext):
     # If no args, show a management menu instead of just a table
     action = LoomDialog(
         title="LoomCLI Configuration",
@@ -112,12 +112,12 @@ def handle_config(args: List[str]):
         table = Table(title="Current Configuration", show_header=True, header_style="bold magenta")
         table.add_column("Key")
         table.add_column("Value")
-        table.add_row("Provider", config.provider)
-        table.add_row("Model", config.model)
-        for p, key in config.api_keys.items():
+        table.add_row("Provider", ctx.config.provider)
+        table.add_row("Model", ctx.config.model)
+        for p, key in ctx.config.api_keys.items():
             masked_key = key[:4] + "*" * (max(0, len(key) - 8)) + key[-4:] if len(key) > 8 else "****"
             table.add_row(f"{p} API Key", masked_key)
-        _ui.console.print(table)
+        ctx.console.print(table)
 
     elif action == "update":
         p_to_update = LoomDialog(
@@ -134,11 +134,11 @@ def handle_config(args: List[str]):
                 dialog_type="input"
             ).run()
             if new_key:
-                config.set_api_key(p_to_update, new_key)
+                ctx.config.set_api_key(p_to_update, new_key)
                 print_success(f"Key for {p_to_update} has been replaced.")
 
     elif action == "delete":
-        existing_keys = list(config.api_keys.keys())
+        existing_keys = list(ctx.config.api_keys.keys())
         if not existing_keys:
             LoomDialog(title="Error", text=_ui.get_dialog_text("No API keys found to delete.", "message"), dialog_type="message").run()
             return
@@ -157,19 +157,19 @@ def handle_config(args: List[str]):
                 dialog_type="button"
             ).run()
             if confirm:
-                del config.api_keys[p_to_delete]
-                config.save()
+                del ctx.config.api_keys[p_to_delete]
+                ctx.config.save()
                 print_success(f"Key for {p_to_delete} has been deleted.")
 
-def handle_tools(args: List[str]):
+def handle_tools(args: List[str], ctx: LoomContext):
     table = Table(title="Agent Tools", show_header=True, header_style="bold cyan")
     table.add_column("Tool", style="bold yellow")
     table.add_column("Description")
     for name, desc in registry.list_tools().items():
         table.add_row(name, desc)
-    _ui.console.print(table)
+    ctx.console.print(table)
 
-def handle_clear(args: List[str]):
+def handle_clear(args: List[str], ctx: LoomContext):
     import sys
     sys.stdout.write("\033[2J\033[H")
     h = 24
@@ -182,9 +182,9 @@ def handle_clear(args: List[str]):
     sys.stdout.write("\n" * (h - 2))
     sys.stdout.flush()
 
-def handle_history(args: List[str], state):
-    if not state.session_messages:
-        _ui.console.print("[dim]No conversation history yet.[/dim]")
+def handle_history(args: List[str], ctx: LoomContext):
+    if not ctx.state.session_messages:
+        ctx.console.print("[dim]No conversation history yet.[/dim]")
         return
 
     table = Table(title="Conversation History", show_header=True, header_style="bold magenta")
@@ -205,10 +205,10 @@ def handle_history(args: List[str], state):
         max_len = 120
         display = content[:max_len] + "..." if len(content) > max_len else content
         table.add_row(str(i), role, display.replace("[", "\\["))
-    _ui.console.print(table)
+    ctx.console.print(table)
 
-def handle_save(args: List[str], state):
-    if not state.session_messages:
+def handle_save(args: List[str], ctx: LoomContext):
+    if not ctx.state.session_messages:
         print_error("No conversation to save.")
         return
 
@@ -220,12 +220,12 @@ def handle_save(args: List[str], state):
         name = f"session_{timestamp}"
     
     try:
-        save_session(state, name)
+        save_session(ctx.state, name)
         print_success(f"Session saved: {name}")
     except Exception as e:
         print_error(f"Failed to save session: {e}")
 
-def handle_load(args: List[str], state):
+def handle_load(args: List[str], ctx: LoomContext):
     from .state import SESSIONS_DIR, load_session
     if not SESSIONS_DIR.exists():
         print_error("No saved sessions found.")
@@ -258,27 +258,26 @@ def handle_load(args: List[str], state):
         try:
             new_state = load_session(result)
             if new_state:
-                state.session_messages = new_state.session_messages
-                state.tokens_used = new_state.tokens_used
-                state.estimated_cost = new_state.estimated_cost
-                state.commands_run = new_state.commands_run
-                state.tools_called = new_state.tools_called
+                ctx.state.session_messages = new_state.session_messages
+                ctx.state.tokens_used = new_state.tokens_used
+                ctx.state.estimated_cost = new_state.estimated_cost
+                ctx.state.commands_run = new_state.commands_run
+                ctx.state.tools_called = new_state.tools_called
                 print_success(f"Loaded session: {result}")
             else:
                 print_error(f"Failed to load session: {result}")
         except Exception as e:
             print_error(f"Error loading session: {e}")
 
-def handle_exit(args: List[str], state):
-    handle_save([], state)
-    _ui.console.print("[info]ℹ[/info] Goodbye!")
+def handle_exit(args: List[str], ctx: LoomContext):
+    handle_save([], ctx)
+    ctx.console.print("[info]ℹ[/info] Goodbye!")
     sys.exit(0)
 
-def handle_tasks(args: List[str]):
-    from .task_manager import task_manager
-    tasks = task_manager.list()
+def handle_tasks(args: List[str], ctx: LoomContext):
+    tasks = ctx.task_manager.list()
     if not tasks:
-        _ui.console.print("[dim]No active or recent tasks.[/dim]")
+        ctx.console.print("[dim]No active or recent tasks.[/dim]")
         return
     table = Table(title="Tasks", show_header=True, header_style="bold cyan")
     table.add_column("ID", style="bold yellow")
@@ -290,21 +289,20 @@ def handle_tasks(args: List[str]):
         elapsed = time.time() - t["created_at"]
         age = f"{elapsed:.0f}s" if elapsed < 120 else f"{elapsed/60:.0f}m"
         table.add_row(t["task_id"], t["description"][:60], f"[{status_style}]{t['status']}[/{status_style}]", age)
-    _ui.console.print(table)
+    ctx.console.print(table)
 
-def handle_task_stop(args: List[str]):
-    from .task_manager import task_manager
+def handle_task_stop(args: List[str], ctx: LoomContext):
     if not args:
         print_error("Usage: /task-stop <task_id>")
         return
     task_id = args[0]
-    if task_manager.kill(task_id):
+    if ctx.task_manager.kill(task_id):
         print_success(f"Task {task_id} stopped.")
     else:
         print_error(f"Task {task_id} not found or not running.")
 
-def handle_rewind(args: List[str], state):
-    if not state.session_messages:
+def handle_rewind(args: List[str], ctx: LoomContext):
+    if not ctx.state.session_messages:
         print_error("No conversation to rewind.")
         return
     try:
@@ -324,13 +322,13 @@ def handle_rewind(args: List[str], state):
                 cut_at = i
                 break
 
-    kept = state.session_messages[:max(1, cut_at)]
-    state.session_messages = kept[:]
-    state.tokens_used = 0
-    state.context_warned = False
+    kept = ctx.state.session_messages[:max(1, cut_at)]
+    ctx.state.session_messages = kept[:]
+    ctx.state.tokens_used = 0
+    ctx.state.context_warned = False
     print_success(f"Rewound {count} turn(s). {len(kept) - 1} message(s) remaining (excluding system).")
 
-def handle_remember(args: List[str]):
+def handle_remember(args: List[str], ctx: LoomContext):
     from .memory import memory_manager
     if not args:
         print_error("Usage: /remember <key> <value>")
@@ -343,15 +341,15 @@ def handle_remember(args: List[str]):
     msg = memory_manager.remember(key, value)
     print_success(msg)
 
-def handle_forget(args: List[str]):
+def handle_forget(args: List[str], ctx: LoomContext):
     from .memory import memory_manager
     if not args:
         print_error("Usage: /forget <key>")
         return
     msg = memory_manager.forget(args[0])
-    _ui.console.print(f" [dim]{msg}[/dim]")
+    ctx.console.print(f" [dim]{msg}[/dim]")
 
-def handle_memories(args: List[str]):
+def handle_memories(args: List[str], ctx: LoomContext):
     from .memory import memory_manager
     memories = memory_manager.list()
     if not memories:
@@ -362,10 +360,10 @@ def handle_memories(args: List[str]):
     table.add_column("Value")
     for key, value in memories.items():
         table.add_row(key, value[:80])
-    _ui.console.print(table)
+    ctx.console.print(table)
 
-def handle_edit(args: List[str], state):
-    if not state.session_messages:
+def handle_edit(args: List[str], ctx: LoomContext):
+    if not ctx.state.session_messages:
         print_error("No conversation to edit.")
         return
     try:
@@ -374,11 +372,10 @@ def handle_edit(args: List[str], state):
         print_error("Usage: /edit <message_index>. Use /history to see indices.")
         return
 
-    if idx < 0 or idx >= len(state.session_messages):
-        print_error(f"Index {idx} out of range (0-{len(state.session_messages) - 1}). Use /history to see indices.")
+        print_error(f"Index {idx} out of range (0-{len(ctx.state.session_messages) - 1}). Use /history to see indices.")
         return
 
-    msg = state.session_messages[idx]
+    msg = ctx.state.session_messages[idx]
     old_content = msg.get("content", "")
     if isinstance(old_content, list):
         old_content = " ".join(c.get("text", "") for c in old_content if isinstance(c, dict))
@@ -396,25 +393,25 @@ def handle_edit(args: List[str], state):
 
     if new_content is not None and new_content != old_content:
         msg["content"] = new_content
-        state.session_messages = state.session_messages[:idx + 1]
-        state.tokens_used = 0
-        state.context_warned = False
+        ctx.state.session_messages = ctx.state.session_messages[:idx + 1]
+        ctx.state.tokens_used = 0
+        ctx.state.context_warned = False
         print_success(f"Message {idx} updated. Conversation truncated after edit.")
     elif new_content is not None:
-        _ui.console.print("[dim]No changes made.[/dim]")
+        ctx.console.print("[dim]No changes made.[/dim]")
 
-def handle_search(args: List[str], state):
+def handle_search(args: List[str], ctx: LoomContext):
     import re
     if not args:
         print_error("Usage: /search <term>")
         return
     term = " ".join(args)
-    if not state.session_messages:
-        _ui.console.print("[dim]No conversation to search.[/dim]")
+    if not ctx.state.session_messages:
+        ctx.console.print("[dim]No conversation to search.[/dim]")
         return
 
     results = []
-    for i, msg in enumerate(state.session_messages):
+    for i, msg in enumerate(ctx.state.session_messages):
         content = msg.get("content", "")
         if isinstance(content, list):
             content = " ".join(c.get("text", "") for c in content if isinstance(c, dict))
@@ -431,9 +428,9 @@ def handle_search(args: List[str], state):
     table.add_column("Content")
     for idx, role, content in results:
         table.add_row(str(idx), role, content.replace("[", "\\["))
-    _ui.console.print(table)
+    ctx.console.print(table)
 
-def handle_attach(args: List[str], state):
+def handle_attach(args: List[str], ctx: LoomContext):
     if not args:
         print_error("Usage: /attach <file_path>")
         return
@@ -451,14 +448,14 @@ def handle_attach(args: List[str], state):
                 {"type": "image_url", "image_url": {"url": f"data:{att['mime_type']};base64,{att['data']}"}}
             ]
         }
-        state.session_messages.append(msg)
+        ctx.state.session_messages.append(msg)
         print_success(f"Attached image: {att['name']} ({att['size'] // 1024}KB)")
     elif att["type"] == "text":
         msg = {
             "role": "user",
             "content": f"[Attached file: {att['name']}]\n```\n{att['content']}\n```"
         }
-        state.session_messages.append(msg)
+        ctx.state.session_messages.append(msg)
         line_count = att['content'].count('\n') + 1
         print_success(f"Attached file: {att['name']} ({line_count} lines)")
     else:
@@ -466,14 +463,14 @@ def handle_attach(args: List[str], state):
             "role": "user",
             "content": att.get("content", f"[File: {att['name']}]")
         }
-        state.session_messages.append(msg)
+        ctx.state.session_messages.append(msg)
         print_success(f"Attached: {att['name']}")
 
-def handle_version(args: List[str]):
-    _ui.console.print("[accent]LoomCLI[/accent] [white]0.1.0[/white]")
-    _ui.console.print(f"[dim]Python based, {len(COMMANDS)} commands[/dim]")
+def handle_version(args: List[str], ctx: LoomContext):
+    ctx.console.print("[accent]LoomCLI[/accent] [white]0.1.0[/white]")
+    ctx.console.print(f"[dim]Python based, {len(COMMANDS)} commands[/dim]")
 
-def handle_theme(args: List[str]):
+def handle_theme(args: List[str], ctx: LoomContext):
     from .ui import THEMES, apply_theme
     from prompt_toolkit.shortcuts import radiolist_dialog
 
@@ -481,8 +478,8 @@ def handle_theme(args: List[str]):
         name = args[0]
         if name in THEMES:
             apply_theme(name)
-            config.theme = name
-            config.save()
+            ctx.config.theme = name
+            ctx.config.save()
             # Force a clear and re-print of welcome screen to unify the background
             import sys, getpass
             from .ui import get_theme_bg, print_welcome_screen
@@ -490,14 +487,14 @@ def handle_theme(args: List[str]):
             r, g, b = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
             sys.stdout.write(f"\033[48;2;{r};{g};{b}m\033[2J\033[H")
             sys.stdout.flush()
-            print_welcome_screen(getpass.getuser(), config.model, config.provider)
+            print_welcome_screen(getpass.getuser(), ctx.config.model, ctx.config.provider, ctx.console)
             print_success(f"Theme set to: {name}")
         else:
             avail = ", ".join(THEMES.keys())
             print_error(f"Theme '{name}' not found. Available: {avail}")
         return
 
-    active = config.theme
+    active = ctx.config.theme
     choices = [(n, n.capitalize()) for n in THEMES]
 
     result = LoomDialog(
@@ -509,8 +506,8 @@ def handle_theme(args: List[str]):
 
     if result:
         apply_theme(result)
-        config.theme = result
-        config.save()
+        ctx.config.theme = result
+        ctx.config.save()
         
         # Force a clear and re-print of welcome screen to unify the background
         import sys, getpass
@@ -519,10 +516,10 @@ def handle_theme(args: List[str]):
         r, g, b = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
         sys.stdout.write(f"\033[48;2;{r};{g};{b}m\033[2J\033[H")
         sys.stdout.flush()
-        print_welcome_screen(getpass.getuser(), config.model, config.provider)
+        print_welcome_screen(getpass.getuser(), ctx.config.model, ctx.config.provider, ctx.console)
         print_success(f"Theme set to: {result}")
 
-def handle_personality(args: List[str]):
+def handle_personality(args: List[str], ctx: LoomContext):
     from .personalities import load_personalities, get_active_personality
     from prompt_toolkit.shortcuts import radiolist_dialog
 
@@ -530,8 +527,8 @@ def handle_personality(args: List[str]):
         name = args[0]
         personalities = load_personalities()
         if name in personalities:
-            config.personality = name
-            config.save()
+            ctx.config.personality = name
+            ctx.config.save()
             print_success(f"Personality set to: {name}")
         else:
             avail = ", ".join(personalities.keys())
@@ -550,8 +547,8 @@ def handle_personality(args: List[str]):
     ).run()
 
     if result:
-        config.personality = result
-        config.save()
+        ctx.config.personality = result
+        ctx.config.save()
         print_success(f"Personality set to: {result}")
 
 COMMANDS = {
@@ -605,7 +602,7 @@ def get_command_metadata() -> Dict[str, str]:
         "/exit": "Exit the session",
     }
 
-def execute_command(input_str: str, state) -> bool:
+def execute_command(input_str: str, ctx: LoomContext) -> bool:
     from .skills import discover_skills
     from pathlib import Path
     parts = input_str.split()
@@ -614,14 +611,8 @@ def execute_command(input_str: str, state) -> bool:
     args = parts[1:]
 
     if command in COMMANDS:
-        state.commands_run += 1
-        # Check if the command expects state
-        import inspect
-        sig = inspect.signature(COMMANDS[command])
-        if "state" in sig.parameters:
-            COMMANDS[command](args, state)
-        else:
-            COMMANDS[command](args)
+        ctx.state.commands_run += 1
+        COMMANDS[command](args, ctx)
         return True
 
     # Check for skill-based commands
@@ -632,11 +623,11 @@ def execute_command(input_str: str, state) -> bool:
         skill = skills[skill_name]
         arg_str = " ".join(args)
         label = f"Skill({skill.name})"
-        state.commands_run += 1
-        _ui.print_tool_call(label, {})
+        ctx.state.commands_run += 1
+        ctx.console.print_tool_call(label, {})
         from .skills import run_skill
         result = run_skill(skill, arg_str)
-        _ui.print_tool_result(result)
+        ctx.console.print_tool_result(result)
         return True
 
     return False

@@ -4,8 +4,8 @@ from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
 from .base import BaseTool, registry
 from ..config import config
-from ..state import count_tokens
-from ..task_manager import task_manager
+from ..state import count_tokens, SessionState
+from ..context import LoomContext
 
 
 class TaskInput(BaseModel):
@@ -14,17 +14,16 @@ class TaskInput(BaseModel):
     run_in_background: bool = Field(False, description="If True, run in background and return task_id immediately")
 
 
-def _run_sub_agent(task: str, max_iterations: int, task_id: str, state):
+def _run_sub_agent(task: str, max_iterations: int, task_id: str, ctx: LoomContext):
     from ..agents.registry import PROVIDER_MAP
 
-    api_key = config.get_api_key()
     if not api_key:
-        task_manager.fail(task_id, "No API key configured")
+        ctx.task_manager.fail(task_id, "No API key configured")
         return
 
-    provider_cls = PROVIDER_MAP.get(config.provider)
+    provider_cls = PROVIDER_MAP.get(ctx.config.provider)
     if not provider_cls:
-        task_manager.fail(task_id, f"Unknown provider: {config.provider}")
+        ctx.task_manager.fail(task_id, f"Unknown provider: {ctx.config.provider}")
         return
 
     provider = provider_cls(api_key)
@@ -49,25 +48,22 @@ def _run_sub_agent(task: str, max_iterations: int, task_id: str, state):
     iterations = 0
 
     while iterations < max_iterations:
-        if task_manager.is_killed(task_id):
+        if ctx.task_manager.is_killed(task_id):
             output += "\n(Task was stopped)"
-            task_manager.fail(task_id, "Task was killed by user")
+            ctx.task_manager.fail(task_id, "Task was killed by user")
             return
 
         iterations += 1
-        full_response = ""
-        tool_calls = []
-
-        try:
-            for chunk in provider.ask(messages, config.model, tools=tool_schemas):
-                if task_manager.is_killed(task_id):
+                try:
+            for chunk in provider.ask(messages, ctx.config.model, tools=tool_schemas):
+                if ctx.task_manager.is_killed(task_id):
                     return
                 if chunk["type"] == "text":
                     full_response += chunk["content"]
                 elif chunk["type"] == "tool_call":
                     tool_calls.append(chunk["tool_call"])
                 elif chunk["type"] == "error":
-                    task_manager.fail(task_id, chunk["content"])
+                    ctx.task_manager.fail(task_id, chunk["content"])
                     return
 
             clean = full_response
@@ -80,7 +76,7 @@ def _run_sub_agent(task: str, max_iterations: int, task_id: str, state):
                 parts = clean.split("<result>", 1)
                 inner = parts[1].split("</result>", 1)[0].strip()
                 output += inner + "\n"
-                task_manager.complete(task_id, {"success": True, "output": output})
+                ctx.task_manager.complete(task_id, {"success": True, "output": output})
                 return
 
             if clean:
@@ -94,7 +90,7 @@ def _run_sub_agent(task: str, max_iterations: int, task_id: str, state):
             messages.append(assistant_msg)
 
             if full_response:
-                state.add_tokens(count_tokens(full_response, config.model), config.model)
+                ctx.state.add_tokens(count_tokens(full_response, ctx.config.model), ctx.config.model)
 
             if not tool_calls:
                 continue
@@ -116,26 +112,26 @@ def _run_sub_agent(task: str, max_iterations: int, task_id: str, state):
                     tool_result = {"error": f"Tool not found: {name}"}
                 else:
                     try:
-                        tool_result = tool.execute(**args)
+                        result = tool.execute(**args, ctx=ctx)
                     except Exception as e:
-                        tool_result = {"error": str(e)}
+                        result = {"error": str(e)}
 
-                state.add_tokens(count_tokens(json.dumps(tool_result), config.model), config.model)
+                ctx.state.add_tokens(count_tokens(json.dumps(result), ctx.config.model), ctx.config.model)
 
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc_id,
                     "name": name,
-                    "content": json.dumps(tool_result)
+                    "content": json.dumps(result)
                 })
 
         except Exception as e:
             output += f"\n(Error at iteration {iterations}: {e})"
-            task_manager.fail(task_id, f"Sub-agent error at iteration {iterations}: {str(e)}")
+            ctx.task_manager.fail(task_id, f"Sub-agent error at iteration {iterations}: {str(e)}")
             return
 
     output += "\n(Task completed with max iterations reached)"
-    task_manager.complete(task_id, {"success": True, "output": output})
+    ctx.task_manager.complete(task_id, {"success": True, "output": output})
 
 
 class TaskTool(BaseTool):
@@ -151,20 +147,26 @@ class TaskTool(BaseTool):
     def get_activity_description(self, task: str = "", **kwargs) -> str:
         return f"Task({task[:50]})"
 
-    def execute(self, task: str, max_iterations: int = 10, run_in_background: bool = False, state=None) -> Dict[str, Any]:
+    def execute(self, task: str, max_iterations: int = 10, run_in_background: bool = False, ctx: Optional[LoomContext] = None) -> Dict[str, Any]:
         from ..task_manager import generate_task_id
         task_id = generate_task_id()
-        if state is None:
-            from ..state import SessionState
-            state = SessionState()
+        if ctx is None:
+            ctx = LoomContext(
+                state=SessionState(),
+                config=config,
+                console=None, # Sub-agents don't usually have a console
+                task_manager=None # Will be set below or use global
+            )
+            # This is a fallback for direct calls. 
+            # In practice, ctx will always be passed from the REPL.
 
         if run_in_background:
             thread = threading.Thread(
                 target=_run_sub_agent,
-                args=(task, max_iterations, task_id, state),
+                args=(task, max_iterations, task_id, ctx),
                 daemon=True
             )
-            task_manager.create(task[:80], thread, task_id)
+            ctx.task_manager.create(task[:80], thread, task_id)
             thread.start()
             return {
                 "success": True,
@@ -173,9 +175,9 @@ class TaskTool(BaseTool):
                 "message": f"Task {task_id} started in background."
             }
 
-        task_manager.create(task[:80], None, task_id)
-        _run_sub_agent(task, max_iterations, task_id, state)
-        record = task_manager.get(task_id)
+        ctx.task_manager.create(task[:80], None, task_id)
+        _run_sub_agent(task, max_iterations, task_id, ctx)
+        record = ctx.task_manager.get(task_id)
         if record and record.result:
             return record.result
         return {"success": False, "error": "Task failed silently"}

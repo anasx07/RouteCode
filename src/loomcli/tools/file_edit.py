@@ -1,8 +1,11 @@
 import difflib
 import os
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from pydantic import BaseModel, Field
 from .base import BaseTool
+
+if TYPE_CHECKING:
+    from ..context import LoomContext
 from ..utils import safe_resolve_path
 
 class FileEditInput(BaseModel):
@@ -22,7 +25,7 @@ class FileEditTool(BaseTool):
                 "Provide old_string (exact match) and new_string. "
                 "Set allow_multiple=True to replace all occurrences. Runs serially.")
 
-    def execute(self, file_path: str, old_string: str, new_string: str, allow_multiple: bool = False) -> Dict[str, Any]:
+    def execute(self, file_path: str, old_string: str, new_string: str, allow_multiple: bool = False, ctx: Optional["LoomContext"] = None) -> Dict[str, Any]:
         resolved, error = safe_resolve_path(file_path)
         if error:
             return {"success": False, "error": error}
