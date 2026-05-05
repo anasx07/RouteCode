@@ -25,26 +25,10 @@ from .commands import execute_command, get_command_metadata
 from .tools import registry
 from .tools.base import BaseTool
 from .config import config, CONFIG_DIR
-from .agents.openrouter import OpenRouterProvider
-from .agents.openai import OpenAIProvider
-from .agents.anthropic import AnthropicProvider
-from .agents.google import GoogleProvider
-from .agents.deepseek import DeepSeekProvider
-from .agents.opencode_go import OpenCodeGoProvider
-from .agents.opencode_zen import OpenCodeZenProvider
-from .state import state, count_tokens
+from .state import SessionState, count_tokens
 from .system_prompt import compute_system_prompt
 from .errors import classify_exception
-
-PROVIDER_MAP = {
-    "openrouter": OpenRouterProvider,
-    "openai": OpenAIProvider,
-    "anthropic": AnthropicProvider,
-    "google": GoogleProvider,
-    "deepseek": DeepSeekProvider,
-    "opencode-go": OpenCodeGoProvider,
-    "opencode": OpenCodeZenProvider,
-}
+from .agents.registry import PROVIDER_MAP
 
 class _ConsoleProxy:
     """Proxy that always delegates to _ui.console, even after apply_theme reassigns it."""
@@ -128,6 +112,7 @@ class LoomREPL:
         self.session = PromptSession(**session_kwargs)
         self.provider = None
         self.messages = []
+        self.state = SessionState()
         self.auto_save_counter = 0
         self.logo_animation_count = 0
 
@@ -164,7 +149,19 @@ class LoomREPL:
     def _initialize_provider(self):
         api_key = config.get_api_key()
         if not api_key:
-            return False
+            from .ui import LoomDialog
+            dialog = LoomDialog(
+                title="API Key Required",
+                text=f"Please enter your API key for [accent]{config.provider}[/accent]:",
+                dialog_type="input",
+                password=True
+            )
+            dialog.run()
+            if dialog.result == "ok" and dialog.text_area.text:
+                api_key = dialog.text_area.text.strip()
+                config.set_api_key(config.provider, api_key)
+            else:
+                return False
         
         provider_class = PROVIDER_MAP.get(config.provider)
         if provider_class:
@@ -205,8 +202,8 @@ class LoomREPL:
         from .ui import apply_theme
         apply_theme(config.theme)
         self._set_terminal_background()
-        state.start_time = time.time()
-        state.session_messages = []
+        self.state.start_time = time.time()
+        self.state.session_messages = []
         import sys
         from .ui import get_theme_bg
         bg = get_theme_bg()
@@ -256,10 +253,10 @@ class LoomREPL:
                     continue
                 
                 if user_input.startswith("/"):
-                    if execute_command(user_input):
+                    if execute_command(user_input, self.state):
                         self._initialize_provider()
-                        if state.session_messages:
-                            self.messages = state.session_messages
+                        if self.state.session_messages:
+                            self.messages = self.state.session_messages
                         continue
                     else:
                         print_error(f"Unknown command: {user_input}")
@@ -282,8 +279,8 @@ class LoomREPL:
         from .ui import apply_theme
         apply_theme(config.theme)
         self._set_terminal_background()
-        state.start_time = time.time()
-        state.session_messages = []
+        self.state.start_time = time.time()
+        self.state.session_messages = []
         if not self._initialize_provider():
             print_error(f"No API key found for provider '{config.provider}'.")
             return
@@ -298,7 +295,7 @@ class LoomREPL:
                 return
 
         self.messages.append({"role": "user", "content": user_input})
-        state.session_messages = self.messages[:]
+        self.state.session_messages = self.messages[:]
         
         try:
             tool_schemas = [tool.to_json_schema() for tool in registry._tools.values()]
@@ -357,7 +354,7 @@ class LoomREPL:
                     console.print(Markdown(full_response))
                 
                 print_status_line(config.model, elapsed)
-                print_session_stats()
+                print_session_stats(self.state)
 
                 assistant_message = {"role": "assistant"}
                 if full_response:
@@ -374,14 +371,14 @@ class LoomREPL:
                     assistant_message["tool_calls"] = sanitized
                 
                 self.messages.append(assistant_message)
-                state.session_messages = self.messages[:]
+                self.state.session_messages = self.messages[:]
                 self.auto_save_counter += 1
                 if self.auto_save_counter % 5 == 0:
                     from .commands import handle_save
                     handle_save(["auto"])
                 
                 if full_response:
-                    pct = state.add_tokens(count_tokens(full_response, config.model), config.model)
+                    pct = self.state.add_tokens(count_tokens(full_response, config.model), config.model)
                     if pct:
                         console.print(f" [warning]⚠[/warning] [dim]Context ~{pct:.0f}% full.[/dim]")
                         if pct > 70 and pct <= 85:
@@ -427,7 +424,7 @@ class LoomREPL:
                             print_error(f"Failed to parse arguments for {name}: {e}")
                             continue
 
-                    state.tools_called += 1
+                    self.state.tools_called += 1
                     tool_inputs.append((tc_id, name, args, tc))
 
                 # Partition into concurrent-safe batches
@@ -477,36 +474,55 @@ class LoomREPL:
                 break
 
     def _microcompact(self) -> bool:
-        """Strip old tool results without an API call."""
+        """Strip old tool results without an API call while preserving critical context."""
         if len(self.messages) < 4:
             return False
-        # Keep system prompt + last 3 user/assistant turns + their tool results
-        kept = [self.messages[0]]
-        tool_ids_to_keep = set()
-        turn_count = 0
-        for msg in reversed(self.messages[1:]):
-            if msg.get("role") == "tool":
-                if msg.get("tool_call_id") in tool_ids_to_keep:
-                    kept.insert(1, msg)
+            
+        system_msg = self.messages[0]
+        
+        # Group messages into conversational turns
+        turns = []
+        current_turn = []
+        last_role = None
+        for msg in self.messages[1:]:
+            role = msg.get("role")
+            if role == "user":
+                if current_turn: turns.append(current_turn)
+                current_turn = [msg]
+            elif role == "assistant":
+                if last_role in ("tool", "assistant"):
+                    if current_turn: turns.append(current_turn)
+                    current_turn = [msg]
+                else:
+                    current_turn.append(msg)
             else:
-                kept.insert(1, msg)
-                if msg.get("role") in ("user", "assistant"):
-                    turn_count += 1
-                    if msg.get("tool_calls"):
-                        for tc in (msg.get("tool_calls") or []):
-                            tool_ids_to_keep.add(tc.get("id", ""))
-                if turn_count >= 3:
+                current_turn.append(msg)
+            last_role = role
+            
+        if current_turn:
+            turns.append(current_turn)
+
+        kept = [system_msg]
+        
+        # Determine which turns to keep
+        for i, turn in enumerate(turns):
+            # Always keep the last 4 turns for conversational memory
+            is_recent = i >= len(turns) - 4
+            
+            # Always keep turns that fetched or mutated critical state
+            has_critical_context = False
+            for msg in turn:
+                if msg.get("role") == "tool" and msg.get("name") in ("file_read", "file_edit", "file_write", "task"):
+                    has_critical_context = True
                     break
-        # Add remaining tool messages that belong to kept turns
-        for msg in reversed(self.messages[1:]):
-            if msg.get("role") == "tool" and msg.get("tool_call_id") in tool_ids_to_keep:
-                if msg not in kept:
-                    kept.insert(1, msg)
+                    
+            if is_recent or has_critical_context:
+                kept.extend(turn)
 
         if len(kept) < len(self.messages):
             self.messages = kept
-            state.tokens_used = 0
-            state.context_warned = False
+            self.state.tokens_used = 0
+            self.state.context_warned = False
             return True
         return False
 
@@ -552,14 +568,26 @@ class LoomREPL:
             task_id = f"c{abs(hash(compact_prompt)) % 10**7}"
             task_manager.create("Context compaction", None, task_id)
             _run_sub_agent(compact_prompt, 3, task_id)
+            
             record = task_manager.get(task_id)
-            summary = record.result.get("output", "") if record and record.result else ""
-            if summary:
-                self.messages = [system, {"role": "system", "content": f"[Compacted summary]\n{summary[:3000]}"}]
+            if not record or record.status != "completed":
+                return False
+                
+            summary = record.result.get("output", "") if record.result else ""
+            
+            # Validate that the sub-agent actually followed the structure 
+            # and didn't just hallucinate an error or timeout.
+            if summary and "## Goal" in summary and "## Progress" in summary:
+                # Capture the messages we want to keep BEFORE overwriting self.messages
                 keep = self.messages[-keep_count:] if len(self.messages) > keep_count else []
-                self.messages = self.messages[:2] + keep
-                state.tokens_used = 0
-                state.context_warned = False
+                
+                self.messages = [
+                    system, 
+                    {"role": "system", "content": f"[Compacted summary]\n{summary[:3000]}"}
+                ] + keep
+                
+                self.state.tokens_used = 0
+                self.state.context_warned = False
                 return True
         except Exception:
             pass
@@ -568,9 +596,24 @@ class LoomREPL:
     def _get_git_context(self) -> str:
         try:
             import subprocess
-            status = subprocess.run("git status --short", shell=True, capture_output=True, text=True, timeout=5).stdout.strip()
-            log = subprocess.run("git log --oneline -5", shell=True, capture_output=True, text=True, timeout=5).stdout.strip()
-            branch = subprocess.run("git rev-parse --abbrev-ref HEAD", shell=True, capture_output=True, text=True, timeout=5).stdout.strip()
+            from concurrent.futures import ThreadPoolExecutor
+
+            def run_git(cmd):
+                try:
+                    # Reduced timeout to 3s per command since they run in parallel
+                    return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=3).stdout.strip()
+                except Exception:
+                    return ""
+
+            with ThreadPoolExecutor(max_workers=3) as executor:
+                f_status = executor.submit(run_git, "git status --short")
+                f_log = executor.submit(run_git, "git log --oneline -5")
+                f_branch = executor.submit(run_git, "git rev-parse --abbrev-ref HEAD")
+                
+                status = f_status.result()
+                log = f_log.result()
+                branch = f_branch.result()
+
             parts = []
             if branch:
                 parts.append(f"Current branch: {branch}")
@@ -616,10 +659,8 @@ class LoomREPL:
             "role": "tool", "tool_call_id": tc_id,
             "name": name, "content": content
         })
-        state.add_tokens(count_tokens(content, config.model), config.model)
+        self.state.add_tokens(count_tokens(content, config.model), config.model)
 
-        if name == "file_read" and result.get("success") and result.get("content"):
-            console.print(Markdown(result["content"]))
         if name == "file_edit" and result.get("success") and result.get("diff"):
             print_diff(result["diff"])
 
@@ -692,7 +733,12 @@ class LoomREPL:
             return {"error": "Permission denied by user"}
 
         try:
-            result = tool.execute(**arguments)
+            import inspect
+            sig = inspect.signature(tool.execute)
+            if "state" in sig.parameters:
+                result = tool.execute(**arguments, state=self.state)
+            else:
+                result = tool.execute(**arguments)
             registry.run_post_hooks(name, result)
             return result
         except Exception as e:

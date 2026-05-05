@@ -52,7 +52,11 @@ def count_tokens(text: str, model: Optional[str] = None) -> int:
             encoding = tiktoken.get_encoding("cl100k_base")
         return len(encoding.encode(text))
     except Exception:
-        return int(len(text.split()) * 1.3 + len(text) / 4)
+        # Fallback: simple word and punctuation tokenizer. Provides a much safer 
+        # upper-bound estimate for code and JSON compared to simple split().
+        import re
+        tokens = re.findall(r'\w+|[^\w\s]', text)
+        return len(tokens)
 
 
 @dataclass
@@ -78,4 +82,3 @@ class SessionState:
                 return pct
         return None
 
-state = SessionState()

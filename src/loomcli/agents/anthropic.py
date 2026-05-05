@@ -1,54 +1,65 @@
-import json
-import httpx
-from typing import Generator, List, Dict, Any, Optional
-from .base import AIProvider
+from .protocol import LoomMessage, MessageAdapter
 
-
-class AnthropicProvider(AIProvider):
-    def __init__(self, api_key: str):
-        self.api_key = api_key
-        self.base_url = "https://api.anthropic.com/v1/messages"
-        self.api_version = "2023-06-01"
-
-    def _convert_messages(self, messages: List[Dict]) -> tuple:
+class AnthropicAdapter(MessageAdapter):
+    def to_provider(self, messages: List[LoomMessage]) -> Any:
         system = None
         converted = []
+        
         for msg in messages:
-            role = msg["role"]
+            role = msg.role
             if role == "system":
-                system = msg["content"]
+                # Anthropic takes system prompt as a top-level parameter
+                system = msg.content if isinstance(msg.content, str) else ""
                 continue
-            content = msg.get("content") or ""
+            
             if role == "tool":
                 converted.append({
                     "role": "user",
                     "content": [{
                         "type": "tool_result",
-                        "tool_use_id": msg.get("tool_call_id", ""),
-                        "content": msg.get("content", "")
+                        "tool_use_id": msg.tool_call_id,
+                        "content": str(msg.content)
                     }]
                 })
             elif role == "assistant":
                 content_parts = []
-                if content:
-                    content_parts.append({"type": "text", "text": content})
-                for tc in msg.get("tool_calls", []):
-                    try:
-                        args = json.loads(tc["function"]["arguments"]) if isinstance(tc["function"]["arguments"], str) else tc["function"]["arguments"]
-                    except Exception:
-                        args = tc["function"]["arguments"]
-                    content_parts.append({
-                        "type": "tool_use",
-                        "id": tc["id"],
-                        "name": tc["function"]["name"],
-                        "input": args
-                    })
+                if msg.content:
+                    content_parts.append({"type": "text", "text": str(msg.content)})
+                if msg.tool_calls:
+                    for tc in msg.tool_calls:
+                        try:
+                            args = json.loads(tc["function"]["arguments"]) if isinstance(tc["function"]["arguments"], str) else tc["function"]["arguments"]
+                        except Exception:
+                            args = tc["function"]["arguments"]
+                        content_parts.append({
+                            "type": "tool_use",
+                            "id": tc["id"],
+                            "name": tc["function"]["name"],
+                            "input": args
+                        })
                 converted.append({"role": "assistant", "content": content_parts})
             else:
-                converted.append({"role": role, "content": content})
-        return system, converted
+                converted.append({"role": role, "content": msg.content})
 
-    def _convert_tools(self, tools: List[Dict]) -> List[Dict]:
+        # Merge consecutive messages of the same role (Anthropic requirement)
+        merged = []
+        for msg in converted:
+            if merged and merged[-1]["role"] == msg["role"]:
+                if isinstance(merged[-1]["content"], list) and isinstance(msg["content"], list):
+                    merged[-1]["content"].extend(msg["content"])
+                elif isinstance(merged[-1]["content"], str) and isinstance(msg["content"], str):
+                    merged[-1]["content"] += "\n" + msg["content"]
+                else:
+                    # Mixed types, convert both to list
+                    m_content = merged[-1]["content"] if isinstance(merged[-1]["content"], list) else [{"type": "text", "text": merged[-1]["content"]}]
+                    new_content = msg["content"] if isinstance(msg["content"], list) else [{"type": "text", "text": msg["content"]}]
+                    merged[-1]["content"] = m_content + new_content
+            else:
+                merged.append(msg)
+
+        return system, merged
+
+    def to_provider_tools(self, tools: List[Dict]) -> List[Dict]:
         result = []
         for t in tools:
             fn = t.get("function", {})
@@ -59,8 +70,18 @@ class AnthropicProvider(AIProvider):
             })
         return result
 
-    def ask(self, messages: List[Dict[str, str]], model: str, stream: bool = True, tools: Optional[List[Dict[str, Any]]] = None) -> Generator[Dict[str, Any], None, None]:
-        system, converted = self._convert_messages(messages)
+
+class AnthropicProvider(AIProvider):
+    def __init__(self, api_key: str):
+        super().__init__(api_key)
+        self.base_url = "https://api.anthropic.com/v1/messages"
+        self.api_version = "2023-06-01"
+        self.adapter = AnthropicAdapter()
+
+    def ask(self, messages: List[Dict[str, Any]], model: str, stream: bool = True, tools: Optional[List[Dict[str, Any]]] = None) -> Generator[Dict[str, Any], None, None]:
+        # Convert dict messages to LoomMessage objects
+        loom_messages = [LoomMessage(**m) for m in messages]
+        system, converted = self.adapter.to_provider(loom_messages)
 
         payload = {
             "model": model,
@@ -71,7 +92,7 @@ class AnthropicProvider(AIProvider):
         if system:
             payload["system"] = system
         if tools:
-            payload["tools"] = self._convert_tools(tools)
+            payload["tools"] = self.adapter.to_provider_tools(tools)
 
         headers = {
             "x-api-key": self.api_key,
@@ -79,30 +100,21 @@ class AnthropicProvider(AIProvider):
             "Content-Type": "application/json"
         }
 
-        with httpx.stream("POST", self.base_url, headers=headers, json=payload, timeout=60.0) as response:
-            if response.status_code != 200:
-                error_body = response.read().decode()
-                yield {"type": "error", "content": f"Error from Anthropic ({response.status_code}): {error_body}"}
-                return
+        current_tool_block = None
 
-            current_tool_block = None
+        for data in self.transport.stream_post(self.base_url, headers, payload):
+            if data == "[DONE]":
+                break
 
-            for line in response.iter_lines():
-                if not line:
-                    continue
-                if line.startswith("event: "):
-                    continue
-                if not line.startswith("data: "):
-                    continue
-
-                data = line[6:]
-                if data == "[DONE]":
-                    break
-
-                try:
-                    event = json.loads(data)
-                except json.JSONDecodeError:
-                    continue
+            try:
+                event = json.loads(data)
+                
+                # Check for transport errors
+                if event.get("type") == "transport_error":
+                    status = event.get("status_code", "unknown")
+                    body = event.get("body", event.get("error", ""))
+                    yield {"type": "error", "content": f"Transport Error ({status}): {body}"}
+                    return
 
                 event_type = event.get("type", "")
 
@@ -131,5 +143,8 @@ class AnthropicProvider(AIProvider):
                         yield {"type": "tool_call", "tool_call": current_tool_block}
                         current_tool_block = None
 
-            if current_tool_block:
-                yield {"type": "tool_call", "tool_call": current_tool_block}
+            except json.JSONDecodeError:
+                continue
+
+        if current_tool_block:
+            yield {"type": "tool_call", "tool_call": current_tool_block}

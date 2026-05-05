@@ -2,6 +2,7 @@ import json
 import httpx
 from typing import Generator, List, Dict, Any, Optional
 from .base import AIProvider
+from .protocol import LoomMessage, MessageAdapter
 
 def _try_parse_tool_call(tc: dict) -> Optional[dict]:
     try:
@@ -11,11 +12,20 @@ def _try_parse_tool_call(tc: dict) -> Optional[dict]:
         return None
 
 
+class OpenAIAdapter(MessageAdapter):
+    def to_provider(self, messages: List[LoomMessage]) -> List[Dict[str, Any]]:
+        return [m.model_dump(exclude_none=True) for m in messages]
+
+    def to_provider_tools(self, tools: List[Dict]) -> List[Dict]:
+        return tools
+
+
 class OpenAIProvider(AIProvider):
     def __init__(self, api_key: str):
-        self.api_key = api_key
+        super().__init__(api_key)
         self.base_url = "https://api.openai.com/v1/chat/completions"
         self.models_url = "https://api.openai.com/v1/models"
+        self.adapter = OpenAIAdapter()
 
     def get_models(self) -> List[Dict[str, Any]]:
         headers = {"Authorization": f"Bearer {self.api_key}"}
@@ -33,79 +43,84 @@ class OpenAIProvider(AIProvider):
             "Content-Type": "application/json"
         }
 
-    def ask(self, messages: List[Dict[str, str]], model: str, stream: bool = True, tools: Optional[List[Dict[str, Any]]] = None) -> Generator[Dict[str, Any], None, None]:
+    def ask(self, messages: List[Dict[str, Any]], model: str, stream: bool = True, tools: Optional[List[Dict[str, Any]]] = None) -> Generator[Dict[str, Any], None, None]:
+        # Convert dict messages to LoomMessage objects
+        loom_messages = [LoomMessage(**m) for m in messages]
+        converted_messages = self.adapter.to_provider(loom_messages)
+        
         headers = self._get_headers()
         payload = {
             "model": model,
-            "messages": messages,
+            "messages": converted_messages,
             "stream": stream
         }
         if tools:
-            payload["tools"] = tools
+            payload["tools"] = self.adapter.to_provider_tools(tools)
 
-        with httpx.stream("POST", self.base_url, headers=headers, json=payload, timeout=60.0) as response:
-            if response.status_code != 200:
-                error_body = response.read().decode()
-                yield {"type": "error", "content": f"Error from OpenAI ({response.status_code}): {error_body}"}
-                return
+        tool_calls = {}
+        yielded_indices = set()
 
-            tool_calls = {}
-            yielded_indices = set()
+        for data in self.transport.stream_post(self.base_url, headers, payload):
+            if data == "[DONE]":
+                break
 
-            for line in response.iter_lines():
-                if not line or line == "data: [DONE]":
+            try:
+                chunk = json.loads(data)
+                
+                # Check for transport errors
+                if chunk.get("type") == "transport_error":
+                    status = chunk.get("status_code", "unknown")
+                    body = chunk.get("body", chunk.get("error", ""))
+                    yield {"type": "error", "content": f"Transport Error ({status}): {body}"}
+                    return
+
+                choices = chunk.get("choices", [])
+                if not choices:
                     continue
+                choice = choices[0]
+                delta = choice.get("delta", {})
 
-                if line.startswith("data: "):
-                    try:
-                        chunk = json.loads(line[6:])
-                        choices = chunk.get("choices", [])
-                        if not choices:
-                            continue
-                        choice = choices[0]
-                        delta = choice.get("delta", {})
+                finish_reason = choice.get("finish_reason")
 
-                        finish_reason = choice.get("finish_reason")
+                content = delta.get("content", "")
+                if content:
+                    yield {"type": "text", "content": content}
 
-                        content = delta.get("content", "")
-                        if content:
-                            yield {"type": "text", "content": content}
+                if "tool_calls" in delta:
+                    for tc_delta in delta["tool_calls"]:
+                        idx = tc_delta.get("index", 0)
+                        if idx not in tool_calls:
+                            tool_calls[idx] = {"id": "", "type": "function", "function": {"name": "", "arguments": ""}}
 
-                        if "tool_calls" in delta:
-                            for tc_delta in delta["tool_calls"]:
-                                idx = tc_delta.get("index", 0)
-                                if idx not in tool_calls:
-                                    tool_calls[idx] = {"id": "", "type": "function", "function": {"name": "", "arguments": ""}}
+                        if "id" in tc_delta:
+                            tool_calls[idx]["id"] += tc_delta["id"]
+                        if "function" in tc_delta:
+                            f_delta = tc_delta["function"]
+                            if "name" in f_delta:
+                                tool_calls[idx]["function"]["name"] += f_delta["name"]
+                            if "arguments" in f_delta:
+                                tool_calls[idx]["function"]["arguments"] += f_delta["arguments"]
 
-                                if "id" in tc_delta:
-                                    tool_calls[idx]["id"] += tc_delta["id"]
-                                if "function" in tc_delta:
-                                    f_delta = tc_delta["function"]
-                                    if "name" in f_delta:
-                                        tool_calls[idx]["function"]["name"] += f_delta["name"]
-                                    if "arguments" in f_delta:
-                                        tool_calls[idx]["function"]["arguments"] += f_delta["arguments"]
+                    for idx, tc in tool_calls.items():
+                        if idx not in yielded_indices and tc["id"] and tc["function"]["name"]:
+                            parsed = _try_parse_tool_call(tc)
+                            if parsed:
+                                yielded_indices.add(idx)
+                                yield {"type": "tool_call", "tool_call": parsed}
 
-                            for idx, tc in tool_calls.items():
-                                if idx not in yielded_indices and tc["id"] and tc["function"]["name"]:
-                                    parsed = _try_parse_tool_call(tc)
-                                    if parsed:
-                                        yielded_indices.add(idx)
-                                        yield {"type": "tool_call", "tool_call": parsed}
+                if finish_reason == "tool_calls":
+                    for idx, tc in tool_calls.items():
+                        if idx not in yielded_indices:
+                            parsed = _try_parse_tool_call(tc)
+                            if parsed:
+                                yield {"type": "tool_call", "tool_call": parsed}
+                            else:
+                                yield {"type": "tool_call", "tool_call": tc}
+                    return
 
-                        if finish_reason == "tool_calls":
-                            for idx, tc in tool_calls.items():
-                                if idx not in yielded_indices:
-                                    parsed = _try_parse_tool_call(tc)
-                                    if parsed:
-                                        yield {"type": "tool_call", "tool_call": parsed}
-                                    else:
-                                        yield {"type": "tool_call", "tool_call": tc}
-                            return
+            except json.JSONDecodeError:
+                continue
 
-                    except json.JSONDecodeError:
-                        continue
-
-            for idx, tc in tool_calls.items():
-                if idx not in yielded_indices:
-                    yield {"type": "tool_call", "tool_call": tc}
+        for idx, tc in tool_calls.items():
+            if idx not in yielded_indices:
+                yield {"type": "tool_call", "tool_call": tc}

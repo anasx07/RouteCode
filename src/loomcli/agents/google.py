@@ -1,45 +1,39 @@
-import json
-import httpx
-from typing import Generator, List, Dict, Any, Optional
-from .base import AIProvider
+from .protocol import LoomMessage, MessageAdapter
 
-
-class GoogleProvider(AIProvider):
-    def __init__(self, api_key: str):
-        self.api_key = api_key
-        self.base_url = "https://generativelanguage.googleapis.com/v1beta/models"
-
-    def _convert_messages(self, messages: List[Dict]) -> List[Dict]:
+class GoogleAdapter(MessageAdapter):
+    def to_provider(self, messages: List[LoomMessage]) -> Any:
         contents = []
         system = None
         for msg in messages:
-            role = msg["role"]
+            role = msg.role
             if role == "system":
-                system = msg.get("content", "")
+                system = msg.content if isinstance(msg.content, str) else ""
                 continue
+            
             gemini_role = "model" if role == "assistant" else "user"
-            content = msg.get("content") or ""
-            parts = [{"text": content}] if content else []
+            content = msg.content or ""
+            parts = [{"text": str(content)}] if content else []
 
-            for tc in msg.get("tool_calls", []):
-                try:
-                    args = json.loads(tc["function"]["arguments"]) if isinstance(tc["function"]["arguments"], str) else tc["function"]["arguments"]
-                except Exception:
-                    args = tc["function"]["arguments"]
-                parts.append({
-                    "functionCall": {
-                        "name": tc["function"]["name"],
-                        "args": args
-                    }
-                })
+            if msg.tool_calls:
+                for tc in msg.tool_calls:
+                    try:
+                        args = json.loads(tc["function"]["arguments"]) if isinstance(tc["function"]["arguments"], str) else tc["function"]["arguments"]
+                    except Exception:
+                        args = tc["function"]["arguments"]
+                    parts.append({
+                        "functionCall": {
+                            "name": tc["function"]["name"],
+                            "args": args
+                        }
+                    })
 
             if role == "tool":
                 parts.append({
                     "functionResponse": {
-                        "name": msg.get("name", ""),
+                        "name": msg.name or "",
                         "response": {
-                            "name": msg.get("name", ""),
-                            "content": msg.get("content", "{}")
+                            "name": msg.name or "",
+                            "content": str(msg.content or "{}")
                         }
                     }
                 })
@@ -47,9 +41,9 @@ class GoogleProvider(AIProvider):
             if parts:
                 contents.append({"role": gemini_role, "parts": parts})
 
-        return contents, system
+        return system, contents
 
-    def _convert_tools(self, tools: List[Dict]) -> List[Dict]:
+    def to_provider_tools(self, tools: List[Dict]) -> List[Dict]:
         result = []
         for t in tools:
             fn = t.get("function", {})
@@ -62,8 +56,17 @@ class GoogleProvider(AIProvider):
             })
         return result
 
-    def ask(self, messages: List[Dict[str, str]], model: str, stream: bool = True, tools: Optional[List[Dict[str, Any]]] = None) -> Generator[Dict[str, Any], None, None]:
-        contents, system = self._convert_messages(messages)
+
+class GoogleProvider(AIProvider):
+    def __init__(self, api_key: str):
+        super().__init__(api_key)
+        self.base_url = "https://generativelanguage.googleapis.com/v1beta/models"
+        self.adapter = GoogleAdapter()
+
+    def ask(self, messages: List[Dict[str, Any]], model: str, stream: bool = True, tools: Optional[List[Dict[str, Any]]] = None) -> Generator[Dict[str, Any], None, None]:
+        # Convert dict messages to LoomMessage objects
+        loom_messages = [LoomMessage(**m) for m in messages]
+        system, contents = self.adapter.to_provider(loom_messages)
 
         generation_config = {"temperature": 0.7, "maxOutputTokens": 4096}
         payload = {"contents": contents}
@@ -71,30 +74,21 @@ class GoogleProvider(AIProvider):
             payload["systemInstruction"] = {"parts": [{"text": system}]}
         payload["generationConfig"] = generation_config
         if tools:
-            payload["tools"] = self._convert_tools(tools)
+            payload["tools"] = self.adapter.to_provider_tools(tools)
 
         url = f"{self.base_url}/{model}:streamGenerateContent?alt=sse&key={self.api_key}"
         headers = {"Content-Type": "application/json"}
 
-        with httpx.stream("POST", url, headers=headers, json=payload, timeout=60.0) as response:
-            if response.status_code != 200:
-                error_body = response.read().decode()
-                yield {"type": "error", "content": f"Error from Google ({response.status_code}): {error_body}"}
-                return
-
-            for line in response.iter_lines():
-                if not line:
-                    continue
-                if not line.startswith("data: "):
-                    continue
-                data = line[6:]
-                if data == "[DONE]":
-                    break
-
-                try:
-                    chunk = json.loads(data)
-                except json.JSONDecodeError:
-                    continue
+        for data in self.transport.stream_post(url, headers, payload):
+            try:
+                chunk = json.loads(data)
+                
+                # Check for transport errors
+                if chunk.get("type") == "transport_error":
+                    status = chunk.get("status_code", "unknown")
+                    body = chunk.get("body", chunk.get("error", ""))
+                    yield {"type": "error", "content": f"Transport Error ({status}): {body}"}
+                    return
 
                 candidates = chunk.get("candidates", [])
                 if not candidates:
@@ -119,3 +113,5 @@ class GoogleProvider(AIProvider):
                                 }
                             }
                         }
+            except json.JSONDecodeError:
+                continue

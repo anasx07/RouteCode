@@ -1,6 +1,30 @@
 import os
 import sys
 import json
+import atexit
+import signal
+
+def _cleanup_terminal():
+    """Ensure terminal is left in a clean state (e.g., mouse tracking disabled)."""
+    try:
+        sys.stdout.write("\033[?1003l")
+        sys.stdout.flush()
+    except Exception:
+        pass
+
+atexit.register(_cleanup_terminal)
+
+# Handle termination signals to ensure cleanup
+def _signal_handler(signum, frame):
+    _cleanup_terminal()
+    sys.exit(signum)
+
+try:
+    signal.signal(signal.SIGTERM, _signal_handler)
+except (AttributeError, ValueError):
+    # Some platforms or environments don't support SIGTERM
+    pass
+
 import shutil
 from typing import Any, List, Dict, Optional
 from rich.console import Console, Group
@@ -25,8 +49,71 @@ from prompt_toolkit.application import Application
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.formatted_text import ANSI
 from prompt_toolkit.output.defaults import create_output
+from prompt_toolkit.layout.menus import CompletionsMenu, CompletionsMenuControl
+from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
 import io
-from .state import state
+
+
+class HoverCompletionsMenuControl(CompletionsMenuControl):
+    """CompletionsMenuControl with MOUSE_MOVE hover support."""
+    
+    def mouse_handler(self, mouse_event: MouseEvent):
+        b = get_app().current_buffer
+
+        if mouse_event.event_type == MouseEventType.MOUSE_MOVE:
+            # Hover: highlight the completion under the cursor
+            b.go_to_completion(mouse_event.position.y)
+
+        elif mouse_event.event_type == MouseEventType.MOUSE_UP:
+            # Click: select and accept
+            b.go_to_completion(mouse_event.position.y)
+            b.complete_state = None
+
+        elif mouse_event.event_type == MouseEventType.SCROLL_DOWN:
+            b.complete_next(count=3, disable_wrap_around=True)
+
+        elif mouse_event.event_type == MouseEventType.SCROLL_UP:
+            b.complete_previous(count=3, disable_wrap_around=True)
+
+        return None
+
+
+def _get_app():
+    """Lazy import to avoid circular imports."""
+    from prompt_toolkit.application.current import get_app
+    return get_app()
+
+# Patch the module-level get_app for HoverCompletionsMenuControl
+from prompt_toolkit.application.current import get_app
+
+
+class HoverCompletionsMenu(CompletionsMenu):
+    """A CompletionsMenu that highlights items on mouse hover."""
+    
+    def __init__(self, max_height=None, scroll_offset=0, extra_filter=True, 
+                 display_arrows=False, z_index=10**8):
+        from prompt_toolkit.filters import to_filter, has_completions, is_done
+        from prompt_toolkit.layout.dimension import Dimension
+        from prompt_toolkit.layout.margins import ScrollbarMargin, ConditionalMargin
+        from prompt_toolkit.filters import Condition
+        
+        extra_filter = to_filter(extra_filter)
+        display_arrows = to_filter(display_arrows)
+        
+        # Use our hover-aware control instead of the standard one
+        super(CompletionsMenu, self).__init__(
+            content=Window(
+                content=HoverCompletionsMenuControl(),
+                width=Dimension(min=8),
+                height=Dimension(min=1, max=max_height),
+                scroll_offsets=ScrollOffsets(top=scroll_offset, bottom=scroll_offset),
+                right_margins=[ScrollbarMargin(display_arrows=display_arrows)],
+                dont_extend_width=True,
+                style="class:completion-menu",
+                z_index=z_index,
+            ),
+            filter=extra_filter & has_completions & ~is_done,
+        )
 
 class HoverRadioList(RadioList):
     """A RadioList that highlights items on mouse hover (MOUSE_MOVE), not just click."""
@@ -113,6 +200,7 @@ class LoomDialog:
         # Create dialog widgets
         kb = KeyBindings()
         @kb.add("c-c")
+        @kb.add("escape")
         def _(event):
             event.app.exit()
 
@@ -283,14 +371,9 @@ def _set_terminal_bg(bg_color: str):
         r, g, b = int(bg_color[1:3], 16), int(bg_color[3:5], 16), int(bg_color[5:7], 16)
         rgb_format = f"rgb:{r:02x}/{g:02x}/{b:02x}"
         
-        # Emit multiple formats for maximum compatibility with different terminal emulators
-        sys.stdout.write(f"\033]11;{bg_color}\007")        # Hex with BEL
-        sys.stdout.write(f"\033]11;{bg_color}\033\\")     # Hex with ST
-        sys.stdout.write(f"\033]11;{rgb_format}\007")     # RGB with BEL
-        sys.stdout.write(f"\033]11;{rgb_format}\033\\")    # RGB with ST
-        
+        sys.stdout.write(f"\033]11;rgb:{r:02x}/{g:02x}/{b:02x}\033\\")
         # Also set palette color 0 which many terminals use for margins
-        sys.stdout.write(f"\033]4;0;{bg_color}\007")
+        sys.stdout.write(f"\033]4;0;rgb:{r:02x}/{g:02x}/{b:02x}\033\\")
         sys.stdout.flush()
     except Exception:
         pass
@@ -309,12 +392,13 @@ def apply_theme(name: str = "lava"):
     console = Console(theme=loom_theme, style=f"on {bg}")
     
     # Also recreate mirror console to match new theme
-    mirror_console = Console(theme=loom_theme, file=_mirror_output, force_terminal=True, width=shutil.get_terminal_size().columns)
+    mirror_console = Console(theme=loom_theme, file=_mirror_output, force_terminal=True)
     
     # Re-patch the new console
     _orig_print = console.print
     def _mirrored_print(*args, **kwargs):
         _orig_print(*args, **kwargs)
+        mirror_console.width = shutil.get_terminal_size().columns
         mirror_console.print(*args, **kwargs)
     console.print = _mirrored_print
 
@@ -329,10 +413,14 @@ def apply_theme(name: str = "lava"):
                     bg_seq = f"\033[48;2;{r};{g};{b}m"
                     
                     # 1. Force rich's animation clear sequences to use the background color
+                    if "\x1b[2J" in s:
+                        s = s.replace("\x1b[2J", f"{bg_seq}\x1b[2J")
                     if "\x1b[2K" in s:
                         s = s.replace("\x1b[2K", f"{bg_seq}\x1b[2K")
                     if "\x1b[K" in s:
                         s = s.replace("\x1b[K", f"{bg_seq}\x1b[K")
+                    if "\x1b[J" in s:
+                        s = s.replace("\x1b[J", f"{bg_seq}\x1b[J")
                         
                     # 2. Force newlines to clear the rest of the line with the background color
                     if "\n" in s:
@@ -622,7 +710,7 @@ def print_tool_result(result: Any, duration: float = 0.0, tool_name: str = ""):
         console.print(f"   [{style}]Result: {res_str}[/]")
 
 
-def print_session_stats():
+def print_session_stats(state):
     table = Table(show_header=False, box=MINIMAL, padding=(0, 1))
     table.add_column()
     table.add_column()

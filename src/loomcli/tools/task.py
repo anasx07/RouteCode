@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
 from .base import BaseTool, registry
 from ..config import config
-from ..state import state, count_tokens
+from ..state import count_tokens
 from ..task_manager import task_manager
 
 
@@ -14,20 +14,8 @@ class TaskInput(BaseModel):
     run_in_background: bool = Field(False, description="If True, run in background and return task_id immediately")
 
 
-def _run_sub_agent(task: str, max_iterations: int, task_id: str):
-    from ..agents.openrouter import OpenRouterProvider
-    from ..agents.openai import OpenAIProvider
-    from ..agents.anthropic import AnthropicProvider
-    from ..agents.google import GoogleProvider
-    from ..agents.deepseek import DeepSeekProvider
-
-    PROVIDER_MAP = {
-        "openrouter": OpenRouterProvider,
-        "openai": OpenAIProvider,
-        "anthropic": AnthropicProvider,
-        "google": GoogleProvider,
-        "deepseek": DeepSeekProvider,
-    }
+def _run_sub_agent(task: str, max_iterations: int, task_id: str, state):
+    from ..agents.registry import PROVIDER_MAP
 
     api_key = config.get_api_key()
     if not api_key:
@@ -170,13 +158,16 @@ class TaskTool(BaseTool):
     def get_activity_description(self, task: str = "", **kwargs) -> str:
         return f"Task({task[:50]})"
 
-    def execute(self, task: str, max_iterations: int = 10, run_in_background: bool = False) -> Dict[str, Any]:
+    def execute(self, task: str, max_iterations: int = 10, run_in_background: bool = False, state=None) -> Dict[str, Any]:
         task_id = _generate_task_id()
+        if state is None:
+            from ..state import SessionState
+            state = SessionState()
 
         if run_in_background:
             thread = threading.Thread(
                 target=_run_sub_agent,
-                args=(task, max_iterations, task_id),
+                args=(task, max_iterations, task_id, state),
                 daemon=True
             )
             task_manager.create(task[:80], thread, task_id)
@@ -189,7 +180,7 @@ class TaskTool(BaseTool):
             }
 
         task_manager.create(task[:80], None, task_id)
-        _run_sub_agent(task, max_iterations, task_id)
+        _run_sub_agent(task, max_iterations, task_id, state)
         record = task_manager.get(task_id)
         if record and record.result:
             return record.result

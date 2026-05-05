@@ -4,7 +4,6 @@ from typing import Optional
 from .repl import LoomREPL
 from . import ui as _ui
 from .config import config
-from .state import state
 
 app = typer.Typer(help="LoomCLI: An AI assistant for your terminal.", name="loomcli")
 
@@ -38,8 +37,8 @@ def main(
         if session_path.exists():
             import json
             data = json.loads(session_path.read_text(encoding="utf-8"))
-            state.session_messages = data.get("messages", [])
-            state.tokens_used = data.get("tokens_used", 0)
+            repl.state.session_messages = data.get("messages", [])
+            repl.state.tokens_used = data.get("tokens_used", 0)
             config.provider = data.get("provider", config.provider)
             config.model = data.get("model", config.model)
             _ui.console.print(f"[success]Resumed session: {resume}[/success]")

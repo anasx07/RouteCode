@@ -182,8 +182,7 @@ def handle_clear(args: List[str]):
     sys.stdout.write("\n" * (h - 2))
     sys.stdout.flush()
 
-def handle_history(args: List[str]):
-    from .state import state
+def handle_history(args: List[str], state):
     if not state.session_messages:
         _ui.console.print("[dim]No conversation history yet.[/dim]")
         return
@@ -208,8 +207,7 @@ def handle_history(args: List[str]):
         table.add_row(str(i), role, display.replace("[", "\\["))
     _ui.console.print(table)
 
-def handle_save(args: List[str]):
-    from .state import state
+def handle_save(args: List[str], state):
     if not state.session_messages:
         print_error("No conversation to save.")
         return
@@ -234,8 +232,7 @@ def handle_save(args: List[str]):
     save_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
     print_success(f"Session saved to {save_path}")
 
-def handle_load(args: List[str]):
-    from .state import state
+def handle_load(args: List[str], state):
     sessions_dir = CONFIG_DIR / "sessions"
     if not sessions_dir.exists():
         print_error("No saved sessions found.")
@@ -273,8 +270,8 @@ def handle_load(args: List[str]):
         except Exception as e:
             print_error(f"Failed to load session: {e}")
 
-def handle_exit(args: List[str]):
-    handle_save([])
+def handle_exit(args: List[str], state):
+    handle_save([], state)
     _ui.console.print("[info]ℹ[/info] Goodbye!")
     sys.exit(0)
 
@@ -307,8 +304,7 @@ def handle_task_stop(args: List[str]):
     else:
         print_error(f"Task {task_id} not found or not running.")
 
-def handle_rewind(args: List[str]):
-    from .state import state
+def handle_rewind(args: List[str], state):
     if not state.session_messages:
         print_error("No conversation to rewind.")
         return
@@ -369,8 +365,7 @@ def handle_memories(args: List[str]):
         table.add_row(key, value[:80])
     _ui.console.print(table)
 
-def handle_edit(args: List[str]):
-    from .state import state
+def handle_edit(args: List[str], state):
     if not state.session_messages:
         print_error("No conversation to edit.")
         return
@@ -409,8 +404,7 @@ def handle_edit(args: List[str]):
     elif new_content is not None:
         _ui.console.print("[dim]No changes made.[/dim]")
 
-def handle_search(args: List[str]):
-    from .state import state
+def handle_search(args: List[str], state):
     import re
     if not args:
         print_error("Usage: /search <term>")
@@ -440,9 +434,7 @@ def handle_search(args: List[str]):
         table.add_row(str(idx), role, content.replace("[", "\\["))
     _ui.console.print(table)
 
-def handle_attach(args: List[str]):
-    from .attachments import load_attachment
-    from .state import state
+def handle_attach(args: List[str], state):
     if not args:
         print_error("Usage: /attach <file_path>")
         return
@@ -614,8 +606,7 @@ def get_command_metadata() -> Dict[str, str]:
         "/exit": "Exit the session",
     }
 
-def execute_command(input_str: str) -> bool:
-    from .state import state
+def execute_command(input_str: str, state) -> bool:
     from .skills import discover_skills
     from pathlib import Path
     parts = input_str.split()
@@ -625,7 +616,13 @@ def execute_command(input_str: str) -> bool:
 
     if command in COMMANDS:
         state.commands_run += 1
-        COMMANDS[command](args)
+        # Check if the command expects state
+        import inspect
+        sig = inspect.signature(COMMANDS[command])
+        if "state" in sig.parameters:
+            COMMANDS[command](args, state)
+        else:
+            COMMANDS[command](args)
         return True
 
     # Check for skill-based commands
@@ -637,10 +634,10 @@ def execute_command(input_str: str) -> bool:
         arg_str = " ".join(args)
         label = f"Skill({skill.name})"
         state.commands_run += 1
-        print_tool_call(label, {})
+        _ui.print_tool_call(label, {})
         from .skills import run_skill
         result = run_skill(skill, arg_str)
-        print_tool_result(result)
+        _ui.print_tool_result(result)
         return True
 
     return False
