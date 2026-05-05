@@ -357,6 +357,36 @@ THEMES = {
 }
 
 
+class ConsoleProxy:
+    """
+    A proxy for the Rich Console that allows the underlying instance to be 
+    swapped (e.g., during theme changes) without breaking existing references.
+    """
+    def __init__(self):
+        self._instance: Optional[Console] = None
+
+    def set_instance(self, instance: Console):
+        self._instance = instance
+
+    def __getattr__(self, name):
+        if self._instance is None:
+            # Fallback for early access during initialization
+            self._instance = Console()
+        return getattr(self._instance, name)
+
+    def __enter__(self):
+        return self._instance.__enter__()
+
+    def __exit__(self, *args):
+        return self._instance.__exit__(*args)
+
+
+# Global console proxy instance
+console = ConsoleProxy()
+mirror_console = ConsoleProxy()
+
+# Internal state
+_mirror_output = io.StringIO()
 _current_theme_name = "lava"
 
 
@@ -369,8 +399,6 @@ def _set_terminal_bg(bg_color: str):
     """Sets the terminal background color using OSC 11 and palette color 0."""
     try:
         r, g, b = int(bg_color[1:3], 16), int(bg_color[3:5], 16), int(bg_color[5:7], 16)
-        rgb_format = f"rgb:{r:02x}/{g:02x}/{b:02x}"
-        
         sys.stdout.write(f"\033]11;rgb:{r:02x}/{g:02x}/{b:02x}\033\\")
         # Also set palette color 0 which many terminals use for margins
         sys.stdout.write(f"\033]4;0;rgb:{r:02x}/{g:02x}/{b:02x}\033\\")
@@ -380,7 +408,7 @@ def _set_terminal_bg(bg_color: str):
 
 
 def apply_theme(name: str = "lava"):
-    global _current_theme_name, loom_theme, console, mirror_console
+    global _current_theme_name
     _current_theme_name = name
     theme_dict = THEMES.get(name, THEMES["lava"])
     loom_theme = Theme(theme_dict)
@@ -388,19 +416,21 @@ def apply_theme(name: str = "lava"):
     bg = get_theme_bg(name)
     _set_terminal_bg(bg)
 
-    # Recreate the console so every Rich print inherits the background
-    console = Console(theme=loom_theme, style=f"on {bg}")
+    # Recreate the actual Rich console instances
+    actual_console = Console(theme=loom_theme, style=f"on {bg}")
+    actual_mirror = Console(theme=loom_theme, file=_mirror_output, force_terminal=True)
     
-    # Also recreate mirror console to match new theme
-    mirror_console = Console(theme=loom_theme, file=_mirror_output, force_terminal=True)
-    
-    # Re-patch the new console
-    _orig_print = console.print
+    # Patch the main console to also print to the mirror
+    _orig_print = actual_console.print
     def _mirrored_print(*args, **kwargs):
         _orig_print(*args, **kwargs)
-        mirror_console.width = shutil.get_terminal_size().columns
-        mirror_console.print(*args, **kwargs)
-    console.print = _mirrored_print
+        actual_mirror.width = shutil.get_terminal_size().columns
+        actual_mirror.print(*args, **kwargs)
+    actual_console.print = _mirrored_print
+
+    # Update the proxies
+    console.set_instance(actual_console)
+    mirror_console.set_instance(actual_mirror)
 
     # Patch sys.stdout.write to ensure all scrolled/new lines explicitly paint the rest of the line
     if not hasattr(sys.stdout, "_bg_fill_patched"):
@@ -412,19 +442,11 @@ def apply_theme(name: str = "lava"):
                     r, g, b = int(current_bg[1:3], 16), int(current_bg[3:5], 16), int(current_bg[5:7], 16)
                     bg_seq = f"\033[48;2;{r};{g};{b}m"
                     
-                    # 1. Force rich's animation clear sequences to use the background color
-                    if "\x1b[2J" in s:
-                        s = s.replace("\x1b[2J", f"{bg_seq}\x1b[2J")
-                    if "\x1b[2K" in s:
-                        s = s.replace("\x1b[2K", f"{bg_seq}\x1b[2K")
-                    if "\x1b[K" in s:
-                        s = s.replace("\x1b[K", f"{bg_seq}\x1b[K")
-                    if "\x1b[J" in s:
-                        s = s.replace("\x1b[J", f"{bg_seq}\x1b[J")
-                        
-                    # 2. Force newlines to clear the rest of the line with the background color
-                    if "\n" in s:
-                        s = s.replace("\n", f"{bg_seq}\x1b[K\n")
+                    if "\x1b[2J" in s: s = s.replace("\x1b[2J", f"{bg_seq}\x1b[2J")
+                    if "\x1b[2K" in s: s = s.replace("\x1b[2K", f"{bg_seq}\x1b[2K")
+                    if "\x1b[K" in s: s = s.replace("\x1b[K", f"{bg_seq}\x1b[K")
+                    if "\x1b[J" in s: s = s.replace("\x1b[J", f"{bg_seq}\x1b[J")
+                    if "\n" in s: s = s.replace("\n", f"{bg_seq}\x1b[K\n")
                 except Exception:
                     pass
             _original_write(s)
@@ -438,33 +460,26 @@ def get_dialog_style():
     theme = THEMES.get(_current_theme_name, THEMES["lava"])
     accent = theme.get("accent", "#ffaf00")
     
-    # We simulate "less opacity" by using a very dark backdrop for the dialog container
     return Style.from_dict({
         "dialog": f"bg:{bg} #ffffff",
         "dialog.body": f"bg:{bg} #ffffff",
         "dialog.shadow": "bg:#080808",
         "dialog.border": accent,
         "dialog.title": f"bold {accent}",
-        
-        # Hover/Focus effect for buttons: reverse video + bold
         "button": f"bg:{bg} {accent}",
         "button.focused": f"bg:{accent} #000000 bold",
         "button.arrow": accent,
-        
-        # Hover/Focus effect for radiolist
         "radiolist": f"bg:{bg} #ffffff",
         "radiolist.radio": accent,
         "radiolist.radio.focused": f"bg:{accent} #000000 bold",
         "radiolist.item.focused": f"bg:{accent} #000000 bold",
-        
         "input-field": "bg:#000000 #ffffff",
         "input-field.focused": f"bg:#000000 #ffffff border:{accent}",
         "label": "#ffffff",
-        
-        # This styles the area OUTSIDE the dialog (the "backdrop")
         "dialog-frame.label": f"bg:#111111 {accent}",
         "background": "bg:#0d0d0d", 
     })
+
 
 def get_dialog_text(main_text: str, dialog_type: str = "radio") -> str:
     """Appends a navigation guide to the dialog text."""
@@ -477,24 +492,14 @@ def get_dialog_text(main_text: str, dialog_type: str = "radio") -> str:
     guide = guides.get(dialog_type, guides["radio"])
     return f"{main_text}{guide}"
 
-loom_theme = Theme(THEMES["lava"])
-# The main console for user output
-console = Console(theme=loom_theme, style=f"on {THEME_BACKGROUNDS['lava']}")
-
-# The mirror console for backdrop capture
-_mirror_output = io.StringIO()
-mirror_console = Console(theme=loom_theme, file=_mirror_output, force_terminal=True, width=shutil.get_terminal_size().columns)
 
 def _get_mirror_ansi() -> str:
     """Returns the current state of the terminal from the mirror."""
     return _mirror_output.getvalue()
 
-# Patch the main console to also print to the mirror
-_orig_print = console.print
-def _mirrored_print(*args, **kwargs):
-    _orig_print(*args, **kwargs)
-    mirror_console.print(*args, **kwargs)
-console.print = _mirrored_print
+
+# Initial setup
+apply_theme("lava")
 
 TOOL_STYLES = {
     "bash": "tool_bash",

@@ -109,12 +109,7 @@ class AnthropicProvider(AIProvider):
             try:
                 event = json.loads(data)
                 
-                # Check for transport errors
-                if event.get("type") == "transport_error":
-                    status = event.get("status_code", "unknown")
-                    body = event.get("body", event.get("error", ""))
-                    yield {"type": "error", "content": f"Transport Error ({status}): {body}"}
-                    return
+                # Check for transport errors (No longer needed, exceptions bubble up)
 
                 event_type = event.get("type", "")
 

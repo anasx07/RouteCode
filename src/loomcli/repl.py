@@ -15,7 +15,7 @@ from rich.live import Live
 
 from . import ui as _ui
 from .ui import (
-    print_error, print_welcome_screen, 
+    console, print_error, print_welcome_screen, 
     print_thought_elapsed, print_status_line,
     print_tool_call, print_tool_result, print_session_stats,
     get_thinking_indicator, LoadingRenderable, get_tool_label,
@@ -29,17 +29,6 @@ from .state import SessionState, count_tokens
 from .system_prompt import compute_system_prompt
 from .errors import classify_exception
 from .agents.registry import PROVIDER_MAP
-
-class _ConsoleProxy:
-    """Proxy that always delegates to _ui.console, even after apply_theme reassigns it."""
-    def __getattr__(self, name):
-        return getattr(_ui.console, name)
-    def __enter__(self):
-        return _ui.console.__enter__()
-    def __exit__(self, *args):
-        return _ui.console.__exit__(*args)
-
-console = _ConsoleProxy()
 
 
 

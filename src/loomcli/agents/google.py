@@ -83,12 +83,7 @@ class GoogleProvider(AIProvider):
             try:
                 chunk = json.loads(data)
                 
-                # Check for transport errors
-                if chunk.get("type") == "transport_error":
-                    status = chunk.get("status_code", "unknown")
-                    body = chunk.get("body", chunk.get("error", ""))
-                    yield {"type": "error", "content": f"Transport Error ({status}): {body}"}
-                    return
+                # Check for transport errors (No longer needed, exceptions bubble up)
 
                 candidates = chunk.get("candidates", [])
                 if not candidates:
