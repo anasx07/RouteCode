@@ -1,4 +1,7 @@
+import json
+from typing import List, Dict, Any, Optional, Generator
 from .protocol import LoomMessage, MessageAdapter
+from .base import AIProvider
 
 class GoogleAdapter(MessageAdapter):
     def to_provider(self, messages: List[LoomMessage]) -> Any:
