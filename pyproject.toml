@@ -1,0 +1,23 @@
+[project]
+name = "loomcli"
+version = "0.1.0"
+description = "A Claude Code-like CLI in Python"
+authors = [
+    { name = "Your Name", email = "your.email@example.com" }
+]
+dependencies = [
+    "typer[all]>=0.12.3",
+    "prompt-toolkit>=3.0.43",
+    "rich>=13.7.1",
+    "pydantic>=2.0.0",
+    "httpx>=0.27.0",
+    "tiktoken>=0.7.0",
+]
+requires-python = ">=3.10"
+
+[project.scripts]
+loomcli = "loomcli.main:app"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
