@@ -12,6 +12,7 @@ class EventBus:
     """
     def __init__(self):
         self._handlers: Dict[str, List[Callable]] = {}
+        self._active_tasks = set()
 
     def on(self, event: str, handler: Callable):
         """Registers a handler for a specific event."""
@@ -20,23 +21,59 @@ class EventBus:
         self._handlers[event].append(handler)
 
     def emit(self, event: str, **data):
-        """Emits an event and notifies all registered handlers."""
+        """
+        Synchronously emits an event. Async handlers are fired as background tasks.
+        """
         if event not in self._handlers:
             return
             
         for handler in self._handlers[event]:
             try:
                 if inspect.iscoroutinefunction(handler):
-                    try:
-                        loop = asyncio.get_running_loop()
-                        loop.create_task(handler(**data))
-                    except RuntimeError:
-                        # No loop running, run it in a new one if possible or just ignore
-                        pass
+                    self._fire_and_forget(handler, data, event)
                 else:
                     handler(**data)
             except Exception as e:
-                logger.error(f"Error in event handler for {event}: {e}")
+                logger.error(f"Error in sync event handler for {event}: {e}")
+
+    async def emit_async(self, event: str, **data):
+        """
+        Asynchronously emits an event. Properly awaits all async handlers.
+        """
+        if event not in self._handlers:
+            return
+            
+        tasks = []
+        for handler in self._handlers[event]:
+            try:
+                if inspect.iscoroutinefunction(handler):
+                    tasks.append(handler(**data))
+                else:
+                    handler(**data)
+            except Exception as e:
+                logger.error(f"Error in async event handler for {event}: {e}")
+        
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for res in results:
+                if isinstance(res, Exception):
+                    logger.error(f"Async error in handler for {event}: {res}")
+
+    def _fire_and_forget(self, handler: Callable, data: Dict[str, Any], event_name: str):
+        try:
+            loop = asyncio.get_running_loop()
+            task = loop.create_task(handler(**data))
+            self._active_tasks.add(task)
+            task.add_done_callback(lambda t: self._active_tasks.discard(t))
+            
+            def _log_error(t):
+                try:
+                    t.result()
+                except Exception as e:
+                    logger.error(f"Background task error for {event_name}: {e}")
+            task.add_done_callback(_log_error)
+        except RuntimeError:
+            pass
 
 # Global bus instance
 bus = EventBus()

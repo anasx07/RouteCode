@@ -132,6 +132,15 @@ class LoomREPL:
         bus.on("session.turn_complete", _on_turn_complete)
 
         bus.on("ui.theme_changed", lambda **kwargs: self._set_terminal_background())
+        bus.on("context.compacted", lambda type, saved, **kwargs: console.print(f" [success]✔[/success] [dim]Context {type}-compacted ({saved} messages removed).[/dim]"))
+        bus.on("context.threshold_warning", self._on_context_warning)
+
+    def _on_context_warning(self, usage: float, type: str, **kwargs):
+        """Handle context threshold warnings."""
+        if type == "full":
+            console.print(f" [warning]⚠[/warning] [bold red]Context critical: {usage:.1f}%![/bold red]")
+        else:
+            console.print(f" [warning]⚠[/warning] [dim]Context usage: {usage:.1f}%[/dim]")
 
     def _logoTooltip(self):
         self.logo_animation_count += 1
@@ -370,43 +379,29 @@ class LoomREPL:
                 print_session_stats(self.repl.ctx.state)
 
                 self.repl.auto_save_counter += 1
-                bus.emit("session.turn_complete", count=self.repl.auto_save_counter)
+                await bus.emit_async("session.turn_complete", count=self.repl.auto_save_counter)
                 
                 if full_response:
                     pct = self.repl.ctx.state.add_tokens(count_tokens(full_response, self.repl.ctx.config.model), self.repl.ctx.config.model)
-                    if pct:
-                        self.repl.ctx.console.print(f" [warning]⚠[/warning] [dim]Context ~{pct:.0f}% full.[/dim]")
-                        if pct > 70 and pct <= 85:
-                            self.repl.ctx.state.session_messages.set_messages(
-                                self.repl.orchestrator.microcompact(self.repl.ctx.state.session_messages.get_messages())
-                            )
-                            if True: # Logic below implies success
-                                self.repl.ctx.state.tokens_used = 0
-                                self.repl.ctx.state.reset_context_warning()
-                                self.repl.ctx.console.print(" [success]✔[/success] [dim]Cleaned old tool results.[/dim]")
-                        elif pct > 85:
-                            from .ui import LoomDialog
-                            options = [
-                                ("Micro (clean results)", "micro"),
-                                ("Full (summarize)", "full"),
-                                ("Continue", "continue")
-                            ]
-                            dialog = LoomDialog(
-                                title="Context Full",
-                                text=f"Context is {pct:.0f}% full. Choose action:",
-                                buttons=options
-                            )
-                            result = await dialog.run_async()
-                            if result == "full":
-                                if self.repl._compact_context():
-                                    self.repl.ctx.console.print(" [success]✔[/success] [dim]Summarization started in background.[/dim]")
-                            elif result == "micro":
-                                self.repl.ctx.state.session_messages.set_messages(
-                                    self.repl.orchestrator.microcompact(self.repl.ctx.state.session_messages.get_messages())
-                                )
-                                self.repl.ctx.state.tokens_used = 0
-                                self.repl.ctx.state.reset_context_warning()
-                                self.repl.ctx.console.print(" [success]✔[/success] [dim]Context micro-compacted.[/dim]")
+                    # Warnings are now handled via context.threshold_warning event in _on_context_warning
+                    if pct and pct > 85:
+                        from .ui import LoomDialog
+                        options = [
+                            ("Micro (clean results)", "micro"),
+                            ("Full (summarize)", "full"),
+                            ("Continue", "continue")
+                        ]
+                        dialog = LoomDialog(
+                            title="Context Full",
+                            text=f"Context is {pct:.0f}% full. Choose action:",
+                            buttons=options
+                        )
+                        result = await dialog.run_async()
+                        if result == "full":
+                            if await self.repl.orchestrator.context_manager.summarize_compact(self.repl.ctx.state.session_messages):
+                                self.repl.ctx.console.print(" [success]✔[/success] [dim]Summarization started in background.[/dim]")
+                        elif result == "micro":
+                            self.repl.orchestrator.context_manager.check_and_compact(self.repl.ctx.state.session_messages, self.repl.ctx.config.model)
 
             async def should_stop(self):
                 return False
@@ -443,53 +438,6 @@ class LoomREPL:
 
 
 
-    def _compact_context(self) -> bool:
-        if len(self.ctx.state.session_messages) < 4:
-            return False
-        system = self.ctx.state.session_messages[0]
-        keep_count = 7
-        messages_list = self.ctx.state.session_messages.get_messages()
-        to_compact = messages_list[1:-keep_count] if len(messages_list) > keep_count + 1 else []
-        if len(to_compact) < 2:
-            return False
-
-        summary_text = "\n".join(
-            f"[{m.get('role','?')}]: {(m.get('content','') or '')[:200]}"
-            for m in to_compact
-        )
-
-        prev_summary = ""
-        for m in reversed(self.ctx.state.session_messages):
-            if m.get("role") == "system" and "[Compacted]" in str(m.get("content", "")):
-                prev_summary = str(m.get("content", ""))
-                break
-
-        anchor = f"\nPrevious summary (update this):\n{prev_summary}" if prev_summary else ""
-
-        compact_prompt = (
-            "Summarize this conversation. Format as Markdown headers (Goal, Constraints, Progress, Decisions, Next Steps, Critical Context, Relevant Files).\n"
-            f"{anchor}\n\n"
-            "Conversation to summarize:\n" + summary_text
-        )
-
-        try:
-            # Note: Context compaction still uses synchronous sub-agent execution for simplicity during background compaction
-            from .tools.task import _run_sub_agent
-            from .task_manager import task_manager
-            task_id = f"c{abs(hash(compact_prompt)) % 10**7}"
-            task_manager.create("Context compaction", None, task_id)
-            
-            # Since we are in an async method, we can't easily call a sync function that might block.
-            # But here we want to wait for it.
-            import asyncio
-            asyncio.create_task(asyncio.to_thread(_run_sub_agent, compact_prompt, 3, task_id, self.ctx))
-            
-            # We don't wait for it here to avoid blocking the turn.
-            # Compaction usually happens in the background or between turns.
-            return True
-        except Exception:
-            pass
-        return False
 
     def _get_git_context(self) -> str:
         from .git import get_git_context

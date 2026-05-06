@@ -7,6 +7,7 @@ from .state import count_tokens
 from .tools import registry
 from .agents.registry import PROVIDER_MAP
 from .history import ConversationHistory
+from .context_manager import ContextManager
 
 class OrchestratorHooks:
     """Hooks for the AgentOrchestrator to signal progress and updates."""
@@ -39,6 +40,7 @@ class AgentOrchestrator:
     def __init__(self, ctx: LoomContext, provider: Optional[Any] = None):
         self.ctx = ctx
         self.provider = provider
+        self.context_manager = ContextManager(ctx)
         if not self.provider:
             self._initialize_provider()
         
@@ -63,51 +65,6 @@ class AgentOrchestrator:
         """Forces a re-initialization of the provider, usually after a config change."""
         return self._initialize_provider()
 
-    def microcompact(self, history: ConversationHistory) -> List[Dict[str, Any]]:
-        """
-        Strip old tool results without an API call while preserving critical context.
-        """
-        messages = history.get_messages()
-        if len(messages) < 6:
-            return messages
-            
-        system_msg = messages[0]
-        
-        turns = []
-        current_turn = []
-        last_role = None
-        for msg in messages[1:]:
-            role = msg.get("role")
-            if role == "user":
-                if current_turn: turns.append(current_turn)
-                current_turn = [msg]
-            elif role == "assistant":
-                if last_role in ("tool", "assistant"):
-                    if current_turn: turns.append(current_turn)
-                    current_turn = [msg]
-                else:
-                    current_turn.append(msg)
-            else:
-                current_turn.append(msg)
-            last_role = role
-            
-        if current_turn:
-            turns.append(current_turn)
-
-        kept = [system_msg]
-        for i, turn in enumerate(turns):
-            is_recent = i >= len(turns) - 4
-            has_critical_context = False
-            for msg in turn:
-                # Tools that produce context crucial for subsequent steps
-                if msg.get("role") == "tool" and msg.get("name") in ("file_read", "file_edit", "file_write", "task"):
-                    has_critical_context = True
-                    break
-                    
-            if is_recent or has_critical_context:
-                kept.extend(turn)
-
-        return kept
 
     async def run(self, history: ConversationHistory, hooks: Optional[OrchestratorHooks] = None, max_turns: int = 20, tool_executor: Optional[Callable] = None):
         """
@@ -128,16 +85,7 @@ class AgentOrchestrator:
                 break
 
             # Automatic context management
-            usage_pct = self.ctx.state.get_context_usage(self.ctx.config.model)
-            if usage_pct > 85:
-                # Perform micro-compaction
-                compacted = self.microcompact(history)
-                if len(compacted) < original_len:
-                    history.set_messages(compacted)
-                    self.ctx.state.tokens_used = 0 # Reset to force recalculation or at least avoid false alarms
-                    self.ctx.state.reset_context_warning()
-                    # We don't have a specific hook for compaction yet, but we could add one
-                    # For now, it just happens transparently
+            self.context_manager.check_and_compact(history, self.ctx.config.model)
 
             turn_count += 1
             full_response = ""
