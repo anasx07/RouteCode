@@ -262,7 +262,7 @@ def handle_load(args: List[str], ctx: LoomContext):
         try:
             new_state = load_session(result)
             if new_state:
-                ctx.state.session_messages = new_state.session_messages
+                ctx.state.session_messages.set_messages(new_state.session_messages)
                 ctx.state.tokens_used = new_state.tokens_used
                 ctx.state.estimated_cost = new_state.estimated_cost
                 ctx.state.commands_run = new_state.commands_run
@@ -326,8 +326,7 @@ def handle_rewind(args: List[str], ctx: LoomContext):
                 cut_at = i
                 break
 
-    kept = ctx.state.session_messages[:max(1, cut_at)]
-    ctx.state.session_messages = kept[:]
+    ctx.state.session_messages.set_messages(ctx.state.session_messages[:max(1, cut_at)])
     ctx.state.tokens_used = 0
     ctx.state.context_warned = False
     print_success(f"Rewound {count} turn(s). {len(kept) - 1} message(s) remaining (excluding system).")
@@ -397,7 +396,7 @@ def handle_edit(args: List[str], ctx: LoomContext):
 
     if new_content is not None and new_content != old_content:
         msg["content"] = new_content
-        ctx.state.session_messages = ctx.state.session_messages[:idx + 1]
+        ctx.state.session_messages.set_messages(ctx.state.session_messages[:idx + 1])
         ctx.state.tokens_used = 0
         ctx.state.context_warned = False
         print_success(f"Message {idx} updated. Conversation truncated after edit.")

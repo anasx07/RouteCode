@@ -1,7 +1,10 @@
 import time
 from dataclasses import dataclass, field
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Any
 from .costs import cost_estimator
+from .history import ConversationHistory
+from .storage import AtomicJsonStore
+from .config import CONFIG_DIR
 
 def count_tokens(text: str, model: Optional[str] = None) -> int:
     """Delegates to the centralized cost_estimator."""
@@ -15,7 +18,7 @@ class SessionState:
     commands_run: int = 0
     tools_called: int = 0
     start_time: float = 0.0
-    session_messages: List[Dict] = field(default_factory=list)
+    session_messages: ConversationHistory = field(default_factory=ConversationHistory)
     context_warned: bool = False
 
     def add_tokens(self, count: int, model: Optional[str] = None, input_tokens: Optional[int] = None, output_tokens: Optional[int] = None):
@@ -57,7 +60,7 @@ class SessionState:
             "estimated_cost": self.estimated_cost,
             "commands_run": self.commands_run,
             "tools_called": self.tools_called,
-            "messages": self.session_messages,
+            "messages": self.session_messages.to_list(),
         }
 
     @classmethod
@@ -67,12 +70,9 @@ class SessionState:
             estimated_cost=data.get("estimated_cost", 0.0),
             commands_run=data.get("commands_run", 0),
             tools_called=data.get("tools_called", 0),
-            session_messages=data.get("messages", []),
+            session_messages=ConversationHistory(data.get("messages", [])),
         )
 
-
-from .storage import AtomicJsonStore
-from .config import CONFIG_DIR
 
 SESSIONS_DIR = CONFIG_DIR / "sessions"
 

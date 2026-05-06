@@ -105,7 +105,6 @@ class LoomREPL:
         self.session = PromptSession(**session_kwargs)
 
 
-        self.messages = []
         from .memory import MemoryManager
         self.memory = MemoryManager(CONFIG_DIR)
         self.state = SessionState()
@@ -233,7 +232,7 @@ class LoomREPL:
             print_error(f"No API key found for provider '{self.ctx.config.provider}'. Use [command]/config[/command] to set it.")
 
         system_content = await compute_system_prompt(self.ctx)
-        self.messages = [{"role": "system", "content": system_content}]
+        self.ctx.state.session_messages.set_messages([{"role": "system", "content": system_content}])
 
         last_size = None
         while True:
@@ -271,8 +270,6 @@ class LoomREPL:
                 if user_input.startswith("/"):
                     if await execute_command(user_input, self.ctx):
                         self._initialize_provider()
-                        if self.state.session_messages:
-                            self.messages = self.state.session_messages
                         continue
                     else:
                         print_error(f"Unknown command: {user_input}")
@@ -301,7 +298,7 @@ class LoomREPL:
             print_error(f"No API key found for provider '{self.ctx.config.provider}'.")
             return
         system_content = await compute_system_prompt(self.ctx)
-        self.messages = [{"role": "system", "content": system_content}]
+        self.ctx.state.session_messages.set_messages([{"role": "system", "content": system_content}])
         await self.process_agent_request(query)
 
     async def process_agent_request(self, user_input: str):
@@ -310,8 +307,7 @@ class LoomREPL:
                 print_error(f"Provider not initialized. Set your API key with [command]/config[/command]")
                 return
 
-        self.messages.append({"role": "user", "content": user_input})
-        self.state.session_messages = self.messages[:]
+        self.ctx.state.session_messages.append({"role": "user", "content": user_input})
         
         class REPLHooks(OrchestratorHooks):
             def __init__(self, repl):
@@ -381,9 +377,10 @@ class LoomREPL:
                     if pct:
                         self.repl.ctx.console.print(f" [warning]⚠[/warning] [dim]Context ~{pct:.0f}% full.[/dim]")
                         if pct > 70 and pct <= 85:
-                            original_len = len(self.repl.messages)
-                            self.repl.messages[:] = self.repl.orchestrator.microcompact(self.repl.messages)
-                            if len(self.repl.messages) < original_len:
+                            self.repl.ctx.state.session_messages.set_messages(
+                                self.repl.orchestrator.microcompact(self.repl.ctx.state.session_messages.get_messages())
+                            )
+                            if True: # Logic below implies success
                                 self.repl.ctx.state.tokens_used = 0
                                 self.repl.ctx.state.reset_context_warning()
                                 self.repl.ctx.console.print(" [success]✔[/success] [dim]Cleaned old tool results.[/dim]")
@@ -404,7 +401,9 @@ class LoomREPL:
                                 if self.repl._compact_context():
                                     self.repl.ctx.console.print(" [success]✔[/success] [dim]Summarization started in background.[/dim]")
                             elif result == "micro":
-                                self.repl.messages[:] = self.repl.orchestrator.microcompact(self.repl.messages)
+                                self.repl.ctx.state.session_messages.set_messages(
+                                    self.repl.orchestrator.microcompact(self.repl.ctx.state.session_messages.get_messages())
+                                )
                                 self.repl.ctx.state.tokens_used = 0
                                 self.repl.ctx.state.reset_context_warning()
                                 self.repl.ctx.console.print(" [success]✔[/success] [dim]Context micro-compacted.[/dim]")
@@ -430,9 +429,7 @@ class LoomREPL:
             with Live(hooks.renderable, refresh_per_second=10, console=self.ctx.console, transient=True) as live:
                 hooks.live = live
                 hooks.start_time = time.time()
-                await self.orchestrator.run(self.messages, hooks=hooks, tool_executor=tool_executor)
-            
-            self.state.session_messages = self.messages[:]
+                await self.orchestrator.run(self.ctx.state.session_messages, hooks=hooks, tool_executor=tool_executor)
 
         except KeyboardInterrupt:
             self.ctx.console.print("\n [dim]Aborted.[/dim]")
@@ -442,16 +439,17 @@ class LoomREPL:
             ce = classify_exception(e)
             print_error(f"{ce.message}")
             self.ctx.console.print(f" [dim]{traceback.format_exc()[-300:]}[/dim]")
-            self.messages.append(ce.to_message())
+            self.ctx.state.session_messages.append(ce.to_message())
 
 
 
     def _compact_context(self) -> bool:
-        if len(self.messages) < 4:
+        if len(self.ctx.state.session_messages) < 4:
             return False
-        system = self.messages[0]
+        system = self.ctx.state.session_messages[0]
         keep_count = 7
-        to_compact = self.messages[1:-keep_count] if len(self.messages) > keep_count + 1 else []
+        messages_list = self.ctx.state.session_messages.get_messages()
+        to_compact = messages_list[1:-keep_count] if len(messages_list) > keep_count + 1 else []
         if len(to_compact) < 2:
             return False
 
@@ -461,7 +459,7 @@ class LoomREPL:
         )
 
         prev_summary = ""
-        for m in reversed(self.messages):
+        for m in reversed(self.ctx.state.session_messages):
             if m.get("role") == "system" and "[Compacted]" in str(m.get("content", "")):
                 prev_summary = str(m.get("content", ""))
                 break

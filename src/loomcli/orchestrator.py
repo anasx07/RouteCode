@@ -6,6 +6,7 @@ from .context import LoomContext
 from .state import count_tokens
 from .tools import registry
 from .agents.registry import PROVIDER_MAP
+from .history import ConversationHistory
 
 class OrchestratorHooks:
     """Hooks for the AgentOrchestrator to signal progress and updates."""
@@ -62,10 +63,11 @@ class AgentOrchestrator:
         """Forces a re-initialization of the provider, usually after a config change."""
         return self._initialize_provider()
 
-    def microcompact(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def microcompact(self, history: ConversationHistory) -> List[Dict[str, Any]]:
         """
         Strip old tool results without an API call while preserving critical context.
         """
+        messages = history.get_messages()
         if len(messages) < 6:
             return messages
             
@@ -107,7 +109,7 @@ class AgentOrchestrator:
 
         return kept
 
-    async def run(self, messages: List[Dict[str, Any]], hooks: Optional[OrchestratorHooks] = None, max_turns: int = 20, tool_executor: Optional[Callable] = None):
+    async def run(self, history: ConversationHistory, hooks: Optional[OrchestratorHooks] = None, max_turns: int = 20, tool_executor: Optional[Callable] = None):
         """
         Runs the core agent loop: LLM call -> Tool execution -> State update.
         """
@@ -129,10 +131,9 @@ class AgentOrchestrator:
             usage_pct = self.ctx.state.get_context_usage(self.ctx.config.model)
             if usage_pct > 85:
                 # Perform micro-compaction
-                original_len = len(messages)
-                compacted = self.microcompact(messages)
+                compacted = self.microcompact(history)
                 if len(compacted) < original_len:
-                    messages[:] = compacted
+                    history.set_messages(compacted)
                     self.ctx.state.tokens_used = 0 # Reset to force recalculation or at least avoid false alarms
                     self.ctx.state.reset_context_warning()
                     # We don't have a specific hook for compaction yet, but we could add one
@@ -145,7 +146,7 @@ class AgentOrchestrator:
 
             try:
                 provider_usage = None
-                async for chunk in self.provider.ask(messages, self.ctx.config.model, tools=tool_schemas):
+                async for chunk in self.provider.ask(history.get_messages(), self.ctx.config.model, tools=tool_schemas):
                     if await hooks.should_stop():
                         return
                     
@@ -176,7 +177,7 @@ class AgentOrchestrator:
                         sanitized.append(t)
                     assistant_message["tool_calls"] = sanitized
                 
-                messages.append(assistant_message)
+                history.append(assistant_message)
                 
                 if provider_usage:
                     comp_tokens = provider_usage.get("completion_tokens", 0)
@@ -203,7 +204,7 @@ class AgentOrchestrator:
                         args = registry.parse_and_validate(name, raw_args)
                     except ValueError as e:
                         # If validation fails, we still want to record the tool result with an error
-                        await self._append_tool_result(messages, tc_id, name, {"error": str(e)})
+                        await self._append_tool_result(history, tc_id, name, {"error": str(e)})
                         continue
 
                     tool_inputs.append((tc_id, name, args))
@@ -225,7 +226,7 @@ class AgentOrchestrator:
                         
                         results = await asyncio.gather(*tasks)
                         for tid, n, res in results:
-                            await self._append_tool_result(messages, tid, n, res)
+                            await self._append_tool_result(history, tid, n, res)
                             await hooks.on_tool_result(n, res, 0.0)
                     else:
                         # Sequential execution
@@ -234,7 +235,7 @@ class AgentOrchestrator:
                             ts = time.time()
                             res = await tool_executor(name, args)
                             elapsed = time.time() - ts
-                            await self._append_tool_result(messages, tc_id, name, res)
+                            await self._append_tool_result(history, tc_id, name, res)
                             await hooks.on_tool_result(name, res, elapsed)
 
             except Exception as e:
@@ -270,7 +271,7 @@ class AgentOrchestrator:
         except Exception as e:
             return {"error": str(e)}
 
-    async def _append_tool_result(self, messages: List[dict], tc_id: str, name: str, result: Dict[str, Any]):
+    async def _append_tool_result(self, history: ConversationHistory, tc_id: str, name: str, result: Dict[str, Any]):
         from .config import CONFIG_DIR
         from .storage import AtomicJsonStore
         import asyncio
@@ -285,7 +286,7 @@ class AgentOrchestrator:
             result["content"] = f"[Result too large, saved to {path}]\n{result.get('content', '')[:2000]}"
             content = json.dumps(result)
 
-        messages.append({
+        history.append({
             "role": "tool", 
             "tool_call_id": tc_id,
             "name": name, 

@@ -7,6 +7,7 @@ from ..config import config
 from ..state import count_tokens, SessionState
 from ..context import LoomContext
 from ..orchestrator import AgentOrchestrator, OrchestratorHooks
+from ..history import ConversationHistory
 
 
 class TaskInput(BaseModel):
@@ -21,7 +22,7 @@ async def _run_sub_agent_async(task: str, max_iterations: int, task_id: str, ctx
         ctx.task_manager.fail(task_id, "No API key configured or provider unavailable")
         return
 
-    messages = [
+    history = ConversationHistory([
         {
             "role": "system",
             "content": (
@@ -32,7 +33,7 @@ async def _run_sub_agent_async(task: str, max_iterations: int, task_id: str, ctx
             )
         },
         {"role": "user", "content": task}
-    ]
+    ])
 
     output = {"text": "", "completed": False}
 
@@ -64,7 +65,7 @@ async def _run_sub_agent_async(task: str, max_iterations: int, task_id: str, ctx
                 return True
             return output["completed"]
 
-    await orchestrator.run(messages, hooks=TaskHooks(), max_turns=max_iterations)
+    await orchestrator.run(history, hooks=TaskHooks(), max_turns=max_iterations)
 
     if not output["completed"]:
         output["text"] += "\n(Task completed with max iterations reached)"
