@@ -20,7 +20,7 @@ def main(
     if ctx.invoked_subcommand is not None:
         return
 
-    from .logger import setup_logging
+    from .core import setup_logging
     setup_logging()
 
     if model:

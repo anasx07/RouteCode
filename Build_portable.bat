@@ -20,10 +20,7 @@ pip install pyinstaller
 
 :: Run PyInstaller
 echo [*] Running PyInstaller...
-:: --onefile: Create a single executable
-:: --name: Name of the output file
-:: --clean: Clean PyInstaller cache
-pyinstaller --onefile --name loomcli --clean run_loomcli.py
+pyinstaller --clean loomcli.spec
 
 echo.
 echo ========================================

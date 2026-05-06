@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from .base import BaseTool
 
 if TYPE_CHECKING:
-    from ..context import LoomContext
+    from ..core import LoomContext
 from ..utils import safe_resolve_path
 
 class FileEditInput(BaseModel):

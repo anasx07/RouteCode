@@ -6,7 +6,7 @@ import time
 from typing import Dict, Optional
 from dataclasses import dataclass, field
 from .config import config
-from .events import bus
+from .core.events import bus
 
 
 @dataclass

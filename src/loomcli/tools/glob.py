@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from .base import BaseTool
 
 if TYPE_CHECKING:
-    from ..context import LoomContext
+    from ..core import LoomContext
 
 class GlobInput(BaseModel):
     pattern: str = Field(..., description="Glob pattern to match (e.g., '**/*.py', 'src/**/*.ts')")

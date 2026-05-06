@@ -119,8 +119,8 @@ class ContextManager:
         )
  
         try:
-            from .tools.task import _run_sub_agent
-            from .task_manager import task_manager
+            from ..tools.task import _run_sub_agent
+            from ..task_manager import task_manager
             task_id = f"c{abs(hash(compact_prompt)) % 10**7}"
             task_manager.create("Context compaction", None, task_id)
             

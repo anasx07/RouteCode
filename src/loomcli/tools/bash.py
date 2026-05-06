@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from .base import BaseTool
 
 if TYPE_CHECKING:
-    from ..context import LoomContext
+    from ..core import LoomContext
 
 class BashInput(BaseModel):
     command: str = Field(..., description="The shell command to execute")
@@ -44,14 +44,34 @@ class BashTool(BaseTool):
                 timeout=timeout
             )
             
-            stdout = result.stdout
-            stderr = result.stderr
-            
-            max_len = 10000
-            if len(stdout) > max_len:
-                stdout = stdout[:max_len] + "... [Output truncated]"
-            if len(stderr) > max_len:
-                stderr = stderr[:max_len] + "... [Output truncated]"
+            def format_long_output(text: str, prefix: str) -> str:
+                if not text: return text
+                max_lines, max_chars = 100, 10000
+                lines = text.splitlines()
+                if len(lines) <= max_lines and len(text) <= max_chars:
+                    return text
+                    
+                dump_file = ""
+                try:
+                    from pathlib import Path
+                    tmp_dir = Path.home() / ".loomcli" / "tmp" / "tool-outputs"
+                    tmp_dir.mkdir(parents=True, exist_ok=True)
+                    dump_file = tmp_dir / f"{prefix}_{int(time.time()*1000)}.txt"
+                    dump_file.write_text(text, encoding="utf-8")
+                except Exception: pass
+                
+                keep_lines = 50
+                hidden = max(0, len(lines) - keep_lines)
+                trunc = "\n".join(lines[-keep_lines:])
+                if len(trunc) > 4000: trunc = trunc[-4000:]
+                
+                msg = [f"... first {hidden} lines hidden ..."] if hidden > 0 else ["... truncated ..."]
+                msg.append(trunc)
+                if dump_file: msg.append(f"\nOutput too long and was saved to: {dump_file}")
+                return "\n".join(msg)
+
+            stdout = format_long_output(result.stdout, "stdout")
+            stderr = format_long_output(result.stderr, "stderr")
                 
             return {
                 "exit_code": result.returncode,

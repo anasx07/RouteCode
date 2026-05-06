@@ -4,7 +4,7 @@ from .base import BaseTool, registry
 from ..skills import discover_skills
 
 if TYPE_CHECKING:
-    from ..context import LoomContext
+    from ..core import LoomContext
 
 
 class SkillInput(BaseModel):

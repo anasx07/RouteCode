@@ -3,7 +3,7 @@ import time
 import re
 from pathlib import Path
 from typing import Dict, List, Optional
-from .storage import AtomicJsonStore
+from .core.storage import AtomicJsonStore
 from .config import CONFIG_DIR
 
 

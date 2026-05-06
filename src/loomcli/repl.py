@@ -13,7 +13,7 @@ from prompt_toolkit.output.color_depth import ColorDepth
 from rich.markdown import Markdown
 from rich.live import Live
 
-from .logger import get_logger
+from .core import get_logger
 logger = get_logger(__name__)
 
 from . import ui as _ui
@@ -28,14 +28,14 @@ from .commands import execute_command, get_command_metadata
 from .tools import registry
 from .tools.base import BaseTool
 from .config import config, CONFIG_DIR
-from .state import SessionState, count_tokens
+from .core import SessionState, count_tokens
 from .system_prompt import compute_system_prompt
-from .errors import classify_exception
+from .core import classify_exception
 from .agents.registry import PROVIDER_MAP
 from .utils import parse_hex_color, strip_thought
-from .context import LoomContext
+from .core import LoomContext
 from .task_manager import task_manager
-from .events import bus
+from .core import bus
 from .orchestrator import AgentOrchestrator, OrchestratorHooks
 
 from prompt_toolkit.output.vt100 import Vt100_Output
@@ -433,7 +433,7 @@ class LoomREPL:
             self.ctx.console.print("\n [dim]Aborted.[/dim]")
         except Exception as e:
             import traceback
-            from .errors import classify_exception
+            from .core import classify_exception
             ce = classify_exception(e)
             print_error(f"{ce.message}")
             self.ctx.console.print(f" [dim]{traceback.format_exc()[-300:]}[/dim]")

@@ -4,7 +4,7 @@ from typing import Dict, Optional, List, Any
 from .costs import cost_estimator
 from .history import ConversationHistory
 from .storage import AtomicJsonStore
-from .config import CONFIG_DIR
+from ..config import CONFIG_DIR
 
 def count_tokens(text: str, model: Optional[str] = None) -> int:
     """Delegates to the centralized cost_estimator."""

@@ -4,7 +4,7 @@ from typing import Any, Callable, Dict, List, Optional, Type, TYPE_CHECKING
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
-    from ..context import LoomContext
+    from ..core import LoomContext
 
 
 class BaseTool(ABC):

@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 from rich.console import Console
 from .state import SessionState
-from .config import Config
-from .task_manager import TaskManager
-from .memory import MemoryManager
+from ..config import Config
+from ..task_manager import TaskManager
+from ..memory import MemoryManager
 
 @dataclass
 class LoomContext:
