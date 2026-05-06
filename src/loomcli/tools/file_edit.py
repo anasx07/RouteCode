@@ -25,7 +25,8 @@ class FileEditTool(BaseTool):
                 "Provide old_string (exact match) and new_string. "
                 "Set allow_multiple=True to replace all occurrences. Runs serially.")
 
-    def execute(self, file_path: str, old_string: str, new_string: str, allow_multiple: bool = False, ctx: Optional["LoomContext"] = None) -> Dict[str, Any]:
+    def execute(self, file_path: str, old_string: str, new_string: str, allow_multiple: bool = False, 
+                ctx: Optional["LoomContext"] = None, provider: Optional[Any] = None, **kwargs) -> Dict[str, Any]:
         resolved, error = safe_resolve_path(file_path)
         if error:
             return {"success": False, "error": error}

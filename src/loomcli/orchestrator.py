@@ -35,21 +35,32 @@ class OrchestratorHooks:
 
 class AgentOrchestrator:
     """Unified execution loop for AI agents in LoomCLI."""
-    def __init__(self, ctx: LoomContext):
+    def __init__(self, ctx: LoomContext, provider: Optional[Any] = None):
         self.ctx = ctx
-        self.provider = None
-        self._initialize_provider()
+        self.provider = provider
+        if not self.provider:
+            self._initialize_provider()
+        
+        from .events import bus
+        bus.on("config.provider_changed", self.refresh_provider)
 
-    def _initialize_provider(self):
+    def _initialize_provider(self) -> bool:
         api_key = self.ctx.config.get_api_key()
         if not api_key:
+            self.provider = None
             return False
         
         provider_class = PROVIDER_MAP.get(self.ctx.config.provider)
         if provider_class:
             self.provider = provider_class(api_key)
             return True
+        
+        self.provider = None
         return False
+
+    def refresh_provider(self) -> bool:
+        """Forces a re-initialization of the provider, usually after a config change."""
+        return self._initialize_provider()
 
     def microcompact(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -255,7 +266,7 @@ class AgentOrchestrator:
             return {"error": f"Tool not found: {name}"}
         try:
             # Most tools are still synchronous, so we run them in a thread to avoid blocking the event loop.
-            return await asyncio.to_thread(tool.execute, **args, ctx=self.ctx)
+            return await asyncio.to_thread(tool.execute, **args, ctx=self.ctx, provider=self.provider)
         except Exception as e:
             return {"error": str(e)}
 

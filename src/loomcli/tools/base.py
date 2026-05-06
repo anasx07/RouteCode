@@ -41,7 +41,7 @@ class BaseTool(ABC):
         return self.name
 
     @abstractmethod
-    def execute(self, ctx: Optional["LoomContext"] = None, **kwargs) -> Any:
+    def execute(self, ctx: Optional["LoomContext"] = None, provider: Optional[Any] = None, **kwargs) -> Any:
         pass
 
     def validate_path(self, path: str) -> bool:

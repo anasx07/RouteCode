@@ -56,7 +56,8 @@ class FileReadTool(BaseTool):
     def get_activity_description(self, file_path: str = "", **kwargs) -> str:
         return f"Read({file_path})"
 
-    def execute(self, file_path: str, offset: int = 0, limit: int = 0, ctx: Optional["LoomContext"] = None) -> Dict[str, Any]:
+    def execute(self, file_path: str, offset: int = 0, limit: int = 0, 
+                ctx: Optional["LoomContext"] = None, provider: Optional[Any] = None, **kwargs) -> Dict[str, Any]:
         resolved, error = safe_resolve_path(file_path)
         if error:
             return {"success": False, "error": error}

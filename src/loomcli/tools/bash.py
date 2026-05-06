@@ -31,7 +31,8 @@ class BashTool(BaseTool):
     def get_tool_use_summary(self, command: str = "", **kwargs) -> str:
         return f"Ran: {command[:60]}"
 
-    def execute(self, command: str, timeout: int = 30, ctx: Optional["LoomContext"] = None) -> Dict[str, Any]:
+    def execute(self, command: str, timeout: int = 30, ctx: Optional["LoomContext"] = None, 
+                provider: Optional[Any] = None, **kwargs) -> Dict[str, Any]:
         import sys
         timeout = min(timeout, 120)
         try:

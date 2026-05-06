@@ -10,8 +10,8 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 
 class Config:
     def __init__(self):
-        self.provider: str = os.environ.get("LOOM_PROVIDER", "openrouter")
-        self.model: str = os.environ.get("LOOM_MODEL", "anthropic/claude-3.5-sonnet")
+        self._provider: str = os.environ.get("LOOM_PROVIDER", "openrouter")
+        self._model: str = os.environ.get("LOOM_MODEL", "anthropic/claude-3.5-sonnet")
         self.personality: str = os.environ.get("LOOM_PERSONALITY", "default")
         self.theme: str = os.environ.get("LOOM_THEME", "lava")
         self.allowlist: list = []
@@ -21,13 +21,35 @@ class Config:
         self._load()
         self._load_env_keys()
 
+    @property
+    def provider(self) -> str:
+        return self._provider
+
+    @provider.setter
+    def provider(self, value: str):
+        if self._provider != value:
+            self._provider = value
+            from .events import bus
+            bus.emit("config.provider_changed", provider=value)
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    @model.setter
+    def model(self, value: str):
+        if self._model != value:
+            self._model = value
+            from .events import bus
+            bus.emit("config.model_changed", model=value)
+
     def _load(self):
         data = self.store.load()
         if data:
             if not os.environ.get("LOOM_PROVIDER"):
-                self.provider = data.get("provider", self.provider)
+                self._provider = data.get("provider", self._provider)
             if not os.environ.get("LOOM_MODEL"):
-                self.model = data.get("model", self.model)
+                self._model = data.get("model", self._model)
             if not os.environ.get("LOOM_PERSONALITY"):
                 self.personality = data.get("personality", self.personality)
             if not os.environ.get("LOOM_THEME"):
@@ -74,6 +96,9 @@ class Config:
 
     def set_api_key(self, provider: str, key: str):
         self.api_keys[provider] = key
+        if provider == self.provider:
+            from .events import bus
+            bus.emit("config.provider_changed", provider=provider)
         self.save()
 
     def get_api_key(self, provider: Optional[str] = None) -> Optional[str]:

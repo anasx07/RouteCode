@@ -21,7 +21,8 @@ class FileWriteTool(BaseTool):
         return ("- file_write: Create or overwrite a file with content. "
                 "Provide file_path and content. Creates parent directories automatically. Runs serially.")
 
-    def execute(self, file_path: str, content: str, ctx: Optional["LoomContext"] = None) -> Dict[str, Any]:
+    def execute(self, file_path: str, content: str, ctx: Optional["LoomContext"] = None, 
+                provider: Optional[Any] = None, **kwargs) -> Dict[str, Any]:
         resolved, error = safe_resolve_path(file_path)
         if error:
             return {"success": False, "error": error}

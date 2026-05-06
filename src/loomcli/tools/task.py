@@ -15,8 +15,8 @@ class TaskInput(BaseModel):
     run_in_background: bool = Field(False, description="If True, run in background and return task_id immediately")
 
 
-async def _run_sub_agent_async(task: str, max_iterations: int, task_id: str, ctx: LoomContext):
-    orchestrator = AgentOrchestrator(ctx)
+async def _run_sub_agent_async(task: str, max_iterations: int, task_id: str, ctx: LoomContext, provider: Optional[Any] = None):
+    orchestrator = AgentOrchestrator(ctx, provider=provider)
     if not orchestrator.provider:
         ctx.task_manager.fail(task_id, "No API key configured or provider unavailable")
         return
@@ -70,9 +70,9 @@ async def _run_sub_agent_async(task: str, max_iterations: int, task_id: str, ctx
         output["text"] += "\n(Task completed with max iterations reached)"
         ctx.task_manager.complete(task_id, {"success": True, "output": output["text"]})
 
-def _run_sub_agent(task: str, max_iterations: int, task_id: str, ctx: LoomContext):
+def _run_sub_agent(task: str, max_iterations: int, task_id: str, ctx: LoomContext, provider: Optional[Any] = None):
     import asyncio
-    asyncio.run(_run_sub_agent_async(task, max_iterations, task_id, ctx))
+    asyncio.run(_run_sub_agent_async(task, max_iterations, task_id, ctx, provider=provider))
 
 
 
@@ -89,7 +89,8 @@ class TaskTool(BaseTool):
     def get_activity_description(self, task: str = "", **kwargs) -> str:
         return f"Task({task[:50]})"
 
-    def execute(self, task: str, max_iterations: int = 10, run_in_background: bool = False, ctx: Optional[LoomContext] = None) -> Dict[str, Any]:
+    def execute(self, task: str, max_iterations: int = 10, run_in_background: bool = False, 
+                ctx: Optional[LoomContext] = None, provider: Optional[Any] = None, **kwargs) -> Dict[str, Any]:
         from ..task_manager import generate_task_id
         task_id = generate_task_id()
         if ctx is None:
@@ -105,7 +106,7 @@ class TaskTool(BaseTool):
         if run_in_background:
             thread = threading.Thread(
                 target=_run_sub_agent,
-                args=(task, max_iterations, task_id, ctx),
+                args=(task, max_iterations, task_id, ctx, provider),
                 daemon=True
             )
             ctx.task_manager.create(task[:80], thread, task_id)
@@ -118,7 +119,7 @@ class TaskTool(BaseTool):
             }
 
         ctx.task_manager.create(task[:80], None, task_id)
-        _run_sub_agent(task, max_iterations, task_id, ctx)
+        _run_sub_agent(task, max_iterations, task_id, ctx, provider=provider)
         record = ctx.task_manager.get(task_id)
         if record and record.result:
             return record.result

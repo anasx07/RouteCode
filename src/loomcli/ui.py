@@ -6,11 +6,7 @@ import signal
 
 def _cleanup_terminal():
     """Ensure terminal is left in a clean state (e.g., mouse tracking disabled)."""
-    try:
-        sys.stdout.write("\033[?1003l")
-        sys.stdout.flush()
-    except Exception:
-        pass
+    TerminalManager.disable_mouse_tracking()
 
 atexit.register(_cleanup_terminal)
 
@@ -27,6 +23,46 @@ except (AttributeError, ValueError):
 
 import shutil
 from typing import Any, List, Dict, Optional
+
+class TerminalManager:
+    """Unified manager for low-level terminal manipulation and state."""
+    
+    @staticmethod
+    def clear():
+        """Clears the screen and resets cursor position using ANSI escapes."""
+        sys.stdout.write("\033[2J\033[H")
+        sys.stdout.flush()
+
+    @staticmethod
+    def set_background(bg_color: str):
+        """Sets terminal background color via OSC 11 and palette 0."""
+        try:
+            r, g, b = int(bg_color[1:3], 16), int(bg_color[3:5], 16), int(bg_color[5:7], 16)
+            # OSC 11: Set background color
+            sys.stdout.write(f"\033]11;rgb:{r:02x}/{g:02x}/{b:02x}\033\\")
+            # OSC 4;0: Set palette color 0 (often used for margins/padding)
+            sys.stdout.write(f"\033]4;0;rgb:{r:02x}/{g:02x}/{b:02x}\033\\")
+            sys.stdout.flush()
+        except Exception:
+            pass
+
+    @staticmethod
+    def get_size():
+        """Returns terminal dimensions (rows, cols)."""
+        return shutil.get_terminal_size()
+
+    @staticmethod
+    def enable_mouse_tracking():
+        """Enables Any Event mouse tracking."""
+        sys.stdout.write("\033[?1003h")
+        sys.stdout.flush()
+
+    @staticmethod
+    def disable_mouse_tracking():
+        """Disables Any Event mouse tracking."""
+        sys.stdout.write("\033[?1003l")
+        sys.stdout.flush()
+
 from rich.console import Console, Group
 from rich.theme import Theme
 from rich.panel import Panel
@@ -279,8 +315,7 @@ class LoomDialog:
         )
 
         # Force enable 'Any Event' mouse tracking
-        sys.stdout.write("\033[?1003h")
-        sys.stdout.flush()
+        TerminalManager.enable_mouse_tracking()
 
         app = Application(
             layout=PTLayout(root_container),
@@ -292,8 +327,7 @@ class LoomDialog:
         try:
             await app.run_async()
         finally:
-            sys.stdout.write("\033[?1003l")
-            sys.stdout.flush()
+            TerminalManager.disable_mouse_tracking()
         
         return self._handle_result()
 
@@ -437,15 +471,8 @@ def get_theme_bg(name=None):
 
 
 def _set_terminal_bg(bg_color: str):
-    """Sets the terminal background color using OSC 11 and palette color 0."""
-    try:
-        r, g, b = int(bg_color[1:3], 16), int(bg_color[3:5], 16), int(bg_color[5:7], 16)
-        sys.stdout.write(f"\033]11;rgb:{r:02x}/{g:02x}/{b:02x}\033\\")
-        # Also set palette color 0 which many terminals use for margins
-        sys.stdout.write(f"\033]4;0;rgb:{r:02x}/{g:02x}/{b:02x}\033\\")
-        sys.stdout.flush()
-    except Exception:
-        pass
+    """Sets the terminal background color using the centralized TerminalManager."""
+    TerminalManager.set_background(bg_color)
 
 
 def apply_theme(name: str = "lava"):

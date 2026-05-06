@@ -177,15 +177,12 @@ def handle_tools(args: List[str], ctx: LoomContext):
     ctx.console.print(table)
 
 def handle_clear(args: List[str], ctx: LoomContext):
-    import sys
-    sys.stdout.write("\033[2J\033[H")
-    h = 24
-    try:
-        from prompt_toolkit.output.defaults import create_output
-        h = create_output().get_size().rows
-    except Exception:
-        import shutil
-        h = shutil.get_terminal_size().lines
+    from .ui import TerminalManager
+    TerminalManager.clear()
+    
+    # Optional: fill the screen with newlines if we want to push old content out of scrollback,
+    # though TerminalManager.clear() with \033[2J usually handles the visible area.
+    h = TerminalManager.get_size().rows
     sys.stdout.write("\n" * (h - 2))
     sys.stdout.flush()
 

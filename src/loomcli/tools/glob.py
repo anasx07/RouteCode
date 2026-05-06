@@ -22,7 +22,8 @@ class GlobTool(BaseTool):
         return ("- glob: Search for files by glob pattern (e.g., '**/*.py'). "
                 "Results sorted by modification time, capped at 100. Safe for concurrent use.")
 
-    def execute(self, pattern: str, path: Optional[str] = None, ctx: Optional["LoomContext"] = None) -> Dict[str, Any]:
+    def execute(self, pattern: str, path: Optional[str] = None, ctx: Optional["LoomContext"] = None, 
+                provider: Optional[Any] = None, **kwargs) -> Dict[str, Any]:
         try:
             search_root = path or os.getcwd()
             if not os.path.isdir(search_root):

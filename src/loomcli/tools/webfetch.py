@@ -23,7 +23,8 @@ class WebFetchTool(BaseTool):
     def get_activity_description(self, url: str = "", **kwargs) -> str:
         return f"WebFetch({url[:40]})"
 
-    def execute(self, url: str, ctx: Optional["LoomContext"] = None) -> Dict[str, Any]:
+    def execute(self, url: str, ctx: Optional["LoomContext"] = None, 
+                provider: Optional[Any] = None, **kwargs) -> Dict[str, Any]:
         try:
             import httpx
             response = httpx.get(url, follow_redirects=True, timeout=30.0)

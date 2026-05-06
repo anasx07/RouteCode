@@ -79,13 +79,13 @@ def get_skill_prompts() -> str:
     return "\n".join(lines)
 
 
-def run_skill(skill: Skill, args: str = "") -> Dict[str, Any]:
+def run_skill(skill: Skill, args: str = "", ctx: Optional["LoomContext"] = None, provider: Optional[Any] = None) -> Dict[str, Any]:
     if skill.context == "fork":
         from .tools.task import _run_sub_agent
         prompt = skill.prompt + "\n\n" + args if args else skill.prompt
         task_id = f"s{abs(hash(prompt)) % 10**7}"
         task_manager.create(skill.name, None, task_id)
-        _run_sub_agent(prompt, 10, task_id)
+        _run_sub_agent(prompt, 10, task_id, ctx, provider=provider)
         record = task_manager.get(task_id)
         if record and record.result:
             return record.result

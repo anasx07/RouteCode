@@ -105,7 +105,6 @@ class LoomREPL:
         self.session = PromptSession(**session_kwargs)
 
 
-        self.provider = None
         self.messages = []
         from .memory import MemoryManager
         self.memory = MemoryManager(CONFIG_DIR)
@@ -166,12 +165,12 @@ class LoomREPL:
         return ft
 
     def _initialize_provider(self):
-        api_key = config.get_api_key()
+        api_key = self.ctx.config.get_api_key()
         if not api_key:
             from .ui import LoomDialog
             dialog = LoomDialog(
                 title="API Key Required",
-                text=f"Please enter your API key for [accent]{config.provider}[/accent]:",
+                text=f"Please enter your API key for [accent]{self.ctx.config.provider}[/accent]:",
                 dialog_type="input",
                 password=True
             )
@@ -183,11 +182,7 @@ class LoomREPL:
             else:
                 return False
         
-        provider_class = PROVIDER_MAP.get(self.ctx.config.provider)
-        if provider_class:
-            self.provider = provider_class(api_key)
-            return True
-        return False
+        return self.orchestrator.refresh_provider()
 
     def _set_terminal_background(self):
         """Update prompt_toolkit style to match the active theme background."""
@@ -311,7 +306,7 @@ class LoomREPL:
 
     async def process_agent_request(self, user_input: str):
         if not self.orchestrator.provider:
-            if not self.orchestrator._initialize_provider():
+            if not self._initialize_provider():
                 print_error(f"Provider not initialized. Set your API key with [command]/config[/command]")
                 return
 
@@ -386,25 +381,33 @@ class LoomREPL:
                     if pct:
                         self.repl.ctx.console.print(f" [warning]⚠[/warning] [dim]Context ~{pct:.0f}% full.[/dim]")
                         if pct > 70 and pct <= 85:
-                            if self.repl._microcompact():
+                            original_len = len(self.repl.messages)
+                            self.repl.messages[:] = self.repl.orchestrator.microcompact(self.repl.messages)
+                            if len(self.repl.messages) < original_len:
+                                self.repl.ctx.state.tokens_used = 0
+                                self.repl.ctx.state.reset_context_warning()
                                 self.repl.ctx.console.print(" [success]✔[/success] [dim]Cleaned old tool results.[/dim]")
                         elif pct > 85:
                             from .ui import LoomDialog
-                            options = []
-                            if self.repl._microcompact():
-                                options.append(("Micro (clean results)", "micro"))
-                            options.append(("Full (summarize)", "full"))
-                            options.append(("Continue", "continue"))
+                            options = [
+                                ("Micro (clean results)", "micro"),
+                                ("Full (summarize)", "full"),
+                                ("Continue", "continue")
+                            ]
                             dialog = LoomDialog(
                                 title="Context Full",
                                 text=f"Context is {pct:.0f}% full. Choose action:",
                                 buttons=options
                             )
                             result = await dialog.run_async()
-                            if result == "full" and self.repl._compact_context():
-                                self.repl.ctx.console.print(" [success]✔[/success] [dim]Context compacted.[/dim]")
+                            if result == "full":
+                                if self.repl._compact_context():
+                                    self.repl.ctx.console.print(" [success]✔[/success] [dim]Summarization started in background.[/dim]")
                             elif result == "micro":
-                                self.repl.ctx.console.print(" [success]✔[/success] [dim]Old tool results cleared.[/dim]")
+                                self.repl.messages[:] = self.repl.orchestrator.microcompact(self.repl.messages)
+                                self.repl.ctx.state.tokens_used = 0
+                                self.repl.ctx.state.reset_context_warning()
+                                self.repl.ctx.console.print(" [success]✔[/success] [dim]Context micro-compacted.[/dim]")
 
             async def should_stop(self):
                 return False
@@ -441,52 +444,7 @@ class LoomREPL:
             self.ctx.console.print(f" [dim]{traceback.format_exc()[-300:]}[/dim]")
             self.messages.append(ce.to_message())
 
-    def _microcompact(self) -> bool:
-        """Strip old tool results without an API call while preserving critical context."""
-        if len(self.messages) < 4:
-            return False
-            
-        system_msg = self.messages[0]
-        
-        turns = []
-        current_turn = []
-        last_role = None
-        for msg in self.messages[1:]:
-            role = msg.get("role")
-            if role == "user":
-                if current_turn: turns.append(current_turn)
-                current_turn = [msg]
-            elif role == "assistant":
-                if last_role in ("tool", "assistant"):
-                    if current_turn: turns.append(current_turn)
-                    current_turn = [msg]
-                else:
-                    current_turn.append(msg)
-            else:
-                current_turn.append(msg)
-            last_role = role
-            
-        if current_turn:
-            turns.append(current_turn)
 
-        kept = [system_msg]
-        for i, turn in enumerate(turns):
-            is_recent = i >= len(turns) - 4
-            has_critical_context = False
-            for msg in turn:
-                if msg.get("role") == "tool" and msg.get("name") in ("file_read", "file_edit", "file_write", "task"):
-                    has_critical_context = True
-                    break
-                    
-            if is_recent or has_critical_context:
-                kept.extend(turn)
-
-        if len(kept) < len(self.messages):
-            self.messages = kept
-            self.state.tokens_used = 0
-            self.state.context_warned = False
-            return True
-        return False
 
     def _compact_context(self) -> bool:
         if len(self.messages) < 4:
@@ -612,7 +570,7 @@ class LoomREPL:
             return {"error": "Permission denied by user"}
 
         try:
-            result = await asyncio.to_thread(tool.execute, **arguments, ctx=self.ctx)
+            result = await asyncio.to_thread(tool.execute, **arguments, ctx=self.ctx, provider=self.orchestrator.provider)
             registry.run_post_hooks(name, result)
             return result
         except Exception as e:
