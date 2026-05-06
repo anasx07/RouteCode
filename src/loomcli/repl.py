@@ -13,6 +13,9 @@ from prompt_toolkit.output.color_depth import ColorDepth
 from rich.markdown import Markdown
 from rich.live import Live
 
+from .logger import get_logger
+logger = get_logger(__name__)
+
 from . import ui as _ui
 from .ui import (
     console, print_error, print_welcome_screen, 
@@ -71,8 +74,8 @@ class LoomREPL:
                 try:
                     r, g, b = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
                     pt_output.write_raw(f"\033[48;2;{r};{g};{b}m")
-                except:
-                    pass
+                except Exception as e:
+                    logger.debug("Failed to set background during erase: %s", e)
                 original_erase()
             pt_output.erase_end_of_line = _erase_with_bg
             
@@ -84,10 +87,11 @@ class LoomREPL:
                 try:
                     r, g, b = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
                     pt_output.write_raw(f"\033[48;2;{r};{g};{b}m")
-                except:
-                    pass
+                except Exception as e:
+                    logger.debug("Failed to set background during reset: %s", e)
             pt_output.reset_attributes = _reset_with_bg
-        except Exception:
+        except Exception as e:
+            logger.debug("Failed to initialize vt100 output: %s", e)
             pt_output = None
         
         history_file = CONFIG_DIR / "history"
@@ -253,8 +257,8 @@ class LoomREPL:
                         bg = get_theme_bg()
                         _set_terminal_bg(bg)
                         last_size = current_size
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Failed to get terminal size: %s", e)
 
                 def pre_run():
                     import sys
@@ -264,8 +268,8 @@ class LoomREPL:
                         r, g, b = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
                         sys.stdout.write(f"\r\033[48;2;{r};{g};{b}m\033[K")
                         sys.stdout.flush()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug("Failed to refresh background during pre_run: %s", e)
 
                 user_input = await self.session.prompt_async(
                     [("class:accent", "┃ "), ("class:prompt", "> ")],

@@ -20,6 +20,9 @@ def main(
     if ctx.invoked_subcommand is not None:
         return
 
+    from .logger import setup_logging
+    setup_logging()
+
     if model:
         config.model = model
     if provider:
@@ -37,7 +40,7 @@ def main(
         if session_path.exists():
             import json
             data = json.loads(session_path.read_text(encoding="utf-8"))
-            repl.state.session_messages = data.get("messages", [])
+            repl.ctx.state.session_messages.set_messages(data.get("messages", []))
             repl.state.tokens_used = data.get("tokens_used", 0)
             config.provider = data.get("provider", config.provider)
             config.model = data.get("model", config.model)

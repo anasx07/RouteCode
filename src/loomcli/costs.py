@@ -1,5 +1,8 @@
 import litellm
 import re
+from .logger import get_logger
+
+logger = get_logger(__name__)
 from typing import Optional, Dict, Any, Tuple
 from .models_db import get_model_pricing
 
@@ -21,7 +24,8 @@ class CostEstimator:
         try:
             # LiteLLM handles different tokenizers (tiktoken, anthropic, etc.)
             return litellm.token_counter(model=model, text=text)
-        except Exception:
+        except Exception as e:
+            logger.debug("LiteLLM token_counter failed for %s: %s. Using regex fallback.", model, e)
             # Last resort fallback if litellm fails or model is unknown
             # Provides a better estimate for code/JSON than simple split()
             tokens = re.findall(r'\w+|[^\w\s]', text)
@@ -45,8 +49,8 @@ class CostEstimator:
                 if input_price is not None and output_price is not None:
                     cost = (input_tokens * input_price) + (output_tokens * output_price)
                     return cost, context_limit
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to get model info from LiteLLM for %s: %s", model, e)
 
         # Fallback to internal models_db
         input_price_m, output_price_m, context_limit = get_model_pricing(model)
