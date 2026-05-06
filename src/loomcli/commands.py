@@ -2,6 +2,7 @@ import sys
 import os
 import json
 import time
+import inspect
 from datetime import datetime
 from typing import List, Dict
 from rich.table import Table
@@ -77,9 +78,10 @@ async def handle_model(args: List[str], ctx: LoomContext):
 
     print_step(f"Fetching models from {ctx.config.provider}...")
     provider = provider_cls(api_key)
-    # get_models might be sync for some adapters, but ideally it should be async.
-    # For now we'll call it and assume it's fast or in a thread if it's network-heavy.
-    models = getattr(provider, "get_models", lambda: [])()
+    if inspect.iscoroutinefunction(getattr(provider, "get_models", None)):
+        models = await provider.get_models()
+    else:
+        models = getattr(provider, "get_models", lambda: [])()
     if models:
         model_choices = [(m["id"], m.get("name", m["id"])) for m in models]
 

@@ -1,54 +1,11 @@
 import time
 from dataclasses import dataclass, field
 from typing import Dict, Optional, List
-
-# Minimal fallback for core models when the database is unavailable or missing a entry.
-# Primary pricing should always come from models_db.py (models_api.json).
-FALLBACK_PRICING = {
-    "gpt-4o": (2.50, 10.00, 128000),
-    "claude-3.5-sonnet": (3.00, 15.00, 200000),
-    "gemini-1.5-pro": (1.25, 5.00, 1048576),
-    "deepseek-chat": (0.27, 1.10, 65536),
-}
-
-DEFAULT_INPUT_PRICE = 2.00
-DEFAULT_OUTPUT_PRICE = 10.00
-DEFAULT_CONTEXT_LIMIT = 32000
-
-
-def get_model_pricing(model: str) -> tuple:
-    """Retrieves pricing info for a model, prioritizing the models_db."""
-    try:
-        from .models_db import get_model_pricing as db_pricing
-        prices = db_pricing(model)
-        # If the DB returned non-default values, we assume it found the model
-        if prices[0] != DEFAULT_INPUT_PRICE or prices[2] != DEFAULT_CONTEXT_LIMIT:
-            return prices
-    except Exception:
-        pass
-
-    # Fallback to a very small list of well-known models
-    for key, prices in FALLBACK_PRICING.items():
-        if key in model.lower():
-            return prices
-            
-    return (DEFAULT_INPUT_PRICE, DEFAULT_OUTPUT_PRICE, DEFAULT_CONTEXT_LIMIT)
-
+from .costs import cost_estimator
 
 def count_tokens(text: str, model: Optional[str] = None) -> int:
-    try:
-        import tiktoken
-        try:
-            encoding = tiktoken.encoding_for_model(model or "gpt-4")
-        except KeyError:
-            encoding = tiktoken.get_encoding("cl100k_base")
-        return len(encoding.encode(text))
-    except Exception:
-        # Fallback: simple word and punctuation tokenizer. Provides a much safer 
-        # upper-bound estimate for code and JSON compared to simple split().
-        import re
-        tokens = re.findall(r'\w+|[^\w\s]', text)
-        return len(tokens)
+    """Delegates to the centralized cost_estimator."""
+    return cost_estimator.count_tokens(text, model or "gpt-4")
 
 
 @dataclass
@@ -61,11 +18,21 @@ class SessionState:
     session_messages: List[Dict] = field(default_factory=list)
     context_warned: bool = False
 
-    def add_tokens(self, count: int, model: Optional[str] = None):
-        self.tokens_used += count
-        input_price, output_price, ctx_limit = get_model_pricing(model or "")
-        avg_price = (input_price + output_price) / 2
-        self.estimated_cost += (count / 1_000_000) * avg_price
+    def add_tokens(self, count: int, model: Optional[str] = None, input_tokens: Optional[int] = None, output_tokens: Optional[int] = None):
+        """
+        Updates session statistics with new token usage.
+        If input_tokens/output_tokens are provided, uses them for precise costing.
+        Otherwise, treats 'count' as total and estimates a 50/50 split.
+        """
+        if input_tokens is not None and output_tokens is not None:
+            self.tokens_used += (input_tokens + output_tokens)
+            cost, ctx_limit = cost_estimator.calculate_cost(input_tokens, output_tokens, model or "")
+        else:
+            self.tokens_used += count
+            # Estimate 50/50 split if only total is provided
+            cost, ctx_limit = cost_estimator.calculate_cost(count // 2, count // 2, model or "")
+        
+        self.estimated_cost += cost
 
         if not self.context_warned and ctx_limit > 0:
             pct = self.tokens_used / ctx_limit * 100
@@ -73,6 +40,16 @@ class SessionState:
                 self.context_warned = True
                 return pct
         return None
+
+    def get_context_usage(self, model: str) -> float:
+        """Returns the current context usage percentage."""
+        _, _, ctx_limit = cost_estimator.calculate_cost(0, 0, model)
+        if ctx_limit <= 0: return 0.0
+        return (self.tokens_used / ctx_limit) * 100
+
+    def reset_context_warning(self):
+        """Resets the context warning flag, typically after compaction."""
+        self.context_warned = False
 
     def to_dict(self) -> dict:
         return {

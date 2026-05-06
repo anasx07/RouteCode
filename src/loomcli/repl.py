@@ -101,111 +101,10 @@ class LoomREPL:
             color_depth=ColorDepth.TRUE_COLOR,
         )
         if pt_output:
-import os
-import getpass
-import json
-import time
-import concurrent.futures
-from prompt_toolkit import PromptSession
-from prompt_toolkit.history import FileHistory
-from prompt_toolkit.completion import WordCompleter
-from prompt_toolkit.styles import Style, DynamicStyle
-from prompt_toolkit.formatted_text import to_formatted_text
-from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
-from prompt_toolkit.output.color_depth import ColorDepth
-from rich.markdown import Markdown
-from rich.live import Live
-
-from . import ui as _ui
-from .ui import (
-    console, print_error, print_welcome_screen, 
-    print_thought_elapsed, print_status_line,
-    print_tool_call, print_tool_result, print_session_stats,
-    get_thinking_indicator, LoadingRenderable, get_tool_label,
-    LoomFace, LOOM_FACES, print_step, get_theme_bg
-)
-from .commands import execute_command, get_command_metadata
-from .tools import registry
-from .tools.base import BaseTool
-from .config import config, CONFIG_DIR
-from .state import SessionState, count_tokens
-from .system_prompt import compute_system_prompt
-from .errors import classify_exception
-from .agents.registry import PROVIDER_MAP
-from .context import LoomContext
-from .task_manager import task_manager
-from .events import bus
-from .orchestrator import AgentOrchestrator, OrchestratorHooks
-
-
-
-
-
-class LoomREPL:
-    def __init__(self):
-        command_metadata = get_command_metadata()
-        from .skills import discover_skills
-        skill_commands = {}
-        for skill_name in discover_skills():
-            skill_commands[f"/{skill_name}"] = "Run user-defined skill"
-        all_commands = {**command_metadata, **skill_commands}
-        self.completer = WordCompleter(
-            list(all_commands.keys()),
-            meta_dict=all_commands,
-            ignore_case=True,
-            sentence=True
-        )
-        
-        self.style = Style.from_dict({"": "bg:#1a1a2e"})  # placeholder, overwritten below
-        self._set_terminal_background()
-        
-        # Force VT100 output so ANSI bg colors work (Win32Output ignores them)
-        import sys as _sys
-        try:
-            from prompt_toolkit.output.vt100 import Vt100_Output
-            from prompt_toolkit.output.defaults import create_output
-            _win32_output = create_output()
-            pt_output = Vt100_Output(_sys.stdout, lambda: _win32_output.get_size())
-            
-            # Monkey-patch erase_end_of_line to FORCE the background color to paint the rest of the line
-            original_erase = pt_output.erase_end_of_line
-            def _erase_with_bg():
-                bg = get_theme_bg()
-                try:
-                    r, g, b = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
-                    pt_output.write_raw(f"\033[48;2;{r};{g};{b}m")
-                except:
-                    pass
-                original_erase()
-            pt_output.erase_end_of_line = _erase_with_bg
-            
-            # Also patch reset_attributes to prevent terminal default bg from leaking in
-            original_reset = pt_output.reset_attributes
-            def _reset_with_bg():
-                original_reset()
-                bg = get_theme_bg()
-                try:
-                    r, g, b = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
-                    pt_output.write_raw(f"\033[48;2;{r};{g};{b}m")
-                except:
-                    pass
-            pt_output.reset_attributes = _reset_with_bg
-        except Exception:
-            pt_output = None
-        
-        history_file = CONFIG_DIR / "history"
-        session_kwargs = dict(
-            history=FileHistory(str(history_file)),
-            completer=self.completer,
-            complete_while_typing=True,
-            bottom_toolbar=self._get_bottom_toolbar,
-            style=DynamicStyle(lambda: self.style),
-            mouse_support=True,
-            color_depth=ColorDepth.TRUE_COLOR,
-        )
-        if pt_output:
             session_kwargs["output"] = pt_output
         self.session = PromptSession(**session_kwargs)
+
+
         self.provider = None
         self.messages = []
         from .memory import MemoryManager
@@ -338,7 +237,7 @@ class LoomREPL:
         if not self._initialize_provider():
             print_error(f"No API key found for provider '{self.ctx.config.provider}'. Use [command]/config[/command] to set it.")
 
-        system_content = compute_system_prompt(self.ctx)
+        system_content = await compute_system_prompt(self.ctx)
         self.messages = [{"role": "system", "content": system_content}]
 
         last_size = None
@@ -406,7 +305,7 @@ class LoomREPL:
         if not self._initialize_provider():
             print_error(f"No API key found for provider '{self.ctx.config.provider}'.")
             return
-        system_content = compute_system_prompt(self.ctx)
+        system_content = await compute_system_prompt(self.ctx)
         self.messages = [{"role": "system", "content": system_content}]
         await self.process_agent_request(query)
 
@@ -438,9 +337,14 @@ class LoomREPL:
                     tc = chunk["tool_call"]
                     fn = tc.get("function", {})
                     try:
-                        args = json.loads(fn.get("arguments", "{}")) if isinstance(fn.get("arguments"), str) else fn.get("arguments", {})
+                        args = registry.parse_and_validate(fn.get("name", "?"), fn.get("arguments", "{}"))
                     except Exception:
-                        args = {}
+                        # For UI display purposes, we can be more lenient or show raw args
+                        raw = fn.get("arguments", "{}")
+                        try:
+                            args = json.loads(raw) if isinstance(raw, str) else raw
+                        except Exception:
+                            args = {}
                     label = get_tool_label(fn.get("name", "?"), args)
                     if label not in self.pending_tool_labels:
                         self.pending_tool_labels.append(label)

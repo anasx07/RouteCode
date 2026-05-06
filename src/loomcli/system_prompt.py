@@ -1,4 +1,5 @@
 import os
+import asyncio
 import subprocess
 from typing import Optional
 from .tools import registry
@@ -43,28 +44,32 @@ def _build_memory_section(ctx: 'LoomContext') -> str:
     return ctx.memory.get_relevant_context()
 
 
-def _build_loom_section() -> str:
+async def _build_loom_section_async() -> Optional[str]:
+    import aiofiles
     if os.path.exists("LOOM.md"):
         try:
-            content = open("LOOM.md", encoding="utf-8").read()
-            if "## System Prompt" in content:
-                section = content.split("## System Prompt", 1)[1]
-                if "## " in section:
-                    section = section.split("## ", 1)[0]
-                return section.strip()
-            return "## Project Instructions\n" + content
+            async with aiofiles.open("LOOM.md", mode='r', encoding="utf-8") as f:
+                content = await f.read()
+                if "## System Prompt" in content:
+                    section = content.split("## System Prompt", 1)[1]
+                    if "## " in section:
+                        section = section.split("## ", 1)[0]
+                    return section.strip()
+                return "## Project Instructions\n" + content
         except Exception:
             return None
     return None
 
 
-def _build_context_section() -> str:
+async def _build_context_section_async() -> str:
+    import aiofiles
     parts = []
     for filename in ["README.md", "pyproject.toml"]:
         if os.path.exists(filename):
             try:
-                with open(filename, "r", encoding="utf-8") as f:
-                    parts.append(f"--- {filename} ---\n{f.read()}")
+                async with aiofiles.open(filename, mode="r", encoding="utf-8") as f:
+                    content = await f.read()
+                    parts.append(f"--- {filename} ---\n{content}")
             except Exception:
                 pass
     if parts:
@@ -72,9 +77,9 @@ def _build_context_section() -> str:
     return ""
 
 
-def _build_git_section() -> str:
-    from .git import get_git_context
-    return get_git_context()
+async def _build_git_section_async() -> str:
+    from .git import get_git_context_async
+    return await get_git_context_async()
 
 
 def _build_skill_section() -> str:
@@ -96,7 +101,7 @@ User: {user}
 </env>"""
 
 
-def compute_system_prompt(ctx: 'LoomContext') -> str:
+async def compute_system_prompt(ctx: 'LoomContext') -> str:
     from .personalities import get_personality_section, get_active_personality
     if ctx.config.personality:
         from .personalities import load_personalities
@@ -109,15 +114,25 @@ def compute_system_prompt(ctx: 'LoomContext') -> str:
     ]
     if pers.keep_base_instructions:
         sections.append(_build_behavior_section())
+    
+    # Gather dynamic sections in parallel
+    dynamic_results = await asyncio.gather(
+        _build_loom_section_async(),
+        _build_git_section_async(),
+        _build_context_section_async()
+    )
+    
+    loom_sect, git_sect, context_sect = dynamic_results
+
     sections += [
         _build_tools_section(),
         _build_skill_section(),
         _build_env_section(),
-        _build_loom_section(),
+        loom_sect,
         _build_memory_section(ctx),
-        _build_git_section(),
+        git_sect,
         get_personality_section(),
         SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
-        _build_context_section(),
+        context_sect,
     ]
     return "\n\n".join(s for s in sections if s)

@@ -98,5 +98,41 @@ class ToolRegistry:
             except Exception:
                 pass
 
+    def parse_and_validate(self, name: str, arguments: Any) -> Dict[str, Any]:
+        """
+        Safely parses stringified JSON arguments and validates them against 
+        the tool's Pydantic model. Centralizes error handling and formatting.
+        """
+        import json
+        from pydantic import ValidationError
+        
+        tool = self.get_tool(name)
+        if not tool:
+            raise ValueError(f"Unknown tool: {name}")
+
+        # Parse JSON string if necessary
+        if isinstance(arguments, str):
+            try:
+                args_dict = json.loads(arguments)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Invalid JSON in tool arguments: {str(e)}")
+        elif isinstance(arguments, dict):
+            args_dict = arguments
+        else:
+            raise ValueError(f"Arguments must be a JSON string or dictionary, got {type(arguments).__name__}")
+
+        # Validate with Pydantic
+        try:
+            validated = tool.input_schema.model_validate(args_dict)
+            return validated.model_dump()
+        except ValidationError as e:
+            # Format pydantic errors into a more readable string
+            errors = []
+            for err in e.errors():
+                loc = " -> ".join(str(l) for l in err["loc"])
+                msg = err["msg"]
+                errors.append(f" - {loc}: {msg}")
+            raise ValueError(f"Validation failed for tool '{name}':\n" + "\n".join(errors))
+
 
 registry = ToolRegistry()

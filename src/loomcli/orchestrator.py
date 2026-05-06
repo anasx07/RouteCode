@@ -1,7 +1,6 @@
 import json
 import time
 import asyncio
-import concurrent.futures
 from typing import Any, Dict, List, Optional, Callable
 from .context import LoomContext
 from .state import count_tokens
@@ -52,6 +51,51 @@ class AgentOrchestrator:
             return True
         return False
 
+    def microcompact(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Strip old tool results without an API call while preserving critical context.
+        """
+        if len(messages) < 6:
+            return messages
+            
+        system_msg = messages[0]
+        
+        turns = []
+        current_turn = []
+        last_role = None
+        for msg in messages[1:]:
+            role = msg.get("role")
+            if role == "user":
+                if current_turn: turns.append(current_turn)
+                current_turn = [msg]
+            elif role == "assistant":
+                if last_role in ("tool", "assistant"):
+                    if current_turn: turns.append(current_turn)
+                    current_turn = [msg]
+                else:
+                    current_turn.append(msg)
+            else:
+                current_turn.append(msg)
+            last_role = role
+            
+        if current_turn:
+            turns.append(current_turn)
+
+        kept = [system_msg]
+        for i, turn in enumerate(turns):
+            is_recent = i >= len(turns) - 4
+            has_critical_context = False
+            for msg in turn:
+                # Tools that produce context crucial for subsequent steps
+                if msg.get("role") == "tool" and msg.get("name") in ("file_read", "file_edit", "file_write", "task"):
+                    has_critical_context = True
+                    break
+                    
+            if is_recent or has_critical_context:
+                kept.extend(turn)
+
+        return kept
+
     async def run(self, messages: List[Dict[str, Any]], hooks: Optional[OrchestratorHooks] = None, max_turns: int = 20, tool_executor: Optional[Callable] = None):
         """
         Runs the core agent loop: LLM call -> Tool execution -> State update.
@@ -70,12 +114,26 @@ class AgentOrchestrator:
             if await hooks.should_stop():
                 break
 
+            # Automatic context management
+            usage_pct = self.ctx.state.get_context_usage(self.ctx.config.model)
+            if usage_pct > 85:
+                # Perform micro-compaction
+                original_len = len(messages)
+                compacted = self.microcompact(messages)
+                if len(compacted) < original_len:
+                    messages[:] = compacted
+                    self.ctx.state.tokens_used = 0 # Reset to force recalculation or at least avoid false alarms
+                    self.ctx.state.reset_context_warning()
+                    # We don't have a specific hook for compaction yet, but we could add one
+                    # For now, it just happens transparently
+
             turn_count += 1
             full_response = ""
             tool_calls = []
             start_time = time.time()
 
             try:
+                provider_usage = None
                 async for chunk in self.provider.ask(messages, self.ctx.config.model, tools=tool_schemas):
                     if await hooks.should_stop():
                         return
@@ -86,6 +144,8 @@ class AgentOrchestrator:
                         full_response += chunk["content"]
                     elif chunk["type"] == "tool_call":
                         tool_calls.append(chunk["tool_call"])
+                    elif chunk["type"] == "usage":
+                        provider_usage = chunk["usage"]
                     elif chunk["type"] == "error":
                         await hooks.on_error(chunk["content"])
                         return
@@ -106,7 +166,12 @@ class AgentOrchestrator:
                     assistant_message["tool_calls"] = sanitized
                 
                 messages.append(assistant_message)
-                if full_response:
+                
+                if provider_usage:
+                    comp_tokens = provider_usage.get("completion_tokens", 0)
+                    prompt_tokens = provider_usage.get("prompt_tokens", 0)
+                    self.ctx.state.add_tokens(0, self.ctx.config.model, input_tokens=prompt_tokens, output_tokens=comp_tokens)
+                elif full_response:
                     self.ctx.state.add_tokens(count_tokens(full_response, self.ctx.config.model), self.ctx.config.model)
 
                 await hooks.on_turn_complete(full_response, tool_calls)
@@ -124,9 +189,11 @@ class AgentOrchestrator:
 
                     raw_args = func.get("arguments", "{}")
                     try:
-                        args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
-                    except json.JSONDecodeError:
-                        args = {}
+                        args = registry.parse_and_validate(name, raw_args)
+                    except ValueError as e:
+                        # If validation fails, we still want to record the tool result with an error
+                        await self._append_tool_result(messages, tc_id, name, {"error": str(e)})
+                        continue
 
                     tool_inputs.append((tc_id, name, args))
 
