@@ -3,6 +3,7 @@ import re
 from pathlib import Path
 from typing import Optional
 from .config import CONFIG_DIR
+from .utils import parse_frontmatter
 
 
 PERSONALITY_DIRS = [
@@ -50,7 +51,6 @@ BUILTIN_PERSONALITIES = {
 }
 
 
-from .utils import parse_frontmatter
 
 
 def load_personalities() -> dict:

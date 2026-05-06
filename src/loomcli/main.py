@@ -26,7 +26,8 @@ def main(
     if model:
         config.model = model
     if provider:
-        if provider in ("openrouter", "openai", "anthropic", "google", "deepseek"):
+        from .agents.registry import PROVIDER_MAP
+        if provider in PROVIDER_MAP:
             config.provider = provider
         else:
             _ui.console.print(f"[error]Unknown provider: {provider}[/error]")

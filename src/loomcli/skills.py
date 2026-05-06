@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from .config import CONFIG_DIR
 from .task_manager import task_manager
+from .utils import parse_frontmatter
 
 
 SKILL_DIRS = [
@@ -13,7 +14,6 @@ SKILL_DIRS = [
 ]
 
 
-from .utils import parse_frontmatter
 
 
 class Skill:

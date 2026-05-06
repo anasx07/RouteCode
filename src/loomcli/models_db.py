@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from typing import Dict, Optional, Any
 from functools import lru_cache
+import litellm
 
 _DB_PATH = Path(__file__).parent / "models_api.json"
 _db_cache: Optional[Dict] = None
@@ -11,6 +12,8 @@ def _load_db() -> Dict:
     global _db_cache
     if _db_cache is None:
         try:
+            # We only load this large JSON if litellm doesn't have the info
+            # or if we need metadata specifically stored here.
             with open(_DB_PATH, "r", encoding="utf-8") as f:
                 _db_cache = json.load(f)
         except Exception:
@@ -35,11 +38,25 @@ def get_model(provider_id: str, model_id: str) -> Optional[Dict]:
     return None
 
 
+@lru_cache(maxsize=512)
 def get_model_pricing(model_id: str, provider_id: Optional[str] = None) -> tuple:
     DEFAULT_INPUT = 2.00
     DEFAULT_OUTPUT = 10.00
     DEFAULT_CONTEXT = 32000
 
+    # 1. Try LiteLLM first (highly optimized, no large file load)
+    try:
+        if model_id in litellm.model_cost:
+            info = litellm.model_cost[model_id]
+            return (
+                info.get("input_cost_per_token", 0) * 1_000_000, 
+                info.get("output_cost_per_token", 0) * 1_000_000, 
+                info.get("max_tokens", DEFAULT_CONTEXT)
+            )
+    except Exception:
+        pass
+
+    # 2. Try specific provider lookup in our DB (triggers load)
     if provider_id:
         model = get_model(provider_id, model_id)
         if model:
@@ -47,6 +64,7 @@ def get_model_pricing(model_id: str, provider_id: Optional[str] = None) -> tuple
             limit = model.get("limit", {})
             return (cost.get("input", DEFAULT_INPUT), cost.get("output", DEFAULT_OUTPUT), limit.get("context", DEFAULT_CONTEXT))
 
+    # 3. Full DB scan (triggers load)
     db = _load_db()
     for pid in db:
         model = get_model(pid, model_id)

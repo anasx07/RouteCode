@@ -12,10 +12,11 @@ from prompt_toolkit.shortcuts import radiolist_dialog, input_dialog, button_dial
 from . import ui as _ui
 from .ui import print_info, print_success, print_error, print_step, LoomDialog
 from .tools import registry
-from .context import LoomContext
+from .agents.registry import PROVIDER_MAP
 from .attachments import load_attachment
+from .utils import parse_hex_color
 
-PROVIDER_LIST = ["openrouter", "anthropic", "openai", "google", "deepseek", "opencode", "opencode-go"]
+PROVIDER_LIST = list(PROVIDER_MAP.keys())
 
 def handle_help(args: List[str], ctx: LoomContext):
     table = Table(title="Available Commands", show_header=True, header_style="bold magenta")
@@ -469,6 +470,16 @@ def handle_attach(args: List[str], ctx: LoomContext):
         ctx.state.session_messages.append(msg)
         print_success(f"Attached: {att['name']}")
 
+def _refresh_screen(ctx: LoomContext):
+    """Clears the terminal with the current theme background and repaints the welcome screen."""
+    import sys, getpass
+    from .ui import get_theme_bg, print_welcome_screen
+    bg = get_theme_bg()
+    r, g, b = parse_hex_color(bg)
+    sys.stdout.write(f"\033[48;2;{r};{g};{b}m\033[2J\033[H")
+    sys.stdout.flush()
+    print_welcome_screen(getpass.getuser(), ctx.config.model, ctx.config.provider, ctx.console)
+
 def handle_version(args: List[str], ctx: LoomContext):
     ctx.console.print("[accent]LoomCLI[/accent] [white]0.1.0[/white]")
     ctx.console.print(f"[dim]Python based, {len(COMMANDS)} commands[/dim]")
@@ -482,14 +493,7 @@ async def handle_theme(args: List[str], ctx: LoomContext):
             apply_theme(name)
             ctx.config.theme = name
             await ctx.config.save_async()
-            # Force a clear and re-print of welcome screen to unify the background
-            import sys, getpass
-            from .ui import get_theme_bg, print_welcome_screen
-            bg = get_theme_bg()
-            r, g, b = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
-            sys.stdout.write(f"\033[48;2;{r};{g};{b}m\033[2J\033[H")
-            sys.stdout.flush()
-            print_welcome_screen(getpass.getuser(), ctx.config.model, ctx.config.provider, ctx.console)
+            _refresh_screen(ctx)
             print_success(f"Theme set to: {name}")
         else:
             avail = ", ".join(THEMES.keys())
@@ -512,13 +516,7 @@ async def handle_theme(args: List[str], ctx: LoomContext):
         await ctx.config.save_async()
         
         # Force a clear and re-print of welcome screen to unify the background
-        import sys, getpass
-        from .ui import get_theme_bg, print_welcome_screen
-        bg = get_theme_bg()
-        r, g, b = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
-        sys.stdout.write(f"\033[48;2;{r};{g};{b}m\033[2J\033[H")
-        sys.stdout.flush()
-        print_welcome_screen(getpass.getuser(), ctx.config.model, ctx.config.provider, ctx.console)
+        _refresh_screen(ctx)
         print_success(f"Theme set to: {result}")
 
 async def handle_personality(args: List[str], ctx: LoomContext):

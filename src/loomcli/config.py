@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from .storage import AtomicJsonStore
+from .agents.registry import PROVIDER_MAP
 
 CONFIG_DIR = Path.home() / ".loomcli"
 CONFIG_FILE = CONFIG_DIR / "config.json"
@@ -59,7 +60,7 @@ class Config:
             self.api_keys = data.get("api_keys", {})
 
     def _load_env_keys(self):
-        for provider in ("openrouter", "openai", "anthropic", "google", "deepseek", "opencode", "opencode-go"):
+        for provider in PROVIDER_MAP.keys():
             key = os.environ.get(f"LOOM_{provider.upper()}_KEY")
             if key:
                 self.api_keys[provider] = key
@@ -70,8 +71,9 @@ class Config:
             if "opencode-go" not in self.api_keys:
                 self.api_keys["opencode-go"] = opencode_key
 
-    def save(self):
-        data = {
+    def to_dict(self) -> Dict[str, Any]:
+        """Returns a dictionary representation of the current configuration."""
+        return {
             "provider": self.provider,
             "model": self.model,
             "personality": self.personality,
@@ -80,19 +82,14 @@ class Config:
             "allowlist": self.allowlist,
             "denylist": self.denylist
         }
-        self.store.save(data)
+
+    def save(self):
+        """Saves configuration synchronously."""
+        self.store.save(self.to_dict())
 
     async def save_async(self):
-        data = {
-            "provider": self.provider,
-            "model": self.model,
-            "personality": self.personality,
-            "theme": self.theme,
-            "api_keys": self.api_keys,
-            "allowlist": self.allowlist,
-            "denylist": self.denylist
-        }
-        await self.store.save_async(data)
+        """Saves configuration asynchronously."""
+        await self.store.save_async(self.to_dict())
 
     def set_api_key(self, provider: str, key: str):
         self.api_keys[provider] = key

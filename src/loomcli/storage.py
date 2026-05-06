@@ -40,11 +40,14 @@ class AtomicJsonStore:
         except (json.JSONDecodeError, Exception):
             return default if default is not None else {}
 
+    def _serialize(self, data: Dict[str, Any]) -> str:
+        return json.dumps(data, indent=2, ensure_ascii=False)
+
     def save(self, data: Dict[str, Any]):
         """Saves data atomically to the file."""
         tmp_path = self.path.with_suffix(".tmp")
         try:
-            tmp_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+            tmp_path.write_text(self._serialize(data), encoding="utf-8")
             os.replace(tmp_path, self.path)
         except Exception as e:
             if tmp_path.exists():
@@ -56,13 +59,10 @@ class AtomicJsonStore:
         tmp_path = self.path.with_suffix(".tmp")
         try:
             async with aiofiles.open(tmp_path, mode='w', encoding='utf-8') as f:
-                await f.write(json.dumps(data, indent=2, ensure_ascii=False))
-            # os.replace is fast, but we can run it in a thread to be safe if desired.
-            # For local filesystems, it's usually negligible, but let's be thorough.
+                await f.write(self._serialize(data))
             await asyncio.to_thread(os.replace, tmp_path, self.path)
         except Exception as e:
             if tmp_path.exists():
-                # unlink is also sync, but usually fast.
                 await asyncio.to_thread(tmp_path.unlink, missing_ok=True)
             raise e
 

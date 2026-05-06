@@ -1,6 +1,6 @@
 import os
 import re
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, Any
 
 DEFAULT_WORKSPACE = os.path.abspath(os.getcwd())
 
@@ -75,3 +75,44 @@ PDF_EXTENSIONS = {".pdf"}
 def is_text_file(file_path: str) -> bool:
     _, ext = os.path.splitext(file_path)
     return ext.lower() in TEXT_EXTENSIONS or not ext
+
+
+def parse_hex_color(hex_color: str) -> Tuple[int, int, int]:
+    """
+    Parses a hex color string (e.g. '#1a1a2e') into an (r, g, b) tuple.
+    """
+    try:
+        h = hex_color.lstrip('#')
+        if len(h) == 3:
+            h = ''.join(c*2 for c in h)
+        return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+    except (ValueError, IndexError):
+        return (0, 0, 0)
+
+
+def extract_tag(text: str, tag: str) -> Optional[str]:
+    """Extracts content between <tag> and </tag>."""
+    pattern = rf"<{tag}>(.*?)</{tag}>"
+    match = re.search(pattern, text, re.DOTALL)
+    return match.group(1).strip() if match else None
+
+
+def strip_thought(text: str) -> Tuple[Optional[str], str]:
+    """
+    Separates the thought from the response.
+    Returns (thought, response_without_thought).
+    """
+    thought = extract_tag(text, "thought")
+    if thought is not None:
+        pattern = r"<thought>.*?</thought>"
+        clean_text = re.sub(pattern, "", text, flags=re.DOTALL).strip()
+        return thought, clean_text
+    
+    if "<thought>" in text:
+        parts = text.split("<thought>")
+        if "</thought>" in parts[1]:
+            t_parts = parts[1].split("</thought>")
+            return t_parts[0].strip(), (parts[0] + t_parts[1]).strip()
+        return parts[1].strip(), parts[0].strip()
+        
+    return None, text

@@ -23,6 +23,7 @@ except (AttributeError, ValueError):
 
 import shutil
 from typing import Any, List, Dict, Optional
+from .utils import parse_hex_color
 
 class TerminalManager:
     """Unified manager for low-level terminal manipulation and state."""
@@ -37,7 +38,7 @@ class TerminalManager:
     def set_background(bg_color: str):
         """Sets terminal background color via OSC 11 and palette 0."""
         try:
-            r, g, b = int(bg_color[1:3], 16), int(bg_color[3:5], 16), int(bg_color[5:7], 16)
+            r, g, b = parse_hex_color(bg_color)
             # OSC 11: Set background color
             sys.stdout.write(f"\033]11;rgb:{r:02x}/{g:02x}/{b:02x}\033\\")
             # OSC 4;0: Set palette color 0 (often used for margins/padding)
@@ -243,19 +244,23 @@ class LoomDialog:
         return f"\033[2m{ansi_content}\033[0m"
 
     def run(self):
+        """
+        Synchronously runs the dialog. 
+        If called from within an active event loop, it offloads execution to a thread
+        to prevent 'RuntimeError: This event loop is already running'.
+        """
         import asyncio
         try:
             loop = asyncio.get_running_loop()
             if loop.is_running():
-                # This is tricky; we are in a loop but calling a sync method.
-                # If we are in a thread, we can use a new loop.
-                # But here we probably want to warn or just use run_async from the caller.
-                # For now, let's try to run it in a separate thread and wait.
                 from concurrent.futures import ThreadPoolExecutor
                 with ThreadPoolExecutor() as executor:
                     return executor.submit(asyncio.run, self.run_async()).result()
         except RuntimeError:
             return asyncio.run(self.run_async())
+        
+        # Fallback for other cases
+        return asyncio.run(self.run_async())
 
     async def run_async(self):
         backdrop_ansi = self._get_backdrop_ansi()
@@ -340,18 +345,6 @@ class LoomDialog:
             return None
         return self.result
 
-    def run(self):
-        import asyncio
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # If already in a loop, we have a problem with blocking.
-                # For now, we still block, but this signals the need for full async.
-                return loop.run_until_complete(self.run_async())
-            else:
-                return asyncio.run(self.run_async())
-        except RuntimeError:
-            return asyncio.run(self.run_async())
 
 
 # Background color per theme (hex)
@@ -363,72 +356,37 @@ THEME_BACKGROUNDS = {
     "midnight": "#0a0a14",
 }
 
+BASE_THEME = {
+    "info": "bright_black", "warning": "yellow", "error": "bold red",
+    "success": "bold green", "prompt": "bold white", "command": "bold blue",
+    "dim": "bright_black", "border": "bright_black",
+    "title": "bold white", "toolbar": "white on grey15",
+    "user": "bold white", "ai": "bold white", "thought": "italic bright_black",
+    "tool_bash": "bold cyan", "tool_read": "bold blue",
+    "tool_edit": "bold yellow", "tool_write": "bold magenta",
+    "tool_glob": "bold green", "tool_grep": "bold green",
+    "tool_task": "bold white", "tool_skill": "bold white",
+    "tool_webfetch": "bold cyan", "stats_label": "bright_black",
+    "stats_value": "white",
+}
+
+THEME_ACCENTS = {
+    "lava": "#ff0000",
+    "ocean": "#00afff",
+    "forest": "#00d700",
+    "sunset": "#ffaf00",
+    "midnight": "#af87d7",
+}
+
 THEMES = {
-    "lava": {
-        "info": "bright_black", "warning": "yellow", "error": "bold red",
-        "success": "bold green", "prompt": "bold white", "command": "bold blue",
-        "accent": "#ff0000", "dim": "bright_black", "border": "bright_black",
-        "title": "bold white", "toolbar": "white on grey15",
-        "user": "bold white", "ai": "bold white", "thought": "italic bright_black",
-        "tool": "#ff0000", "tool_bash": "bold cyan", "tool_read": "bold blue",
-        "tool_edit": "bold yellow", "tool_write": "bold magenta",
-        "tool_glob": "bold green", "tool_grep": "bold green",
-        "tool_task": "bold white", "tool_skill": "bold white",
-        "tool_webfetch": "bold cyan", "stats_label": "bright_black",
-        "stats_value": "white",
-    },
-    "ocean": {
-        "info": "bright_black", "warning": "yellow", "error": "bold red",
-        "success": "bold green", "prompt": "bold white", "command": "bold blue",
-        "accent": "#00afff", "dim": "bright_black", "border": "bright_black",
-        "title": "bold white", "toolbar": "white on grey15",
-        "user": "bold white", "ai": "bold white", "thought": "italic bright_black",
-        "tool": "#00afff", "tool_bash": "bold cyan", "tool_read": "bold blue",
-        "tool_edit": "bold yellow", "tool_write": "bold magenta",
-        "tool_glob": "bold green", "tool_grep": "bold green",
-        "tool_task": "bold white", "tool_skill": "bold white",
-        "tool_webfetch": "bold cyan", "stats_label": "bright_black",
-        "stats_value": "white",
-    },
-    "forest": {
-        "info": "bright_black", "warning": "yellow", "error": "bold red",
-        "success": "bold green", "prompt": "bold white", "command": "bold blue",
-        "accent": "#00d700", "dim": "bright_black", "border": "bright_black",
-        "title": "bold white", "toolbar": "white on grey15",
-        "user": "bold white", "ai": "bold white", "thought": "italic bright_black",
-        "tool": "#00d700", "tool_bash": "bold cyan", "tool_read": "bold blue",
-        "tool_edit": "bold yellow", "tool_write": "bold magenta",
-        "tool_glob": "bold green", "tool_grep": "bold green",
-        "tool_task": "bold white", "tool_skill": "bold white",
-        "tool_webfetch": "bold cyan", "stats_label": "bright_black",
-        "stats_value": "white",
-    },
-    "sunset": {
-        "info": "bright_black", "warning": "yellow", "error": "bold red",
-        "success": "bold green", "prompt": "bold white", "command": "bold blue",
-        "accent": "#ffaf00", "dim": "bright_black", "border": "bright_black",
-        "title": "bold white", "toolbar": "white on grey15",
-        "user": "bold white", "ai": "bold white", "thought": "italic bright_black",
-        "tool": "#ffaf00", "tool_bash": "bold cyan", "tool_read": "bold blue",
-        "tool_edit": "bold yellow", "tool_write": "bold magenta",
-        "tool_glob": "bold green", "tool_grep": "bold green",
-        "tool_task": "bold white", "tool_skill": "bold white",
-        "tool_webfetch": "bold cyan", "stats_label": "bright_black",
-        "stats_value": "white",
-    },
-    "midnight": {
-        "info": "bright_black", "warning": "yellow", "error": "bold red",
-        "success": "bold green", "prompt": "bold white", "command": "bold cyan",
-        "accent": "#af87d7", "dim": "bright_black", "border": "bright_black",
-        "title": "bold white", "toolbar": "bright_black on grey3",
-        "user": "bold white", "ai": "bold white", "thought": "italic bright_black",
-        "tool": "#af87d7", "tool_bash": "bold cyan", "tool_read": "bold blue",
-        "tool_edit": "bold yellow", "tool_write": "bold magenta",
-        "tool_glob": "bold green", "tool_grep": "bold green",
-        "tool_task": "bold white", "tool_skill": "bold white",
-        "tool_webfetch": "bold cyan", "stats_label": "bright_black",
-        "stats_value": "white",
-    },
+    name: {
+        **BASE_THEME, 
+        "accent": accent, 
+        "tool": accent,
+        # Per-theme overrides
+        **({"command": "bold cyan", "toolbar": "bright_black on grey3"} if name == "midnight" else {})
+    }
+    for name, accent in THEME_ACCENTS.items()
 }
 
 
@@ -485,8 +443,8 @@ def apply_theme(name: str = "lava"):
     _set_terminal_bg(bg)
 
     # Recreate the actual Rich console instances
-    actual_console = Console(theme=loom_theme, style=f"on {bg}")
-    actual_mirror = Console(theme=loom_theme, file=_mirror_output, force_terminal=True)
+    actual_console = Console(theme=loom_theme, force_terminal=True, color_system="truecolor", style=f"on {bg}")
+    actual_mirror = Console(theme=loom_theme, file=_mirror_output, force_terminal=True, color_system="truecolor", style=f"on {bg}")
     
     # Patch the main console to also print to the mirror
     _orig_print = actual_console.print
@@ -504,26 +462,6 @@ def apply_theme(name: str = "lava"):
     from .events import bus
     bus.emit("ui.theme_changed", name=name)
 
-    # Patch sys.stdout.write to ensure all scrolled/new lines explicitly paint the rest of the line
-    if not hasattr(sys.stdout, "_bg_fill_patched"):
-        _original_write = sys.stdout.write
-        def _bg_fill_write(s):
-            current_bg = get_theme_bg()
-            if current_bg and isinstance(s, str):
-                try:
-                    r, g, b = int(current_bg[1:3], 16), int(current_bg[3:5], 16), int(current_bg[5:7], 16)
-                    bg_seq = f"\033[48;2;{r};{g};{b}m"
-                    
-                    if "\x1b[2J" in s: s = s.replace("\x1b[2J", f"{bg_seq}\x1b[2J")
-                    if "\x1b[2K" in s: s = s.replace("\x1b[2K", f"{bg_seq}\x1b[2K")
-                    if "\x1b[K" in s: s = s.replace("\x1b[K", f"{bg_seq}\x1b[K")
-                    if "\x1b[J" in s: s = s.replace("\x1b[J", f"{bg_seq}\x1b[J")
-                    if "\n" in s: s = s.replace("\n", f"{bg_seq}\x1b[K\n")
-                except Exception:
-                    pass
-            _original_write(s)
-        sys.stdout.write = _bg_fill_write
-        sys.stdout._bg_fill_patched = True
 
 
 def get_dialog_style():

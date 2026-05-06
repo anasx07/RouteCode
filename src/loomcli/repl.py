@@ -32,10 +32,36 @@ from .state import SessionState, count_tokens
 from .system_prompt import compute_system_prompt
 from .errors import classify_exception
 from .agents.registry import PROVIDER_MAP
+from .utils import parse_hex_color, strip_thought
 from .context import LoomContext
 from .task_manager import task_manager
 from .events import bus
 from .orchestrator import AgentOrchestrator, OrchestratorHooks
+
+from prompt_toolkit.output.vt100 import Vt100_Output
+
+class LoomVt100Output(Vt100_Output):
+    """
+    Custom VT100 output that ensures the theme background color is preserved
+    during screen clearing and attribute resets.
+    """
+    def erase_end_of_line(self):
+        bg = get_theme_bg()
+        try:
+            r, g, b = parse_hex_color(bg)
+            self.write_raw(f"\033[48;2;{r};{g};{b}m")
+        except Exception:
+            pass
+        super().erase_end_of_line()
+
+    def reset_attributes(self):
+        super().reset_attributes()
+        bg = get_theme_bg()
+        try:
+            r, g, b = parse_hex_color(bg)
+            self.write_raw(f"\033[48;2;{r};{g};{b}m")
+        except Exception:
+            pass
 
 
 
@@ -59,39 +85,14 @@ class LoomREPL:
         self.style = Style.from_dict({"": "bg:#1a1a2e"})  # placeholder, overwritten below
         self._set_terminal_background()
         
-        # Force VT100 output so ANSI bg colors work (Win32Output ignores them)
+        # Force custom VT100 output so ANSI bg colors work (Win32Output ignores them)
         import sys as _sys
         try:
-            from prompt_toolkit.output.vt100 import Vt100_Output
             from prompt_toolkit.output.defaults import create_output
             _win32_output = create_output()
-            pt_output = Vt100_Output(_sys.stdout, lambda: _win32_output.get_size())
-            
-            # Monkey-patch erase_end_of_line to FORCE the background color to paint the rest of the line
-            original_erase = pt_output.erase_end_of_line
-            def _erase_with_bg():
-                bg = get_theme_bg()
-                try:
-                    r, g, b = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
-                    pt_output.write_raw(f"\033[48;2;{r};{g};{b}m")
-                except Exception as e:
-                    logger.debug("Failed to set background during erase: %s", e)
-                original_erase()
-            pt_output.erase_end_of_line = _erase_with_bg
-            
-            # Also patch reset_attributes to prevent terminal default bg from leaking in
-            original_reset = pt_output.reset_attributes
-            def _reset_with_bg():
-                original_reset()
-                bg = get_theme_bg()
-                try:
-                    r, g, b = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
-                    pt_output.write_raw(f"\033[48;2;{r};{g};{b}m")
-                except Exception as e:
-                    logger.debug("Failed to set background during reset: %s", e)
-            pt_output.reset_attributes = _reset_with_bg
+            pt_output = LoomVt100Output(_sys.stdout, lambda: _win32_output.get_size())
         except Exception as e:
-            logger.debug("Failed to initialize vt100 output: %s", e)
+            logger.debug("Failed to initialize custom LoomVt100Output: %s", e)
             pt_output = None
         
         history_file = CONFIG_DIR / "history"
@@ -200,9 +201,7 @@ class LoomREPL:
         """Update prompt_toolkit style to match the active theme background."""
         bg = get_theme_bg()
         try:
-            r = int(bg[1:3], 16)
-            g = int(bg[3:5], 16)
-            b = int(bg[5:7], 16)
+            r, g, b = parse_hex_color(bg)
             tr = min(r + 12, 255)
             tg = min(g + 12, 255)
             tb = min(b + 12, 255)
@@ -265,7 +264,7 @@ class LoomREPL:
                     from .ui import get_theme_bg
                     bg = get_theme_bg()
                     try:
-                        r, g, b = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
+                        r, g, b = parse_hex_color(bg)
                         sys.stdout.write(f"\r\033[48;2;{r};{g};{b}m\033[K")
                         sys.stdout.flush()
                     except Exception as e:
@@ -334,7 +333,8 @@ class LoomREPL:
             async def on_chunk(self, chunk):
                 if chunk["type"] == "text":
                     self.full_response += chunk["content"]
-                    display_text = self.full_response.replace("<thought>", "").replace("</thought>", "")
+                    from .utils import strip_thought
+                    _, display_text = strip_thought(self.full_response)
                     self.renderable.markdown = Markdown(display_text)
                     self.live.update(self.renderable)
                 elif chunk["type"] == "tool_call":
@@ -368,16 +368,12 @@ class LoomREPL:
 
             async def on_turn_complete(self, full_response, tool_calls):
                 elapsed = time.time() - self.start_time
-                final_response = full_response
-                if "<thought>" in full_response and "</thought>" in full_response:
-                    parts = full_response.split("<thought>", 1)
-                    thought_parts = parts[1].split("</thought>", 1)
-                    final_response = thought_parts[1].strip()
+                from .utils import strip_thought
+                thought, final_response = strip_thought(full_response)
+                if thought:
                     print_thought_elapsed(elapsed)
-                    if final_response:
-                        self.repl.ctx.console.print(Markdown(final_response))
-                elif full_response:
-                    self.repl.ctx.console.print(Markdown(full_response))
+                if final_response:
+                    self.repl.ctx.console.print(Markdown(final_response))
                 
                 print_status_line(self.repl.ctx.config.model, elapsed)
                 print_session_stats(self.repl.ctx.state)

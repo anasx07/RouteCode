@@ -8,6 +8,7 @@ from ..state import count_tokens, SessionState
 from ..context import LoomContext
 from ..orchestrator import AgentOrchestrator, OrchestratorHooks
 from ..history import ConversationHistory
+from ..utils import strip_thought, extract_tag
 
 
 class TaskInput(BaseModel):
@@ -42,16 +43,11 @@ async def _run_sub_agent_async(task: str, max_iterations: int, task_id: str, ctx
             ctx.task_manager.fail(task_id, message)
 
         async def on_turn_complete(self, full_response, tool_calls):
-            clean = full_response
-            if "<thought>" in clean and "</thought>" in clean:
-                parts = clean.split("<thought>", 1)
-                thought_parts = parts[1].split("</thought>", 1)
-                clean = thought_parts[1].strip()
-
-            if "<result>" in clean and "</result>" in clean:
-                parts = clean.split("<result>", 1)
-                inner = parts[1].split("</result>", 1)[0].strip()
-                output["text"] += inner + "\n"
+            thought, clean = strip_thought(full_response)
+            result = extract_tag(clean, "result")
+            
+            if result is not None:
+                output["text"] += result + "\n"
                 ctx.task_manager.complete(task_id, {"success": True, "output": output["text"]})
                 output["completed"] = True
                 return
