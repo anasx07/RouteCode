@@ -1,7 +1,7 @@
 import os
 import json
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 
 from .storage import AtomicJsonStore
 from .agents.registry import PROVIDER_MAP

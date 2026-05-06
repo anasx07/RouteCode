@@ -13,6 +13,7 @@ from . import ui as _ui
 from .ui import print_info, print_success, print_error, print_step, LoomDialog
 from .tools import registry
 from .agents.registry import PROVIDER_MAP
+from .context import LoomContext
 from .attachments import load_attachment
 from .utils import parse_hex_color
 
@@ -177,15 +178,6 @@ def handle_tools(args: List[str], ctx: LoomContext):
         table.add_row(name, desc)
     ctx.console.print(table)
 
-def handle_clear(args: List[str], ctx: LoomContext):
-    from .ui import TerminalManager
-    TerminalManager.clear()
-    
-    # Optional: fill the screen with newlines if we want to push old content out of scrollback,
-    # though TerminalManager.clear() with \033[2J usually handles the visible area.
-    h = TerminalManager.get_size().rows
-    sys.stdout.write("\n" * (h - 2))
-    sys.stdout.flush()
 
 def handle_history(args: List[str], ctx: LoomContext):
     if not ctx.state.session_messages:
@@ -213,8 +205,10 @@ def handle_history(args: List[str], ctx: LoomContext):
     ctx.console.print(table)
 
 async def handle_save(args: List[str], ctx: LoomContext):
-    if not ctx.state.session_messages:
-        print_error("No conversation to save.")
+    has_content = any(m.get("role") != "system" for m in ctx.state.session_messages)
+    if not has_content:
+        if args:  # Only complain if explicitly saving, not on auto-save/exit
+            print_error("No conversation to save.")
         return
 
     from .state import save_session_async
@@ -274,10 +268,9 @@ def handle_load(args: List[str], ctx: LoomContext):
         except Exception as e:
             print_error(f"Error loading session: {e}")
 
-def handle_exit(args: List[str], ctx: LoomContext):
-    handle_save([], ctx)
-    ctx.console.print("[info]ℹ[/info] Goodbye!")
-    sys.exit(0)
+async def handle_exit(args: List[str], ctx: LoomContext):
+    await handle_save([], ctx)
+    raise EOFError("exit")
 
 def handle_tasks(args: List[str], ctx: LoomContext):
     tasks = ctx.task_manager.list()
@@ -472,13 +465,8 @@ def handle_attach(args: List[str], ctx: LoomContext):
 
 def _refresh_screen(ctx: LoomContext):
     """Clears the terminal with the current theme background and repaints the welcome screen."""
-    import sys, getpass
-    from .ui import get_theme_bg, print_welcome_screen
-    bg = get_theme_bg()
-    r, g, b = parse_hex_color(bg)
-    sys.stdout.write(f"\033[48;2;{r};{g};{b}m\033[2J\033[H")
-    sys.stdout.flush()
-    print_welcome_screen(getpass.getuser(), ctx.config.model, ctx.config.provider, ctx.console)
+    from .ui import refresh_screen
+    refresh_screen(ctx)
 
 def handle_version(args: List[str], ctx: LoomContext):
     ctx.console.print("[accent]LoomCLI[/accent] [white]0.1.0[/white]")
@@ -549,6 +537,12 @@ async def handle_personality(args: List[str], ctx: LoomContext):
         ctx.config.personality = result
         await ctx.config.save_async()
         print_success(f"Personality set to: {result}")
+
+def handle_clear(args: List[str], ctx: LoomContext):
+    ctx.state.session_messages.clear()
+    from .ui import refresh_screen
+    refresh_screen(ctx)
+
 
 COMMANDS = {
     "/help": handle_help,

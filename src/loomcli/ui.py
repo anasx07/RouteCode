@@ -597,6 +597,17 @@ class LoadingRenderable:
             )
             yield Panel(content, border_style=f"on {bg}", style=panel_style, padding=(0, 1))
 
+
+def refresh_screen(ctx):
+    """Clears the terminal with the current theme background and repaints the welcome screen."""
+    import sys, getpass
+    from .utils import parse_hex_color
+    bg = get_theme_bg()
+    r, g, b = parse_hex_color(bg)
+    sys.stdout.write(f"\033[48;2;{r};{g};{b}m\033[2J\033[H")
+    sys.stdout.flush()
+    print_welcome_screen(getpass.getuser(), ctx.config.model, ctx.config.provider)
+
 def get_thinking_indicator():
     progress = Progress(
         SpinnerColumn(spinner_name="dots", style="accent"),

@@ -227,15 +227,9 @@ class LoomREPL:
         apply_theme(self.ctx.config.theme)
         self._set_terminal_background()
         self.state.start_time = time.time()
-        self.state.session_messages = []
-        import sys
-        from .ui import get_theme_bg
-        bg = get_theme_bg()
-        r, g, b = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
-        sys.stdout.write(f"\033[48;2;{r};{g};{b}m\033[2J\033[H")
-        sys.stdout.flush()
-        
-        print_welcome_screen(getpass.getuser(), self.ctx.config.model, self.ctx.config.provider)
+        self.ctx.state.session_messages.clear()
+        from .ui import refresh_screen
+        refresh_screen(self.ctx)
         
         # Asynchronously load memory
         await self.memory._load_async()
@@ -258,6 +252,7 @@ class LoomREPL:
                         last_size = current_size
                 except Exception as e:
                     logger.debug("Failed to get terminal size: %s", e)
+
 
                 def pre_run():
                     import sys
@@ -290,6 +285,14 @@ class LoomREPL:
                 await self.process_agent_request(user_input)
                 
             except KeyboardInterrupt:
+                now = time.time()
+                if now - getattr(self, "_last_interrupt", 0) < 2:
+                    from .commands import handle_save
+                    await handle_save([], self.ctx)
+                    console.print("\n[info]Exiting...[/info]")
+                    break
+                self._last_interrupt = now
+                console.print("\n[info]KeyboardInterrupt (Press Ctrl+C again to exit)[/info]")
                 continue
             except EOFError:
                 console.print("\n[info]Exiting...[/info]")
@@ -305,7 +308,7 @@ class LoomREPL:
         apply_theme(self.ctx.config.theme)
         self._set_terminal_background()
         self.state.start_time = time.time()
-        self.state.session_messages = []
+        self.ctx.state.session_messages.clear()
         if not self._initialize_provider():
             print_error(f"No API key found for provider '{self.ctx.config.provider}'.")
             return
