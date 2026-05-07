@@ -60,6 +60,15 @@ def git_out(*args: str) -> str:
     return git(*args).stdout.strip()
 
 
+def find_tool(name: str) -> Optional[str]:
+    """Find a tool, prioritising the local venv."""
+    bin_dir = "Scripts" if os.name == "nt" else "bin"
+    venv_tool = REPO_ROOT / "venv" / bin_dir / (f"{name}.exe" if os.name == "nt" else name)
+    if venv_tool.exists():
+        return str(venv_tool)
+    return shutil.which(name)
+
+
 def current_branch() -> str:
     return git_out("rev-parse", "--abbrev-ref", "HEAD")
 
@@ -350,7 +359,7 @@ def show_changelog(new_ver: Version, last_tag: Optional[str], n_steps: int):
 def maybe_run_lint(n_steps: int, cur_step: int) -> int:
     step(cur_step, n_steps, "Run linting (ruff)")
 
-    ruff = shutil.which("ruff")
+    ruff = find_tool("ruff")
     if not ruff:
         warn("ruff not found — skipping.")
         console.print()
@@ -365,7 +374,7 @@ def maybe_run_lint(n_steps: int, cur_step: int) -> int:
 def maybe_run_format(n_steps: int, cur_step: int) -> int:
     step(cur_step, n_steps, "Run formatting check (ruff)")
 
-    ruff = shutil.which("ruff")
+    ruff = find_tool("ruff")
     if not ruff:
         warn("ruff not found — skipping.")
         console.print()
@@ -390,7 +399,7 @@ def maybe_run_tests(n_steps: int, cur_step: int) -> int:
         console.print()
         return cur_step + 1
 
-    pytest = shutil.which("pytest")
+    pytest = find_tool("pytest")
     if not pytest:
         warn("pytest not found — skipping.")
         console.print()
