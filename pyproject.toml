@@ -33,8 +33,9 @@ requires-python = ">=3.10"
 
 # Both 'loom' and 'loomcli' invoke the same entry point
 [project.scripts]
-loom    = "loomcli.main:app"
-loomcli = "loomcli.main:app"
+loom         = "loomcli.main:app"
+loomcli      = "loomcli.main:app"
+loom-release = "loomcli._release:main"
 
 [project.optional-dependencies]
 dev = [
