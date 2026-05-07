@@ -16,12 +16,12 @@
 
 **macOS / Linux:**
 ```sh
-curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/loom/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/anasx07/loom/main/install.sh | sh
 ```
 
 **Windows (PowerShell):**
 ```powershell
-irm https://raw.githubusercontent.com/YOUR_USERNAME/loom/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/anasx07/loom/main/install.ps1 | iex
 ```
 
 Downloads a self-contained binary and puts `loom` on your PATH automatically.
@@ -42,7 +42,7 @@ Both `loom` and `loomcli` commands are registered after install.
 
 ### 📦 Manual binary download
 
-Grab the right binary from the [latest release](https://github.com/YOUR_USERNAME/loom/releases/latest):
+Grab the right binary from the [latest release](https://github.com/anasx07/loom/releases/latest):
 
 | Platform            | Binary                      |
 |---------------------|-----------------------------|
@@ -111,7 +111,7 @@ On first run, Loom will ask for your API key and save it to `~/.loomcli/config.j
 ## Building from source
 
 ```sh
-git clone https://github.com/YOUR_USERNAME/loom
+git clone https://github.com/anasx07/loom
 cd loom
 python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -e ".[dev]"

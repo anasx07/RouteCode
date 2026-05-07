@@ -1,6 +1,6 @@
 #!/bin/sh
 # Loom installer — macOS & Linux
-# Usage: curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/loom/main/install.sh | sh
+# Usage: curl -fsSL https://raw.githubusercontent.com/anasx07/loom/main/install.sh | sh
 set -e
 
 REPO="anasx07/loom"
