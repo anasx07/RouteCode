@@ -1,8 +1,10 @@
 import os
 import asyncio
-import subprocess
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from .tools import registry
+
+if TYPE_CHECKING:
+    from .core import LoomContext
 
 
 SYSTEM_PROMPT_DYNAMIC_BOUNDARY = "__DYNAMIC__"
@@ -100,7 +102,8 @@ def _build_skill_section() -> str:
 
 
 def _build_env_section() -> str:
-    import getpass, platform
+    import getpass
+    import platform
     user = getpass.getuser()
     plat = platform.platform()
     cwd = os.getcwd()

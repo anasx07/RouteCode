@@ -1,10 +1,9 @@
-import json
 import asyncio
+import dataclasses
 from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
-from .base import BaseTool, registry
-from ..config import config
-from ..core import count_tokens, SessionState, LoomContext
+from .base import BaseTool
+from ..core import SessionState, LoomContext
 from ..orchestrator import AgentOrchestrator, OrchestratorHooks
 from ..core import ConversationHistory
 from ..utils import strip_thought, extract_tag
@@ -14,9 +13,6 @@ class TaskInput(BaseModel):
     task: str = Field(..., description="The task description for the sub-agent to complete")
     max_iterations: int = Field(10, description="Maximum number of tool-call loops before returning")
     run_in_background: bool = Field(False, description="If True, run in background and return task_id immediately")
-
-
-import dataclasses
 
 async def _run_sub_agent_async(task: str, max_iterations: int, task_id: str, ctx: LoomContext, provider: Optional[Any] = None):
     # Isolate sub-agent state to prevent interference with parent context management

@@ -1,9 +1,10 @@
-import os
-import re
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from .config import CONFIG_DIR
+
+if TYPE_CHECKING:
+    from .core import LoomContext
 from .task_manager import task_manager
 from .utils import parse_frontmatter
 

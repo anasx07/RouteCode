@@ -1,4 +1,3 @@
-from typing import Optional
 from ..console import _mirror_output
 
 def _get_backdrop_ansi() -> str:
@@ -7,7 +6,7 @@ def _get_backdrop_ansi() -> str:
     from prompt_toolkit.output.defaults import create_output
     try:
         h = create_output().get_size().rows
-    except:
+    except Exception:
         import shutil
         h = shutil.get_terminal_size().lines
     lines = full_ansi.splitlines()

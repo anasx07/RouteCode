@@ -1,6 +1,5 @@
-import json
 import httpx
-from typing import Dict, Optional
+from typing import Dict
 
 
 class ClassifiedError:

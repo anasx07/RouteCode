@@ -1,6 +1,4 @@
 import logging
-import os
-from pathlib import Path
 from ..config import CONFIG_DIR
 
 LOG_FILE = CONFIG_DIR / "loom.log"

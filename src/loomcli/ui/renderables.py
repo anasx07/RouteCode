@@ -1,9 +1,7 @@
-import os
 from typing import Any, Optional
 from rich.console import Group, Console
 from rich.panel import Panel
 from rich.text import Text
-from rich.layout import Layout
 from rich.align import Align
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
@@ -77,7 +75,8 @@ class LoadingRenderable:
             yield Panel(content, border_style=f"on {bg}", style=panel_style, padding=(0, 1))
 
 def refresh_screen(ctx):
-    import sys, getpass
+    import sys
+    import getpass
     from ..utils import parse_hex_color
     bg = get_theme_bg()
     r, g, b = parse_hex_color(bg)
@@ -107,13 +106,13 @@ def print_welcome_screen(user_name: str, model: str, provider: str, target_conso
     content.append(welcome)
     content.append("\n\n")
     shortcuts = Table.grid(padding=(0, 2))
-    shortcuts.add_column(); shortcuts.add_column()
+    shortcuts.add_column()
+    shortcuts.add_column()
     shortcuts.add_row("[dim]/help[/dim]", "[dim]Show commands[/dim]")
     shortcuts.add_row("[dim]/tools[/dim]", "[dim]List tools[/dim]")
     shortcuts.add_row("[dim]/provider[/dim]", "[dim]Switch provider[/dim]")
     shortcuts.add_row("[dim]/tasks[/dim]", "[dim]View tasks[/dim]")
     tip_box = Panel(shortcuts, title="[dim]Quick Start[/dim]", border_style="dim", padding=(1, 2))
-    # Just print content directly for the new full-screen REPL
     c.print(Align.center(content))
     c.print(tip_box)
 
@@ -144,9 +143,7 @@ def get_tool_label(name: str, arguments: dict) -> str:
     return label
 
 def print_tool_call(name: str, arguments: dict):
-    from .theme import THEMES, _current_theme_name
     label = get_tool_label(name, arguments)
-    style = "accent" # Placeholder style lookup logic if needed, or use simple
     console.print(f" [accent]>[/] [accent]{label}[/]")
 
 def print_tool_result(result: Any, duration: float = 0.0, tool_name: str = ""):
@@ -155,8 +152,10 @@ def print_tool_result(result: Any, duration: float = 0.0, tool_name: str = ""):
         stats_str = ""
         if "stats" in result:
             stats = result["stats"]
-            added = stats.get("added", 0); removed = stats.get("removed", 0)
-            if added > 0 or removed > 0: stats_str = f" [green]+{added}[/green] [red]-{removed}[/red]"
+            added = stats.get("added", 0)
+            removed = stats.get("removed", 0)
+            if added > 0 or removed > 0:
+                stats_str = f" [green]+{added}[/green] [red]-{removed}[/red]"
         time_str = f" [dim]({duration:.1f}s)[/dim]" if duration >= 0.5 else ""
         console.print(f"   [success]✔[/success] [dim]{msg}{stats_str}{time_str}[/]")
     elif isinstance(result, dict) and "error" in result:
@@ -169,21 +168,28 @@ def print_session_stats(state):
     from rich.box import MINIMAL
     import time
     table = Table(show_header=False, box=MINIMAL, padding=(0, 1))
-    table.add_column(); table.add_column()
+    table.add_column()
+    table.add_column()
     table.add_row("[stats_label]Context[/stats_label]", f"{state.tokens_used:,} tokens")
     table.add_row("[stats_label]Cost[/stats_label]", f"${state.estimated_cost:.2f}")
     table.add_row("[stats_label]Session[/stats_label]", f"{int(time.time() - state.start_time)}s" if state.start_time else "0s")
     console.print(table)
 
 def print_diff(diff_lines: list, max_lines: int = 30):
-    if not diff_lines: return
+    if not diff_lines:
+        return
     text = Text()
     truncated = len(diff_lines) > max_lines
     display = diff_lines[:max_lines]
     for line in display:
-        if line.startswith('+') and not line.startswith('+++'): text.append(line + '\n', style="green")
-        elif line.startswith('-') and not line.startswith('---'): text.append(line + '\n', style="red")
-        elif line.startswith('@@'): text.append(line + '\n', style="cyan")
-        else: text.append(line + '\n', style="dim")
-    if truncated: text.append(f"... ({len(diff_lines) - max_lines} more lines)", style="dim")
+        if line.startswith('+') and not line.startswith('+++'):
+            text.append(line + '\n', style="green")
+        elif line.startswith('-') and not line.startswith('---'):
+            text.append(line + '\n', style="red")
+        elif line.startswith('@@'):
+            text.append(line + '\n', style="cyan")
+        else:
+            text.append(line + '\n', style="dim")
+    if truncated:
+        text.append(f"... ({len(diff_lines) - max_lines} more lines)", style="dim")
     console.print(Panel(text, title="[bold]Diff[/bold]", border_style="green", padding=(0, 1)))

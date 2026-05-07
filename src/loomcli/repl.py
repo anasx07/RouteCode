@@ -1,46 +1,43 @@
 import os
 import getpass
-import json
 import time
 import asyncio
-import concurrent.futures
-from prompt_toolkit import PromptSession
-from prompt_toolkit.history import FileHistory
+from io import StringIO
+
 from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.lexers import Lexer
 from prompt_toolkit.styles import Style, DynamicStyle
-from prompt_toolkit.formatted_text import to_formatted_text, ANSI
-from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
+from prompt_toolkit.formatted_text import ANSI
 from prompt_toolkit.output.color_depth import ColorDepth
-from rich.markdown import Markdown
-from rich.live import Live
+from prompt_toolkit.output.vt100 import Vt100_Output
+from prompt_toolkit.application import Application
+from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.layout import Layout, HSplit, VSplit, Window, FloatContainer, Float
+from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
+from prompt_toolkit.layout.menus import CompletionsMenu
+from prompt_toolkit.layout.dimension import Dimension
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.filters import has_focus
 
-from .core import get_logger
-logger = get_logger(__name__)
-
-from . import ui as _ui
+from .core import get_logger, SessionState, LoomContext, bus
 from .ui import (
-    console, print_error, print_welcome_screen, 
-    print_thought_elapsed, print_status_line,
+    console, print_welcome_screen, 
+    print_status_line,
     print_tool_call, print_tool_result, print_session_stats,
-    get_thinking_indicator, LoadingRenderable, get_tool_label,
-    LoomFace, LOOM_FACES, print_step, get_theme_bg
+    get_tool_label,
+    get_theme_bg,
+    print_diff
 )
 from .commands import execute_command, get_command_metadata
 from .tools import registry
 from .tools.base import BaseTool
 from .config import config, CONFIG_DIR
-from .core import SessionState, count_tokens
 from .system_prompt import compute_system_prompt
-from .core import classify_exception
-from .agents.registry import PROVIDER_MAP
-from .utils import parse_hex_color, strip_thought
-from .core import LoomContext
+from .utils import parse_hex_color
 from .task_manager import task_manager
-from .core import bus
 from .orchestrator import AgentOrchestrator, OrchestratorHooks
 
-from prompt_toolkit.output.vt100 import Vt100_Output
+logger = get_logger(__name__)
 
 class LoomVt100Output(Vt100_Output):
     """
@@ -69,18 +66,6 @@ class LoomVt100Output(Vt100_Output):
 
 
 
-from io import StringIO
-from prompt_toolkit.application import Application
-from prompt_toolkit.buffer import Buffer
-from prompt_toolkit.layout import Layout, HSplit, VSplit, Window, BufferControl, FloatContainer, Float
-from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
-from prompt_toolkit.layout.menus import CompletionsMenu
-from prompt_toolkit.lexers import Lexer
-from prompt_toolkit.layout.dimension import Dimension
-from prompt_toolkit.layout.processors import PasswordProcessor
-from prompt_toolkit.widgets import Frame, TextArea, SearchToolbar
-from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.filters import has_focus, is_searching
 
 class SimpleAnsiLexer(Lexer):
     def lex_document(self, document):
@@ -118,7 +103,7 @@ class LoomREPL:
         self._rich_console.color_system = "truecolor"
         try:
             self._rich_console.width = os.get_terminal_size().columns
-        except:
+        except Exception:
             self._rich_console.width = 120
             
         # We'll use a hook to capture output
@@ -237,7 +222,7 @@ class LoomREPL:
     def _on_resize(self):
         try:
             self._rich_console.width = os.get_terminal_size().columns
-        except:
+        except Exception:
             pass
 
     async def run(self):
@@ -302,7 +287,6 @@ class LoomREPL:
         )
         
         # Initial output
-        from .ui import print_welcome_screen
         user_name = getpass.getuser()
         print_welcome_screen(user_name, self.ctx.config.model, self.ctx.config.provider)
         
@@ -325,7 +309,6 @@ class LoomREPL:
         if not self.orchestrator.provider:
             self.orchestrator.refresh_provider()
 
-        from .system_prompt import compute_system_prompt
         system_content = await compute_system_prompt(self.ctx)
         
         messages = self.ctx.state.session_messages.to_list()
@@ -404,7 +387,7 @@ class LoomREPL:
             self._rich_console.print(f" [error]✘[/error] [dim]Blocked by permission rules: {tool.name}[/dim]")
             return False
 
-        from .ui import get_tool_label, print_diff, LoomDialog
+        from .ui import print_diff, LoomDialog
         import difflib
         label = get_tool_label(tool.name, args)
         if tool.name == "file_edit":

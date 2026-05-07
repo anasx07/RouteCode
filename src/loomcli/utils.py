@@ -1,6 +1,6 @@
 import os
 import re
-from typing import Optional, Dict, Tuple, Any
+from typing import Optional, Dict, Tuple
 
 def parse_frontmatter(text: str) -> Tuple[Dict[str, str], str]:
     """

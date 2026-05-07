@@ -1,8 +1,7 @@
 import os
-import inspect
 from typing import List
 from .. import ui as _ui
-from ..ui import print_success, print_error, print_step, LoomDialog
+from ..ui import print_success, print_error, LoomDialog
 from ..core import LoomContext
 from ..agents.registry import PROVIDER_MAP
 
@@ -53,7 +52,8 @@ async def handle_provider(args: List[str], ctx: LoomContext):
         # Other category
         values.append((None, "Other", True, None, None))
         for p_id in PROVIDER_LIST:
-            if p_id in popular_providers: continue
+            if p_id in popular_providers:
+                continue
             p_info = models_db.get(p_id, {})
             name = p_info.get("name", p_id.capitalize())
             
@@ -206,8 +206,10 @@ async def handle_model(args: List[str], ctx: LoomContext):
         if recent:
             recent_items = []
             for p, m in recent:
-                if p not in provider_models: continue
-                if [p, m] in favorites: continue
+                if p not in provider_models:
+                    continue
+                if [p, m] in favorites:
+                    continue
                 recent_items.append(format_item(p, m))
             if recent_items:
                 values.append((None, "Recent", True, None, None))
@@ -217,7 +219,8 @@ async def handle_model(args: List[str], ctx: LoomContext):
         if favorites:
             fav_items = []
             for p, m in favorites:
-                if p not in provider_models: continue
+                if p not in provider_models:
+                    continue
                 fav_items.append(format_item(p, m))
             if fav_items:
                 values.append((None, "Favorites", True, None, None))

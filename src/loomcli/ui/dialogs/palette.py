@@ -214,7 +214,8 @@ class ModelPaletteMenu(PaletteMenu):
                 menu_list.values = self.values
             menu_list._selected_index = 0
             app = get_app()
-            if app: app.invalidate()
+            if app:
+                app.invalidate()
             
         search_field.buffer.on_text_changed += on_text_changed
 
@@ -271,9 +272,11 @@ class ModelPaletteMenu(PaletteMenu):
                     if v[0] == val:
                         label = v[1]
                         if new_state:
-                            if not label.startswith("★ "): label = "★ " + label.lstrip()
+                            if not label.startswith("★ "):
+                                label = "★ " + label.lstrip()
                         else:
-                            if label.startswith("★ "): label = "  " + label[2:]
+                            if label.startswith("★ "):
+                                label = "  " + label[2:]
                         self.values[i] = (v[0], label, v[2], v[3], v[4])
                 
                 new_idx = menu_list._selected_index
@@ -281,9 +284,11 @@ class ModelPaletteMenu(PaletteMenu):
                     if v[0] == val:
                         label = v[1]
                         if new_state:
-                            if not label.startswith("★ "): label = "★ " + label.lstrip()
+                            if not label.startswith("★ "):
+                                label = "★ " + label.lstrip()
                         else:
-                            if label.startswith("★ "): label = "  " + label[2:]
+                            if label.startswith("★ "):
+                                label = "  " + label[2:]
                         menu_list.values[i] = (v[0], label, v[2], v[3], v[4])
                         new_idx = i
                         break

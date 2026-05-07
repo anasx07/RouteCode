@@ -23,7 +23,6 @@ try:
     from rich.table import Table
     from rich.text import Text
     from rich.prompt import Prompt, Confirm
-    from rich.columns import Columns
     from rich.rule import Rule
     from rich.live import Live
     from rich.spinner import Spinner
@@ -87,7 +86,7 @@ def remote_url() -> str:
 def commits_since(tag: Optional[str]) -> list[str]:
     ref = f"{tag}..HEAD" if tag else "HEAD"
     out = git_out("log", ref, "--oneline", "--no-decorate")
-    return [l for l in out.splitlines() if l.strip()] if out else []
+    return [line for line in out.splitlines() if line.strip()] if out else []
 
 
 def has_upstream() -> bool:
@@ -115,8 +114,10 @@ class Version:
             return cls(0, 0, 0)
 
     def bump(self, kind: str) -> "Version":
-        if kind == "major": return Version(self.major + 1, 0, 0)
-        if kind == "minor": return Version(self.major, self.minor + 1, 0)
+        if kind == "major":
+            return Version(self.major + 1, 0, 0)
+        if kind == "minor":
+            return Version(self.major, self.minor + 1, 0)
         return Version(self.major, self.minor, self.patch + 1)
 
     def __str__(self) -> str:
@@ -254,9 +255,12 @@ def pick_version(n_steps: int) -> tuple[Version, str]:
         default="1",
     )
 
-    if choice == "1": new_ver = patch
-    elif choice == "2": new_ver = minor
-    elif choice == "3": new_ver = major
+    if choice == "1":
+        new_ver = patch
+    elif choice == "2":
+        new_ver = minor
+    elif choice == "3":
+        new_ver = major
     else:
         raw = Prompt.ask("  Custom version (e.g. 1.2.3)")
         raw = raw.lstrip("v")
@@ -287,14 +291,19 @@ def show_changelog(new_ver: Version, last_tag: Optional[str], n_steps: int):
     features, fixes, chores, others = [], [], [], []
     for c in commits:
         lo = c.lower()
-        if lo.startswith(("feat", "feature")):      features.append(c)
-        elif lo.startswith(("fix", "bug")):         fixes.append(c)
-        elif lo.startswith(("chore", "ci", "doc")): chores.append(c)
-        else:                                        others.append(c)
+        if lo.startswith(("feat", "feature")):
+            features.append(c)
+        elif lo.startswith(("fix", "bug")):
+            fixes.append(c)
+        elif lo.startswith(("chore", "ci", "doc")):
+            chores.append(c)
+        else:
+            others.append(c)
 
     lines = Text()
     def section(icon, title, items, colour):
-        if not items: return
+        if not items:
+            return
         lines.append(f"\n  {icon}  {title}\n", style=f"bold {colour}")
         for item in items:
             sha, _, msg = item.partition(" ")
@@ -313,6 +322,25 @@ def show_changelog(new_ver: Version, last_tag: Optional[str], n_steps: int):
         padding=(0, 1),
     ))
     console.print()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Linting
+# ═══════════════════════════════════════════════════════════════════════════
+
+def maybe_run_lint(n_steps: int, cur_step: int) -> int:
+    step(cur_step, n_steps, "Run linting (ruff)")
+
+    ruff = shutil.which("ruff")
+    if not ruff:
+        warn("ruff not found — skipping.")
+        console.print()
+        return cur_step + 1
+
+    if run_step("Ruff check", ruff, "check", "."):
+        console.print()
+    
+    return cur_step + 1
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -442,15 +470,16 @@ def summary(new_ver: Version, actions_url: str):
 def main():
     os.chdir(REPO_ROOT)
 
-    N_STEPS = 5  # preflight, version, changelog, tests, tag+push
+    N_STEPS = 6  # preflight, version, changelog, lint, tests, tag+push
 
     header()
 
     preflight(N_STEPS)
     new_ver, last_tag = pick_version(N_STEPS)
     show_changelog(new_ver, last_tag, N_STEPS)
-    maybe_run_tests(N_STEPS, 4)
-    actions_url = tag_and_push(new_ver, N_STEPS, 5)
+    cur = maybe_run_lint(N_STEPS, 4)
+    cur = maybe_run_tests(N_STEPS, cur)
+    actions_url = tag_and_push(new_ver, N_STEPS, cur)
     summary(new_ver, actions_url)
 
 

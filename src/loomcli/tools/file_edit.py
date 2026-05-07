@@ -1,6 +1,6 @@
 import difflib
 import os
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, Optional, TYPE_CHECKING
 from pydantic import BaseModel, Field
 from .base import BaseTool
 

@@ -1,4 +1,3 @@
-from typing import Any, List, Optional
 from prompt_toolkit.widgets import RadioList
 from prompt_toolkit.layout.containers import Window
 from prompt_toolkit.layout.controls import FormattedTextControl
@@ -6,7 +5,6 @@ from prompt_toolkit.layout.menus import CompletionsMenu, CompletionsMenuControl
 from prompt_toolkit.layout import ScrollOffsets
 from prompt_toolkit.application import get_app
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.formatted_text import ANSI
 from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
 
 class HoverCompletionsMenuControl(CompletionsMenuControl):
@@ -69,7 +67,8 @@ class HoverRadioList:
         def _(event): self._selected_index += 1
         @kb.add("enter")
         def _(event):
-            if self._on_enter: self._on_enter()
+            if self._on_enter:
+                self._on_enter()
         self.control.key_bindings = kb
 
     def __pt_container__(self):
@@ -87,7 +86,8 @@ class HoverRadioList:
 
     @_selected_index.setter
     def _selected_index(self, value):
-        if not self.values: return
+        if not self.values:
+            return
         self._current_index = value % len(self.values)
 
     def _get_text_fragments(self):
@@ -98,7 +98,8 @@ class HoverRadioList:
                 idx = mouse_event.position.y
                 if idx < len(self.values):
                     self._current_index = idx
-                    if self._on_enter: self._on_enter()
+                    if self._on_enter:
+                        self._on_enter()
             elif mouse_event.event_type == MouseEventType.SCROLL_UP:
                 self._selected_index -= 1
             elif mouse_event.event_type == MouseEventType.SCROLL_DOWN:
@@ -126,7 +127,8 @@ class HoverRadioList:
             result.append((style, " " * padding_len, mouse_handler))
             result.append(("", "\n", mouse_handler))
 
-        if result: result.pop()
+        if result:
+            result.pop()
         return result
 
 class FlatButton:
@@ -139,7 +141,8 @@ class FlatButton:
         @kb.add("enter")
         @kb.add(" ")
         def _(event):
-            if self.handler: self.handler()
+            if self.handler:
+                self.handler()
             
         self.control = FormattedTextControl(
             self._get_text_fragments,
@@ -167,7 +170,8 @@ class FlatButton:
         
         def mouse_handler(mouse_event):
             if mouse_event.event_type == MouseEventType.MOUSE_UP:
-                if self.handler: self.handler()
+                if self.handler:
+                    self.handler()
 
         if is_focused:
             return [
@@ -258,7 +262,8 @@ class MenuRadioList(RadioList):
         for i in range(len(result)):
             result[i] = (result[i][0], result[i][1], mouse_handler)
 
-        if result: result.pop()
+        if result:
+            result.pop()
         return result
 
 class CategoryRadioList:
@@ -287,7 +292,8 @@ class CategoryRadioList:
         return None
 
     def _set_initial_index(self):
-        if not self.values: return
+        if not self.values:
+            return
         if self.active_value:
             for i, v in enumerate(self.values):
                 if v[0] == self.active_value and not v[2]:
@@ -403,5 +409,6 @@ class CategoryRadioList:
                 result.append((style + "-tag", tag_text, mouse_handler))
             result.append(("", "\n", mouse_handler))
 
-        if result: result.pop()
+        if result:
+            result.pop()
         return result

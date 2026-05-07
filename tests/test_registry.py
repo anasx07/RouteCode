@@ -1,4 +1,3 @@
-import pytest
 from loomcli.tools.base import ToolRegistry, BaseTool
 from pydantic import BaseModel
 

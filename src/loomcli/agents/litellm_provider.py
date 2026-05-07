@@ -1,4 +1,3 @@
-import json
 import asyncio
 import litellm
 from typing import List, Dict, Any, Optional, AsyncGenerator
@@ -155,7 +154,8 @@ class LiteLLMProvider(AIProvider):
 
             # Standard LiteLLM fetch
             pattern = f"{self.provider_name}/*"
-            if self.provider_name == "google": pattern = "gemini/*"
+            if self.provider_name == "google":
+                pattern = "gemini/*"
             
             live_models = await asyncio.to_thread(
                 litellm.get_model_list,

@@ -1,7 +1,5 @@
 import subprocess
 import os
-import time
-import threading
 from typing import Any, Dict, Optional, TYPE_CHECKING
 from pydantic import BaseModel, Field
 from .base import BaseTool
@@ -33,7 +31,6 @@ class BashTool(BaseTool):
 
     def execute(self, command: str, timeout: int = 30, ctx: Optional["LoomContext"] = None, 
                 provider: Optional[Any] = None, **kwargs) -> Dict[str, Any]:
-        import sys
         timeout = min(timeout, 120)
         try:
             result = subprocess.run(
@@ -45,7 +42,8 @@ class BashTool(BaseTool):
             )
             
             def format_long_output(text: str, prefix: str) -> str:
-                if not text: return text
+                if not text:
+                    return text
                 max_lines, max_chars = 100, 10000
                 lines = text.splitlines()
                 if len(lines) <= max_lines and len(text) <= max_chars:
@@ -59,16 +57,19 @@ class BashTool(BaseTool):
                     tmp_dir.mkdir(parents=True, exist_ok=True)
                     dump_file = tmp_dir / f"{prefix}_{uuid.uuid4().hex[:12]}.txt"
                     dump_file.write_text(text, encoding="utf-8")
-                except Exception: pass
+                except Exception:
+                    pass
                 
                 keep_lines = 50
                 hidden = max(0, len(lines) - keep_lines)
                 trunc = "\n".join(lines[-keep_lines:])
-                if len(trunc) > 4000: trunc = trunc[-4000:]
+                if len(trunc) > 4000:
+                    trunc = trunc[-4000:]
                 
                 msg = [f"... first {hidden} lines hidden ..."] if hidden > 0 else ["... truncated ..."]
                 msg.append(trunc)
-                if dump_file: msg.append(f"\nOutput too long and was saved to: {dump_file}")
+                if dump_file:
+                    msg.append(f"\nOutput too long and was saved to: {dump_file}")
                 return "\n".join(msg)
 
             stdout = format_long_output(result.stdout, "stdout")

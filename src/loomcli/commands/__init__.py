@@ -1,4 +1,4 @@
-from typing import List, Dict, Any
+from typing import Dict
 import inspect
 from ..core import LoomContext
 from .core import handle_help, handle_tools, handle_attach, handle_version, handle_clear, handle_exit
@@ -61,7 +61,8 @@ def get_command_metadata() -> Dict[str, str]:
 async def execute_command(input_str: str, ctx: LoomContext) -> bool:
     from ..skills import discover_skills
     parts = input_str.split()
-    if not parts: return False
+    if not parts:
+        return False
     command = parts[0]
     args = parts[1:]
 

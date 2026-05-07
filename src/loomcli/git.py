@@ -1,6 +1,4 @@
 import asyncio
-import shlex
-from typing import Dict, Optional
 
 async def get_git_context_async() -> str:
     """

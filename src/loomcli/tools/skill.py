@@ -1,6 +1,6 @@
 from typing import Any, Dict, Optional, TYPE_CHECKING
 from pydantic import BaseModel, Field
-from .base import BaseTool, registry
+from .base import BaseTool
 from ..skills import discover_skills
 
 if TYPE_CHECKING:

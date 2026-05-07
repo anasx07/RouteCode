@@ -1,4 +1,3 @@
-import uuid
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, List, Optional, Type, TYPE_CHECKING
 from pydantic import BaseModel
@@ -118,7 +117,7 @@ class ToolRegistry:
             # Format pydantic errors into a more readable string
             errors = []
             for err in e.errors():
-                loc = " -> ".join(str(l) for l in err["loc"])
+                loc = " -> ".join(str(part) for part in err["loc"])
                 msg = err["msg"]
                 errors.append(f" - {loc}: {msg}")
             raise ValueError(f"Validation failed for tool '{name}':\n" + "\n".join(errors))

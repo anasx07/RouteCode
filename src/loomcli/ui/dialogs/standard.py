@@ -37,11 +37,13 @@ class LoomDialog:
         # Add intuitive arrow navigation for buttons
         @kb.add("right")
         def _(event):
-            if self.dialog_type != "input": event.app.layout.focus_next()
+            if self.dialog_type != "input":
+                event.app.layout.focus_next()
             
         @kb.add("left")
         def _(event):
-            if self.dialog_type != "input": event.app.layout.focus_previous()
+            if self.dialog_type != "input":
+                event.app.layout.focus_previous()
             
         @kb.add("down")
         def _(event):

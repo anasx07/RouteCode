@@ -1,8 +1,6 @@
-import sys
 from typing import List
 from rich.table import Table
-from .. import ui as _ui
-from ..ui import print_info, print_success, print_error, LoomDialog
+from ..ui import print_success, print_error
 from ..tools import registry
 from ..core import LoomContext
 from ..attachments import load_attachment

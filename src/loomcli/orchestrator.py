@@ -71,7 +71,8 @@ class AgentOrchestrator:
         """
         if not self.provider:
             if not self._initialize_provider():
-                if hooks: await hooks.on_error("Provider not initialized. Missing API key.")
+                if hooks:
+                    await hooks.on_error("Provider not initialized. Missing API key.")
                 return
 
         hooks = hooks or OrchestratorHooks()
@@ -89,7 +90,7 @@ class AgentOrchestrator:
             turn_count += 1
             full_response = ""
             tool_calls = []
-            start_time = time.time()
+            time.time()
 
             try:
                 provider_usage = None
@@ -144,7 +145,8 @@ class AgentOrchestrator:
                     tc_id = tc.get("id")
                     func = tc.get("function", {})
                     name = func.get("name")
-                    if not tc_id or not name: continue
+                    if not tc_id or not name:
+                        continue
 
                     raw_args = func.get("arguments", "{}")
                     try:

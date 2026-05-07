@@ -1,6 +1,6 @@
 import time
 from dataclasses import dataclass, field
-from typing import Dict, Optional, List, Any
+from typing import Optional
 from .costs import cost_estimator
 from .history import ConversationHistory
 from .storage import AtomicJsonStore
@@ -50,7 +50,8 @@ class SessionState:
     def get_context_usage(self, model: str) -> float:
         """Returns the current context usage percentage."""
         _, ctx_limit, _ = cost_estimator.calculate_cost(0, 0, model)
-        if ctx_limit <= 0: return 0.0
+        if ctx_limit <= 0:
+            return 0.0
         return (self.tokens_used / ctx_limit) * 100
 
     def reset_context_warning(self):

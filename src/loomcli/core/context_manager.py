@@ -1,6 +1,5 @@
-import time
 import asyncio
-from typing import List, Dict, Any, Optional, TYPE_CHECKING
+from typing import List, Dict, Any, TYPE_CHECKING
 from .events import bus
 from .state import count_tokens
 
@@ -59,11 +58,13 @@ class ContextManager:
         for msg in messages[1:]:
             role = msg.get("role")
             if role == "user":
-                if current_turn: turns.append(current_turn)
+                if current_turn:
+                    turns.append(current_turn)
                 current_turn = [msg]
             elif role == "assistant":
                 if last_role in ("tool", "assistant"):
-                    if current_turn: turns.append(current_turn)
+                    if current_turn:
+                        turns.append(current_turn)
                     current_turn = [msg]
                 else:
                     current_turn.append(msg)
