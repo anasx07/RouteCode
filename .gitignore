@@ -1,24 +1,56 @@
-# Python
+# ── Python ────────────────────────────────────
 __pycache__/
 *.py[cod]
-*.egg-info/
+*.pyo
+*.pyd
 *.egg
+*.egg-info/
+.eggs/
+MANIFEST
+
+# ── Build artefacts ───────────────────────────
+# NOTE: loom.spec is intentionally NOT excluded — it is needed by PyInstaller CI
 dist/
 build/
-*.spec
+*.whl
+*.tar.gz
 
-# Virtual environment
+# ── Virtual environments ──────────────────────
 venv/
-.env/
+.venv/
+env/
+.env
 
-# IDE
+# ── IDE ───────────────────────────────────────
 .vscode/
 .idea/
+*.suo
+*.user
 
-# OS
+# ── OS ────────────────────────────────────────
 Thumbs.db
 .DS_Store
+desktop.ini
 
-# Project specific
+# ── Testing / tooling ─────────────────────────
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# ── Project runtime data ──────────────────────
+# Don't commit local Loom session/config data
+.loomcli/sessions/
+.loomcli/memory.json
+
+# Keep .loomcli/skills/ — project-level skills worth committing
+!.loomcli/skills/
+
+# ── Temporary / scratch files ─────────────────
 tests/tmp/
+*.log
+test.txt
+test_progress.txt
+snake_game.html

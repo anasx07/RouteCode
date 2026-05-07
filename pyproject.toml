@@ -1,9 +1,23 @@
 [project]
 name = "loomcli"
-version = "0.1.0"
-description = "Loom CLI in Python"
+dynamic = ["version"]
+description = "Loom — an AI coding assistant for your terminal"
+readme = "README.md"
+license = { text = "MIT" }
 authors = [
     { name = "SpeerX", email = "anasrhnim07@gmail.com" }
+]
+keywords = ["ai", "cli", "terminal", "llm", "coding-assistant"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
     "typer[all]>=0.12.3",
@@ -17,9 +31,37 @@ dependencies = [
 ]
 requires-python = ">=3.10"
 
+# Both 'loom' and 'loomcli' invoke the same entry point
 [project.scripts]
+loom    = "loomcli.main:app"
 loomcli = "loomcli.main:app"
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pyinstaller>=6.0.0",
+    "ruff>=0.4.0",
+]
+
+[project.urls]
+Homepage      = "https://github.com/YOUR_USERNAME/loom"
+Repository    = "https://github.com/YOUR_USERNAME/loom"
+Documentation = "https://github.com/YOUR_USERNAME/loom#readme"
+"Bug Tracker" = "https://github.com/YOUR_USERNAME/loom/issues"
+
 [build-system]
-requires = ["setuptools>=61.0"]
+requires      = ["setuptools>=61.0", "setuptools-scm>=8.0"]
 build-backend = "setuptools.build_meta"
+
+# Version is derived automatically from git tags (v1.2.3 → "1.2.3")
+[tool.setuptools_scm]
+write_to = "src/loomcli/_version.py"
+fallback_version = "0.0.0-dev"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths    = ["tests"]

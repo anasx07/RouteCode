@@ -1,0 +1,174 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version tag (e.g. v1.0.0)"
+        required: true
+
+permissions:
+  contents: write
+
+# ─────────────────────────────────────────────
+# Build a standalone binary on every platform
+# ─────────────────────────────────────────────
+jobs:
+  build-binaries:
+    name: Build — ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows x86_64
+            artifact: loom.exe
+            asset:   loom-windows-x86_64.exe
+
+          - os: macos-latest        # Apple Silicon (arm64)
+            label: macOS arm64
+            artifact: loom
+            asset:   loom-macos-arm64
+
+          - os: macos-13            # Intel (x86_64)
+            label: macOS x86_64
+            artifact: loom
+            asset:   loom-macos-x86_64
+
+          - os: ubuntu-latest
+            label: Linux x86_64
+            artifact: loom
+            asset:   loom-linux-x86_64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history needed for setuptools-scm version tags
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -e .
+          pip install pyinstaller
+
+      - name: Build binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: pyinstaller --clean loom.spec
+
+      - name: Build binary (Unix)
+        if: runner.os != 'Windows'
+        run: pyinstaller --clean loom.spec
+
+      - name: Stage artifact
+        shell: bash
+        run: |
+          mkdir -p release
+          if [ -f "dist/loom.exe" ]; then
+            cp dist/loom.exe release/${{ matrix.asset }}
+          else
+            cp dist/loom release/${{ matrix.asset }}
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: release/${{ matrix.asset }}
+          retention-days: 1
+
+  # ─────────────────────────────────────────────
+  # Create GitHub Release and attach all binaries
+  # ─────────────────────────────────────────────
+  publish-release:
+    name: Publish GitHub Release
+    needs: build-binaries
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release/
+
+      - name: Generate checksums
+        run: |
+          cd release
+          find . -type f | sort | xargs sha256sum > checksums.txt
+          cat checksums.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name || inputs.tag }}
+          name: "Loom ${{ github.ref_name || inputs.tag }}"
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
+          files: |
+            release/**/*
+          body: |
+            ## Install
+
+            **macOS / Linux — one-liner:**
+            ```sh
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh
+            ```
+
+            **Windows — one-liner (PowerShell):**
+            ```powershell
+            irm https://raw.githubusercontent.com/${{ github.repository }}/main/install.ps1 | iex
+            ```
+
+            **Python (pip / pipx):**
+            ```sh
+            pipx install loomcli
+            ```
+
+            ---
+
+            | Platform | Binary |
+            |---|---|
+            | Windows x86_64 | `loom-windows-x86_64.exe` |
+            | macOS Apple Silicon | `loom-macos-arm64` |
+            | macOS Intel | `loom-macos-x86_64` |
+            | Linux x86_64 | `loom-linux-x86_64` |
+
+  # ─────────────────────────────────────────────
+  # Publish to PyPI (pipx install loomcli)
+  # ─────────────────────────────────────────────
+  publish-pypi:
+    name: Publish to PyPI
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write   # required for OIDC trusted publishing
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build wheel + sdist
+        run: |
+          pip install build setuptools-scm
+          python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

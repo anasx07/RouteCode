@@ -113,18 +113,8 @@ def print_welcome_screen(user_name: str, model: str, provider: str, target_conso
     shortcuts.add_row("[dim]/provider[/dim]", "[dim]Switch provider[/dim]")
     shortcuts.add_row("[dim]/tasks[/dim]", "[dim]View tasks[/dim]")
     tip_box = Panel(shortcuts, title="[dim]Quick Start[/dim]", border_style="dim", padding=(1, 2))
-    layout = Layout()
-    layout.split_column(Layout(Align.center(content, vertical="middle"), ratio=1), Layout(name="footer", size=1))
-    footer_text = Text(f"{os.getcwd()}", style="dim")
-    layout["footer"].update(Align.left(footer_text, vertical="bottom"))
-    h = 24
-    try:
-        from prompt_toolkit.output.defaults import create_output
-        h = create_output().get_size().rows
-    except Exception:
-        import shutil
-        h = shutil.get_terminal_size().lines
-    c.print(layout, height=max(15, h - 10))
+    # Just print content directly for the new full-screen REPL
+    c.print(Align.center(content))
     c.print(tip_box)
 
 def print_thought_elapsed(elapsed: float):

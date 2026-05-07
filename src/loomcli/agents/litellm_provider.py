@@ -6,6 +6,7 @@ from .base import AIProvider
 
 # Disable litellm's verbose logging unless needed
 litellm.set_verbose = False
+litellm.suppress_debug_info = True
 
 class LiteLLMProvider(AIProvider):
     """
@@ -46,6 +47,10 @@ class LiteLLMProvider(AIProvider):
         
         if self.base_url:
             completion_args["base_url"] = self.base_url
+            if self.provider_name == "openai":
+                # For custom OpenAI endpoints, use custom_llm_provider to avoid prefix issues
+                completion_args["custom_llm_provider"] = "openai"
+                completion_args["model"] = model  # Use unprefixed model name
 
         if stream:
             completion_args["stream_options"] = {"include_usage": True}
@@ -119,11 +124,60 @@ class LiteLLMProvider(AIProvider):
 
     async def get_models(self) -> List[Dict[str, Any]]:
         """
-        Return a list of common models for the active provider.
+        Return a list of models for the active provider.
+        Tries to fetch live models from LiteLLM first, falls back to metadata list.
         """
+        # 1. Try to fetch live list from LiteLLM
+        try:
+            # For custom OpenAI endpoints and OpenRouter, we try a direct fetch
+            if self.base_url and (self.provider_name == "openai" or self.provider_name == "openrouter"):
+                # Some providers don't support the 'openai/*' pattern in get_model_list
+                # but might work if we fetch directly from /models
+                import httpx
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    # Try standard OpenAI /models endpoint
+                    url = self.base_url.rstrip("/") + "/models"
+                    headers = {"Authorization": f"Bearer {self.api_key}"}
+                    response = await client.get(url, headers=headers)
+                    if response.status_code == 200:
+                        data = response.json()
+                        # Standard OpenAI response is {"data": [...]}
+                        models_data = data.get("data", [])
+                        if models_data:
+                            results = []
+                            for m in models_data:
+                                m_id = m.get("id") if isinstance(m, dict) else str(m)
+                                if m_id:
+                                    # Strip prefix for display name (e.g. cohere/command-r -> command-r)
+                                    display_name = m_id.split("/")[-1] if "/" in m_id else m_id
+                                    results.append({"id": m_id, "name": display_name})
+                            return results
+
+            # Standard LiteLLM fetch
+            pattern = f"{self.provider_name}/*"
+            if self.provider_name == "google": pattern = "gemini/*"
+            
+            live_models = await asyncio.to_thread(
+                litellm.get_model_list,
+                model=pattern,
+                api_key=self.api_key,
+                base_url=self.base_url
+            )
+            if live_models:
+                results = []
+                for m in live_models:
+                    m_id = m if isinstance(m, str) else m.get("id", str(m))
+                    display_id = m_id.split("/")[-1] if "/" in m_id else m_id
+                    results.append({"id": m_id, "name": display_id})
+                return results
+        except Exception:
+            pass
+
+        # 2. Fallback to models_list (from models_api.json)
         if self.models_list:
             return self.models_list
 
+        # 3. Final hardcoded defaults for common providers
         defaults = {
             "openai": [
                 {"id": "gpt-4o", "name": "GPT-4o (Omni)"},
@@ -138,9 +192,8 @@ class LiteLLMProvider(AIProvider):
                 {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku"},
             ],
             "google": [
-                {"id": "gemini-3.1-pro-preview", "name": "Gemini 3.1 Pro Preview"},
-                {"id": "gemini-3-flash-preview", "name": "Gemini 3 Flash Preview"},
-                {"id": "gemini-3.1-flash-lite-preview", "name": "Gemini 3.1 Flash lite Preview"}
+                {"id": "gemini-1.5-pro", "name": "Gemini 1.5 Pro"},
+                {"id": "gemini-1.5-flash", "name": "Gemini 1.5 Flash"},
             ],
             "deepseek": [
                 {"id": "deepseek-chat", "name": "DeepSeek Chat"},

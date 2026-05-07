@@ -149,86 +149,95 @@ async def handle_model(args: List[str], ctx: LoomContext):
     except Exception:
         models_db = {}
 
-    def _build_values():
+    async def _build_values():
         values = []
         
-        # Determine which providers are connected (have an API key)
-        connected_providers = set()
+        # Determine which providers are connected
+        connected_providers = []
         for p_id, p_info in models_db.items():
-            # Check if we have an API key stored for this provider
+            is_conn = False
             if ctx.config.get_api_key(p_id):
-                connected_providers.add(p_id)
-                continue
-            # Also check environment variables listed in the provider's 'env' field
-            env_vars = p_info.get("env", [])
-            for env_var in env_vars:
-                if os.environ.get(env_var):
-                    connected_providers.add(p_id)
-                    break
+                is_conn = True
+            else:
+                env_vars = p_info.get("env", [])
+                for env_var in env_vars:
+                    if os.environ.get(env_var):
+                        is_conn = True
+                        break
+            if is_conn:
+                connected_providers.append(p_id)
 
-        # 1. Recent (only from connected providers)
-        recent = ctx.config.recent_models
+        # Pre-fetch models for connected providers (this uses our live logic)
+        provider_models = {}
+        for p_id in connected_providers:
+            try:
+                provider_cls = PROVIDER_MAP.get(p_id)
+                if provider_cls:
+                    # Create provider instance
+                    api_key = ctx.config.get_api_key(p_id) or ""
+                    provider = provider_cls(api_key)
+                    # This will try live fetch then fallback to JSON models
+                    live_list = await provider.get_models()
+                    provider_models[p_id] = live_list
+            except Exception:
+                pass
+
         favorites = ctx.config.favorites
-        
+        recent = ctx.config.recent_models
+
+        # Helper to format a model item
+        def format_item(p, m_id, name=None):
+            p_info = models_db.get(p, {})
+            m_info = p_info.get("models", {}).get(m_id, {})
+            display_name = name or m_info.get("name", m_id)
+            label = f"★ {display_name}" if [p, m_id] in favorites else f"  {display_name}"
+            
+            # Check cost from metadata
+            cost = m_info.get("cost", {})
+            is_free_meta = cost.get("input") == 0 and cost.get("output") == 0
+            
+            # Auto-detect free from name/id if not in meta
+            is_free_auto = "free" in m_id.lower() or "free" in display_name.lower()
+            
+            badge = "Free" if (is_free_meta or is_free_auto) else None
+            return (f"{p}:{m_id}", label, False, p_info.get("name", p), badge)
+
+        # 1. Recent
         if recent:
             recent_items = []
             for p, m in recent:
-                if p not in connected_providers: continue
+                if p not in provider_models: continue
                 if [p, m] in favorites: continue
-                p_info = models_db.get(p, {})
-                m_info = p_info.get("models", {}).get(m, {})
-                name = m_info.get("name", m)
-                label = f"★ {name}" if [p, m] in favorites else f"  {name}"
-                recent_items.append((f"{p}:{m}", label, False, p_info.get("name", p), "Free" if "free" in name.lower() else None))
+                recent_items.append(format_item(p, m))
             if recent_items:
                 values.append((None, "Recent", True, None, None))
                 values.extend(recent_items)
 
-        # 2. Favorites (only from connected providers)
+        # 2. Favorites
         if favorites:
             fav_items = []
             for p, m in favorites:
-                if p not in connected_providers: continue
-                p_info = models_db.get(p, {})
-                m_info = p_info.get("models", {}).get(m, {})
-                name = m_info.get("name", m)
-                label = f"★ {name}"
-                fav_items.append((f"{p}:{m}", label, False, p_info.get("name", p), "Free" if "free" in name.lower() else None))
+                if p not in provider_models: continue
+                fav_items.append(format_item(p, m))
             if fav_items:
                 values.append((None, "Favorites", True, None, None))
                 values.extend(fav_items)
 
-        # 3. Connected Providers - curated order first
+        # 3. All connected providers
         curated = ["opencode", "opencode-go", "cloudflare", "nvidia", "google", "openai", "anthropic"]
-        for p_id in curated:
-            if p_id not in connected_providers: continue
-            p_info = models_db.get(p_id)
-            if not p_info: continue
-            p_models = p_info.get("models", {})
-            if not p_models: continue
-            
+        sorted_pids = sorted(provider_models.keys(), key=lambda x: (x not in curated, curated.index(x) if x in curated else x))
+        
+        for p_id in sorted_pids:
+            p_info = models_db.get(p_id, {})
             values.append((None, p_info.get("name", p_id), True, None, None))
-            for m_id, m_info in p_models.items():
-                name = m_info.get("name", m_id)
-                label = f"★ {name}" if [p_id, m_id] in favorites else f"  {name}"
-                values.append((f"{p_id}:{m_id}", label, False, None, "Free" if "free" in name.lower() else None))
-
-        # 4. All other connected providers
-        for p_id, p_info in models_db.items():
-            if p_id in curated: continue
-            if p_id not in connected_providers: continue
-            p_models = p_info.get("models", {})
-            if not p_models: continue
-            
-            values.append((None, p_info.get("name", p_id), True, None, None))
-            for m_id, m_info in p_models.items():
-                name = m_info.get("name", m_id)
-                label = f"★ {name}" if [p_id, m_id] in favorites else f"  {name}"
-                values.append((f"{p_id}:{m_id}", label, False, None, "Free" if "free" in name.lower() else None))
+            for m in provider_models[p_id]:
+                m_id = m["id"]
+                name = m["name"]
+                values.append(format_item(p_id, m_id, name))
         
         return values
 
-    values = _build_values()
+    values = await _build_values()
 
     from ..ui import ModelPaletteMenu
     
