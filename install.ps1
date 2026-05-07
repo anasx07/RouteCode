@@ -59,4 +59,4 @@ else {
   Write-Success "Already on PATH."
 }
 
-Write-Success "Done! Type 'loom' to get started."
+Write-Success "Done! Type loom to get started."
