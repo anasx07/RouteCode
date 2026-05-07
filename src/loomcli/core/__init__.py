@@ -8,3 +8,4 @@ from .context_manager import ContextManager
 from .costs import cost_estimator
 from .models_db import get_model_pricing
 from .logger import get_logger, setup_logging
+from .path_guard import PathGuard

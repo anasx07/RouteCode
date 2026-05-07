@@ -6,7 +6,6 @@ from .base import BaseTool
 
 if TYPE_CHECKING:
     from ..core import LoomContext
-from ..utils import safe_resolve_path
 
 class FileEditInput(BaseModel):
     file_path: str = Field(..., description="The path to the file to edit")
@@ -27,7 +26,10 @@ class FileEditTool(BaseTool):
 
     def execute(self, file_path: str, old_string: str, new_string: str, allow_multiple: bool = False, 
                 ctx: Optional["LoomContext"] = None, provider: Optional[Any] = None, **kwargs) -> Dict[str, Any]:
-        resolved, error = safe_resolve_path(file_path)
+        if ctx is None:
+            return {"success": False, "error": "Context not found"}
+            
+        resolved, error = ctx.path_guard.resolve(file_path)
         if error:
             return {"success": False, "error": error}
         if not os.path.exists(resolved):

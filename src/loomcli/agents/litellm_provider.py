@@ -39,6 +39,8 @@ class LiteLLMProvider(AIProvider):
             "messages": messages,
             "stream": stream,
             "api_key": self.api_key,
+            "num_retries": 3,
+            "timeout": 60,
         }
 
         if stream:

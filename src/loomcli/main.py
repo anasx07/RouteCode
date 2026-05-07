@@ -36,18 +36,18 @@ def main(
     repl = LoomREPL()
 
     if resume:
-        from .config import CONFIG_DIR
-        session_path = CONFIG_DIR / "sessions" / f"{resume}.json"
-        if session_path.exists():
-            import json
-            data = json.loads(session_path.read_text(encoding="utf-8"))
-            repl.ctx.state.session_messages.set_messages(data.get("messages", []))
-            repl.state.tokens_used = data.get("tokens_used", 0)
-            config.provider = data.get("provider", config.provider)
-            config.model = data.get("model", config.model)
+        from .core import load_session
+        state = load_session(resume)
+        if state:
+            repl.ctx.state = state
+            # Synchronize config with restored state if present
+            if state.provider:
+                config.provider = state.provider
+            if state.model:
+                config.model = state.model
             _ui.console.print(f"[success]Resumed session: {resume}[/success]")
         else:
-            _ui.console.print(f"[error]Session not found: {resume}[/error]")
+            _ui.console.print(f"[error]Session not found or corrupted: {resume}[/error]")
             raise typer.Exit(1)
 
     import asyncio
@@ -64,7 +64,8 @@ def main(
 @app.command()
 def version():
     """Show version info."""
-    _ui.console.print("[accent]LoomCLI[/accent] [white]0.1.0[/white]")
+    from . import __version__
+    _ui.console.print(f"[accent]LoomCLI[/accent] [white]{__version__}[/white]")
     _ui.console.print("[dim]Python based[/dim]")
 
 

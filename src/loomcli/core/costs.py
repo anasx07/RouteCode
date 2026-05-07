@@ -31,24 +31,23 @@ class CostEstimator:
             tokens = re.findall(r'\w+|[^\w\s]', text)
             return len(tokens)
 
-    def calculate_cost(self, input_tokens: int, output_tokens: int, model: str) -> Tuple[float, int]:
+    def calculate_cost(self, input_tokens: int, output_tokens: int, model: str) -> Tuple[float, int, float]:
         """
         Calculates the cost based on input and output tokens for a specific model.
-        Returns (estimated_cost, context_limit).
+        Returns (estimated_cost, context_limit, input_cost_per_1m).
         """
         # Try to get pricing from litellm first
         try:
             model_info = litellm.get_model_info(model)
             if model_info:
-                # LiteLLM prices are often per 1k tokens in info, or per token.
-                # Actually litellm.get_model_info returns costs per token usually.
                 input_price = model_info.get("input_cost_per_token")
                 output_price = model_info.get("output_cost_per_token")
                 context_limit = model_info.get("max_tokens", 32000)
                 
                 if input_price is not None and output_price is not None:
                     cost = (input_tokens * input_price) + (output_tokens * output_price)
-                    return cost, context_limit
+                    # Normalize to per 1M tokens for the third return value
+                    return cost, context_limit, input_price * 1_000_000
         except Exception as e:
             logger.debug("Failed to get model info from LiteLLM for %s: %s", model, e)
 
@@ -56,6 +55,6 @@ class CostEstimator:
         input_price_m, output_price_m, context_limit = get_model_pricing(model)
         # models_db prices are per 1M tokens
         cost = (input_tokens * input_price_m / 1_000_000) + (output_tokens * output_price_m / 1_000_000)
-        return cost, context_limit
+        return cost, context_limit, input_price_m
 
 cost_estimator = CostEstimator()

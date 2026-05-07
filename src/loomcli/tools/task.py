@@ -1,5 +1,5 @@
 import json
-import threading
+import asyncio
 from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
 from .base import BaseTool, registry
@@ -16,8 +16,13 @@ class TaskInput(BaseModel):
     run_in_background: bool = Field(False, description="If True, run in background and return task_id immediately")
 
 
+import dataclasses
+
 async def _run_sub_agent_async(task: str, max_iterations: int, task_id: str, ctx: LoomContext, provider: Optional[Any] = None):
-    orchestrator = AgentOrchestrator(ctx, provider=provider)
+    # Isolate sub-agent state to prevent interference with parent context management
+    sub_ctx = dataclasses.replace(ctx, state=SessionState())
+    
+    orchestrator = AgentOrchestrator(sub_ctx, provider=provider)
     if not orchestrator.provider:
         ctx.task_manager.fail(task_id, "No API key configured or provider unavailable")
         return
@@ -60,16 +65,20 @@ async def _run_sub_agent_async(task: str, max_iterations: int, task_id: str, ctx
                 return True
             return output["completed"]
 
-    await orchestrator.run(history, hooks=TaskHooks(), max_turns=max_iterations)
+    try:
+        await orchestrator.run(history, hooks=TaskHooks(), max_turns=max_iterations)
+    except asyncio.CancelledError:
+        ctx.task_manager.fail(task_id, "Task was cancelled")
+        raise
+    except Exception as e:
+        ctx.task_manager.fail(task_id, str(e))
+    finally:
+        # Aggregate sub-agent usage back to parent
+        ctx.state.merge(sub_ctx.state)
 
     if not output["completed"]:
         output["text"] += "\n(Task completed with max iterations reached)"
         ctx.task_manager.complete(task_id, {"success": True, "output": output["text"]})
-
-def _run_sub_agent(task: str, max_iterations: int, task_id: str, ctx: LoomContext, provider: Optional[Any] = None):
-    import asyncio
-    asyncio.run(_run_sub_agent_async(task, max_iterations, task_id, ctx, provider=provider))
-
 
 
 class TaskTool(BaseTool):
@@ -89,24 +98,26 @@ class TaskTool(BaseTool):
                 ctx: Optional[LoomContext] = None, provider: Optional[Any] = None, **kwargs) -> Dict[str, Any]:
         from ..task_manager import generate_task_id
         task_id = generate_task_id()
-        if ctx is None:
-            ctx = LoomContext(
-                state=SessionState(),
-                config=config,
-                console=None, # Sub-agents don't usually have a console
-                task_manager=None # Will be set below or use global
-            )
-            # This is a fallback for direct calls. 
-            # In practice, ctx will always be passed from the REPL.
+        
+        if ctx is None or ctx.loop is None:
+            return {"success": False, "error": "Main event loop not found in context. Cannot launch task."}
+
+        # Create the record in TaskManager
+        ctx.task_manager.create(task[:80], None, task_id)
+
+        # Helper to launch and track the task on the main loop
+        async def _launch():
+            sub_coro = _run_sub_agent_async(task, max_iterations, task_id, ctx, provider=provider)
+            t = asyncio.create_task(sub_coro)
+            record = ctx.task_manager.get(task_id)
+            if record:
+                record.worker = t
+            return await t
+
+        # Schedule the launch on the main loop
+        main_future = asyncio.run_coroutine_threadsafe(_launch(), ctx.loop)
 
         if run_in_background:
-            thread = threading.Thread(
-                target=_run_sub_agent,
-                args=(task, max_iterations, task_id, ctx, provider),
-                daemon=True
-            )
-            ctx.task_manager.create(task[:80], thread, task_id)
-            thread.start()
             return {
                 "success": True,
                 "task_id": task_id,
@@ -114,9 +125,13 @@ class TaskTool(BaseTool):
                 "message": f"Task {task_id} started in background."
             }
 
-        ctx.task_manager.create(task[:80], None, task_id)
-        _run_sub_agent(task, max_iterations, task_id, ctx, provider=provider)
-        record = ctx.task_manager.get(task_id)
-        if record and record.result:
-            return record.result
-        return {"success": False, "error": "Task failed silently"}
+        # Foreground: wait for the future to complete
+        try:
+            # We wait on the concurrent.futures.Future
+            main_future.result()
+            record = ctx.task_manager.get(task_id)
+            if record and record.result:
+                return record.result
+            return {"success": False, "error": f"Task {task_id} failed or was killed"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}

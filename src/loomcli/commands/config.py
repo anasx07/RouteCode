@@ -9,30 +9,123 @@ from ..agents.registry import PROVIDER_MAP
 PROVIDER_LIST = list(PROVIDER_MAP.keys())
 
 async def handle_provider(args: List[str], ctx: LoomContext):
-    result = await LoomDialog(
-        title="Select AI Provider",
-        text=_ui.get_dialog_text("Choose the provider you want to use for this session:", "radio"),
-        values=[(p, p.capitalize()) for p in PROVIDER_LIST],
-        dialog_type="radio"
-    ).run_async()
+    # Load models database to get provider names
+    import json
+    from pathlib import Path
+    models_db_path = Path(__file__).parent.parent / "models_api.json"
+    try:
+        with open(models_db_path, "r", encoding="utf-8") as f:
+            models_db = json.load(f)
+    except Exception:
+        models_db = {}
 
-    if result:
-        ctx.config.provider = result
-        await ctx.config.save_async()
-        ctx.console.print(f"\n[success]✔[/success] Provider switched to [bold cyan]{result}[/bold cyan]")
+    popular_providers = {
+        "opencode": "(Recommended)",
+        "opencode-go": "Low cost subscription for everyone",
+        "openai": "(ChatGPT Plus/Pro or API key)",
+        "github": "",
+        "anthropic": "(API key)",
+        "google": ""
+    }
+
+    from ..ui import ModelPaletteMenu
+    
+    while True:
+        values = []
         
+        # Popular category
+        values.append((None, "Popular", True, None, None))
+        for p_id, desc in popular_providers.items():
+            if p_id in PROVIDER_LIST:
+                p_info = models_db.get(p_id, {})
+                name = p_info.get("name", p_id.capitalize())
+                # Check if connected
+                is_connected = bool(ctx.config.get_api_key(p_id))
+                if not is_connected and "env" in p_info:
+                    for env_var in p_info["env"]:
+                        if os.environ.get(env_var):
+                            is_connected = True
+                            break
+                
+                label = f"✓ {name}" if is_connected else f"  {name}"
+                values.append((p_id, label, False, desc, None))
+
+        # Other category
+        values.append((None, "Other", True, None, None))
+        for p_id in PROVIDER_LIST:
+            if p_id in popular_providers: continue
+            p_info = models_db.get(p_id, {})
+            name = p_info.get("name", p_id.capitalize())
+            
+            is_connected = bool(ctx.config.get_api_key(p_id))
+            if not is_connected and "env" in p_info:
+                for env_var in p_info["env"]:
+                    if os.environ.get(env_var):
+                        is_connected = True
+                        break
+            
+            label = f"✓ {name}" if is_connected else f"  {name}"
+            values.append((p_id, label, False, None, None))
+
+        menu = ModelPaletteMenu(
+            title="Connect a provider",
+            values=values,
+            active_value=ctx.config.provider
+        )
+        menu.show_footer = False
+        result = await menu.run_async()
+
+        if not result:
+            break
+
         # Check for API key
-        if not ctx.config.get_api_key(result):
+        is_connected = bool(ctx.config.get_api_key(result))
+        if not is_connected:
+            p_info = models_db.get(result, {})
+            if "env" in p_info:
+                for env_var in p_info["env"]:
+                    if os.environ.get(env_var):
+                        is_connected = True
+                        break
+
+        if not is_connected:
             new_key = await LoomDialog(
                 title=f"Setup {result.capitalize()}",
-                text=_ui.get_dialog_text(f"No API key found for {result}. Please paste it here and press Enter:", "input"),
+                text=_ui.get_dialog_text(f"Paste your {result} API key here and press Enter:", "input"),
                 password=True,
                 dialog_type="input"
             ).run_async()
             if new_key:
                 ctx.config.set_api_key(result, new_key)
                 await ctx.config.save_async()
-                print_success(f"API key for {result} has been saved.")
+                print_success(f"API key for {result} has been saved! You can now select its models in the model menu.")
+                break
+            else:
+                continue
+        else:
+            action = await LoomDialog(
+                title=f"Update {result.capitalize()}",
+                text=_ui.get_dialog_text(f"{result} is already connected. Do you want to update the API key?", "button"),
+                buttons=[("Update", True), ("Back", False)],
+                dialog_type="button"
+            ).run_async()
+            
+            if action:
+                new_key = await LoomDialog(
+                    title=f"Update {result.capitalize()}",
+                    text=_ui.get_dialog_text(f"Paste your new {result} API key:", "input"),
+                    password=True,
+                    dialog_type="input"
+                ).run_async()
+                if new_key:
+                    ctx.config.set_api_key(result, new_key)
+                    await ctx.config.save_async()
+                    print_success(f"API key for {result} has been updated.")
+                    break
+                else:
+                    continue
+            else:
+                continue
 
 async def handle_model(args: List[str], ctx: LoomContext):
     if args:
@@ -56,78 +149,86 @@ async def handle_model(args: List[str], ctx: LoomContext):
     except Exception:
         models_db = {}
 
-    # Structure data for CategoryRadioList
-    # (value, label, is_header, description, tag)
-    values = []
-    
-    # Determine which providers are connected (have an API key)
-    connected_providers = set()
-    for p_id, p_info in models_db.items():
-        # Check if we have an API key stored for this provider
-        if ctx.config.get_api_key(p_id):
-            connected_providers.add(p_id)
-            continue
-        # Also check environment variables listed in the provider's 'env' field
-        env_vars = p_info.get("env", [])
-        for env_var in env_vars:
-            if os.environ.get(env_var):
+    def _build_values():
+        values = []
+        
+        # Determine which providers are connected (have an API key)
+        connected_providers = set()
+        for p_id, p_info in models_db.items():
+            # Check if we have an API key stored for this provider
+            if ctx.config.get_api_key(p_id):
                 connected_providers.add(p_id)
-                break
+                continue
+            # Also check environment variables listed in the provider's 'env' field
+            env_vars = p_info.get("env", [])
+            for env_var in env_vars:
+                if os.environ.get(env_var):
+                    connected_providers.add(p_id)
+                    break
 
-    # 1. Favorites (only from connected providers)
-    favorites = ctx.config.favorites
-    if favorites:
-        fav_items = []
-        for p, m in favorites:
-            if p not in connected_providers: continue
-            p_info = models_db.get(p, {})
-            m_info = p_info.get("models", {}).get(m, {})
-            name = m_info.get("name", m)
-            fav_items.append((f"{p}:{m}", name, False, p_info.get("name", p), "Free" if "free" in name.lower() else None))
-        if fav_items:
-            values.append((None, "Favorites", True, None, None))
-            values.extend(fav_items)
-
-    # 2. Recent (only from connected providers)
-    recent = ctx.config.recent_models
-    if recent:
-        recent_items = []
-        for p, m in recent:
-            if p not in connected_providers: continue
-            if [p, m] in favorites: continue
-            p_info = models_db.get(p, {})
-            m_info = p_info.get("models", {}).get(m, {})
-            name = m_info.get("name", m)
-            recent_items.append((f"{p}:{m}", name, False, p_info.get("name", p), "Free" if "free" in name.lower() else None))
-        if recent_items:
-            values.append((None, "Recent", True, None, None))
-            values.extend(recent_items)
-
-    # 3. Connected Providers - curated order first
-    curated = ["opencode", "opencode-go", "cloudflare", "nvidia", "google", "openai", "anthropic"]
-    for p_id in curated:
-        if p_id not in connected_providers: continue
-        p_info = models_db.get(p_id)
-        if not p_info: continue
-        p_models = p_info.get("models", {})
-        if not p_models: continue
+        # 1. Recent (only from connected providers)
+        recent = ctx.config.recent_models
+        favorites = ctx.config.favorites
         
-        values.append((None, p_info.get("name", p_id), True, None, None))
-        for m_id, m_info in p_models.items():
-            name = m_info.get("name", m_id)
-            values.append((f"{p_id}:{m_id}", name, False, None, "Free" if "free" in name.lower() else None))
+        if recent:
+            recent_items = []
+            for p, m in recent:
+                if p not in connected_providers: continue
+                if [p, m] in favorites: continue
+                p_info = models_db.get(p, {})
+                m_info = p_info.get("models", {}).get(m, {})
+                name = m_info.get("name", m)
+                label = f"★ {name}" if [p, m] in favorites else f"  {name}"
+                recent_items.append((f"{p}:{m}", label, False, p_info.get("name", p), "Free" if "free" in name.lower() else None))
+            if recent_items:
+                values.append((None, "Recent", True, None, None))
+                values.extend(recent_items)
 
-    # 4. All other connected providers
-    for p_id, p_info in models_db.items():
-        if p_id in curated: continue
-        if p_id not in connected_providers: continue
-        p_models = p_info.get("models", {})
-        if not p_models: continue
+        # 2. Favorites (only from connected providers)
+        if favorites:
+            fav_items = []
+            for p, m in favorites:
+                if p not in connected_providers: continue
+                p_info = models_db.get(p, {})
+                m_info = p_info.get("models", {}).get(m, {})
+                name = m_info.get("name", m)
+                label = f"★ {name}"
+                fav_items.append((f"{p}:{m}", label, False, p_info.get("name", p), "Free" if "free" in name.lower() else None))
+            if fav_items:
+                values.append((None, "Favorites", True, None, None))
+                values.extend(fav_items)
+
+        # 3. Connected Providers - curated order first
+        curated = ["opencode", "opencode-go", "cloudflare", "nvidia", "google", "openai", "anthropic"]
+        for p_id in curated:
+            if p_id not in connected_providers: continue
+            p_info = models_db.get(p_id)
+            if not p_info: continue
+            p_models = p_info.get("models", {})
+            if not p_models: continue
+            
+            values.append((None, p_info.get("name", p_id), True, None, None))
+            for m_id, m_info in p_models.items():
+                name = m_info.get("name", m_id)
+                label = f"★ {name}" if [p_id, m_id] in favorites else f"  {name}"
+                values.append((f"{p_id}:{m_id}", label, False, None, "Free" if "free" in name.lower() else None))
+
+        # 4. All other connected providers
+        for p_id, p_info in models_db.items():
+            if p_id in curated: continue
+            if p_id not in connected_providers: continue
+            p_models = p_info.get("models", {})
+            if not p_models: continue
+            
+            values.append((None, p_info.get("name", p_id), True, None, None))
+            for m_id, m_info in p_models.items():
+                name = m_info.get("name", m_id)
+                label = f"★ {name}" if [p_id, m_id] in favorites else f"  {name}"
+                values.append((f"{p_id}:{m_id}", label, False, None, "Free" if "free" in name.lower() else None))
         
-        values.append((None, p_info.get("name", p_id), True, None, None))
-        for m_id, m_info in p_models.items():
-            name = m_info.get("name", m_id)
-            values.append((f"{p_id}:{m_id}", name, False, None, "Free" if "free" in name.lower() else None))
+        return values
+
+    values = _build_values()
 
     from ..ui import ModelPaletteMenu
     
@@ -138,6 +239,7 @@ async def handle_model(args: List[str], ctx: LoomContext):
         if val and ":" in val:
             p, m = val.split(":", 1)
             ctx.config.toggle_favorite(p, m)
+            return _build_values()
     menu.on_favorite = on_favorite
     
     def on_connect_provider_stub(): pass 

@@ -1,14 +1,13 @@
 import asyncio
-from .core import get_logger
-
-logger = get_logger(__name__)
+import time
+import json
 from typing import Any, Dict, List, Optional, Callable
-from .core import LoomContext
-from .core import count_tokens
+from .core import get_logger, LoomContext, count_tokens, ConversationHistory, ContextManager, bus, AtomicJsonStore
 from .tools import registry
 from .agents.registry import PROVIDER_MAP
-from .core import ConversationHistory
-from .core import ContextManager
+from .config import CONFIG_DIR
+
+logger = get_logger(__name__)
 
 class OrchestratorHooks:
     """Hooks for the AgentOrchestrator to signal progress and updates."""
@@ -45,7 +44,6 @@ class AgentOrchestrator:
         if not self.provider:
             self._initialize_provider()
         
-        from .core import bus
         bus.on("config.provider_changed", self.refresh_provider)
 
     def _initialize_provider(self) -> bool:
@@ -210,7 +208,6 @@ class AgentOrchestrator:
         return batches
 
     async def _call_tool_safe(self, name: str, args: dict) -> Dict[str, Any]:
-        import asyncio
         tool = registry.get_tool(name)
         if not tool:
             return {"error": f"Tool not found: {name}"}
@@ -221,10 +218,6 @@ class AgentOrchestrator:
             return {"error": str(e)}
 
     async def _append_tool_result(self, history: ConversationHistory, tc_id: str, name: str, result: Dict[str, Any]):
-        from .config import CONFIG_DIR
-        from .core import AtomicJsonStore
-        import asyncio
-        
         MAX_CHARS = 50000
         content = json.dumps(result)
         

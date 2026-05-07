@@ -54,9 +54,10 @@ class BashTool(BaseTool):
                 dump_file = ""
                 try:
                     from pathlib import Path
+                    import uuid
                     tmp_dir = Path.home() / ".loomcli" / "tmp" / "tool-outputs"
                     tmp_dir.mkdir(parents=True, exist_ok=True)
-                    dump_file = tmp_dir / f"{prefix}_{int(time.time()*1000)}.txt"
+                    dump_file = tmp_dir / f"{prefix}_{uuid.uuid4().hex[:12]}.txt"
                     dump_file.write_text(text, encoding="utf-8")
                 except Exception: pass
                 

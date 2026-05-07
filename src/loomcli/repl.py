@@ -113,16 +113,21 @@ class LoomREPL:
         from .memory import MemoryManager
         self.memory = MemoryManager(CONFIG_DIR)
         self.state = SessionState()
+        from .core import PathGuard
+        self.path_guard = PathGuard()
         self.ctx = LoomContext(
             state=self.state,
             config=config,
             console=console,
             task_manager=task_manager,
-            memory=self.memory
+            memory=self.memory,
+            path_guard=self.path_guard
         )
         self.auto_save_counter = 0
         self.logo_animation_count = 0
         self.orchestrator = AgentOrchestrator(self.ctx)
+        from .core.audit import audit_hook
+        registry.add_post_hook(audit_hook)
         self._setup_event_handlers()
 
     def _setup_event_handlers(self):
@@ -223,6 +228,8 @@ class LoomREPL:
         })
 
     async def run(self):
+        import asyncio
+        self.ctx.loop = asyncio.get_running_loop()
         from .ui import apply_theme
         apply_theme(self.ctx.config.theme)
         self._set_terminal_background()
@@ -322,6 +329,21 @@ class LoomREPL:
                 print_error(f"Provider not initialized. Set your API key with [command]/config[/command]")
                 return
 
+        # Refresh system prompt before each turn to catch mid-session file changes
+        from .system_prompt import compute_system_prompt
+        system_content = await compute_system_prompt(self.ctx)
+        
+        messages = self.ctx.state.session_messages.to_list()
+        if messages and messages[0].get("role") == "system":
+            messages[0]["content"] = system_content
+        else:
+            # If no system message (unexpected), insert one
+            messages.insert(0, {"role": "system", "content": system_content})
+        
+        self.ctx.state.session_messages.set_messages(messages)
+        
+        self.ctx.state.provider = self.ctx.config.provider
+        self.ctx.state.model = self.ctx.config.model
         self.ctx.state.session_messages.append({"role": "user", "content": user_input})
         
         class REPLHooks(OrchestratorHooks):

@@ -42,11 +42,21 @@ class MemoryManager:
         if not key or not value:
             return "Key and value cannot be empty."
 
-        self._memories[key] = value
+        self._memories[key] = {
+            "value": value,
+            "created_at": time.time()
+        }
 
         # Enforce max memory count
         if len(self._memories) > MAX_MEMORIES:
-            oldest = sorted(self._memories.items(), key=lambda x: x[0])[:len(self._memories) - MAX_MEMORIES]
+            def get_timestamp(item):
+                val = item[1]
+                if isinstance(val, dict):
+                    return val.get("created_at", 0)
+                return 0
+            
+            # Sort by timestamp (oldest first)
+            oldest = sorted(self._memories.items(), key=get_timestamp)[:len(self._memories) - MAX_MEMORIES]
             for k, _ in oldest:
                 del self._memories[k]
 
@@ -62,10 +72,19 @@ class MemoryManager:
         return f"No memory found for: {key}"
 
     def get(self, key: str) -> Optional[str]:
-        return self._memories.get(key.strip().lower().replace(" ", "_")[:40])
+        val = self._memories.get(key.strip().lower().replace(" ", "_")[:40])
+        if isinstance(val, dict):
+            return val.get("value")
+        return val
 
     def list(self) -> Dict[str, str]:
-        return dict(sorted(self._memories.items()))
+        res = {}
+        for k, v in self._memories.items():
+            if isinstance(v, dict):
+                res[k] = v.get("value", "")
+            else:
+                res[k] = v
+        return dict(sorted(res.items()))
 
     def get_relevant_context(self, query: str = "") -> str:
         if not self._memories:
@@ -75,14 +94,18 @@ class MemoryManager:
             query_lower = query.lower()
             terms = re.findall(r'\w+', query_lower)
             scored = []
-            for key, value in self._memories.items():
+            for key, val in self._memories.items():
+                value = val.get("value", "") if isinstance(val, dict) else val
                 score = sum(1 for t in terms if t in key.lower() or t in value.lower())
                 if score > 0:
                     scored.append((score, key, value))
             scored.sort(reverse=True)
             relevant = scored[:5]
         else:
-            relevant = [(0, k, v) for k, v in self._memories.items()]
+            relevant = []
+            for k, v in self._memories.items():
+                value = v.get("value", "") if isinstance(v, dict) else v
+                relevant.append((0, k, value))
 
         if relevant:
             lines = ["## Session Memory"]

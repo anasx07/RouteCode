@@ -5,7 +5,6 @@ from .base import BaseTool
 
 if TYPE_CHECKING:
     from ..core import LoomContext
-from ..utils import safe_resolve_path
 
 class FileWriteInput(BaseModel):
     file_path: str = Field(..., description="The path to the file to create or overwrite")
@@ -23,7 +22,10 @@ class FileWriteTool(BaseTool):
 
     def execute(self, file_path: str, content: str, ctx: Optional["LoomContext"] = None, 
                 provider: Optional[Any] = None, **kwargs) -> Dict[str, Any]:
-        resolved, error = safe_resolve_path(file_path)
+        if ctx is None:
+            return {"success": False, "error": "Context not found"}
+            
+        resolved, error = ctx.path_guard.resolve(file_path)
         if error:
             return {"success": False, "error": error}
 

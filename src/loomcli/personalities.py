@@ -1,5 +1,6 @@
 import os
 import re
+import time
 from pathlib import Path
 from typing import Optional
 from .config import CONFIG_DIR
@@ -51,9 +52,28 @@ BUILTIN_PERSONALITIES = {
 }
 
 
+_personality_cache: dict = None
+_personality_cache_mtime: float = 0.0
 
 
 def load_personalities() -> dict:
+    """
+    Loads all personalities (builtin and custom).
+    Uses MTIME-based caching for better performance.
+    """
+    global _personality_cache, _personality_cache_mtime
+    
+    try:
+        current_mtime = 0.0
+        for d in PERSONALITY_DIRS:
+            if d.exists():
+                current_mtime = max(current_mtime, d.stat().st_mtime)
+    except Exception:
+        current_mtime = time.time()
+
+    if _personality_cache is not None and current_mtime <= _personality_cache_mtime:
+        return _personality_cache
+
     personalities = {}
     for name, p in BUILTIN_PERSONALITIES.items():
         personalities[name] = p
@@ -63,8 +83,6 @@ def load_personalities() -> dict:
             for f in sorted(base.glob("*.md")):
                 try:
                     fm, body = parse_frontmatter(f.read_text(encoding="utf-8"))
-                    # Normalize keys to lower case and strip quotes from values
-                    fm = {k.lower(): v.strip('"').strip("'") for k, v in fm.items()}
                     
                     name = fm.get("name", f.stem)
                     personalities[name] = Personality(
@@ -75,6 +93,9 @@ def load_personalities() -> dict:
                     )
                 except Exception:
                     pass
+    
+    _personality_cache = personalities
+    _personality_cache_mtime = current_mtime
     return personalities
 
 

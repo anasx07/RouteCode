@@ -2,9 +2,6 @@ import os
 import re
 from typing import Optional, Dict, Tuple, Any
 
-DEFAULT_WORKSPACE = os.path.abspath(os.getcwd())
-
-
 def parse_frontmatter(text: str) -> Tuple[Dict[str, str], str]:
     """
     Parses YAML-like frontmatter from a string.
@@ -29,7 +26,8 @@ def parse_frontmatter(text: str) -> Tuple[Dict[str, str], str]:
     for line in frontmatter_raw.split('\n'):
         if ':' in line:
             key, value = line.split(':', 1)
-            metadata[key.strip()] = value.strip()
+            # Normalize: lowercase keys and strip quotes/whitespace from values
+            metadata[key.strip().lower()] = value.strip().strip('"').strip("'")
             
     return metadata, content
 
@@ -41,7 +39,7 @@ def safe_resolve_path(file_path: str, workspace: Optional[str] = None) -> tuple:
     On success, error_message is None.
     On failure, resolved_absolute_path is None.
     """
-    ws = os.path.abspath(workspace or DEFAULT_WORKSPACE)
+    ws = os.path.abspath(workspace or os.getcwd())
     try:
         joined = os.path.join(ws, file_path) if not os.path.isabs(file_path) else file_path
         resolved = os.path.abspath(os.path.normpath(joined))

@@ -35,7 +35,9 @@ class ContextManager:
             compacted = self.microcompact(history.get_messages())
             if len(compacted) < original_len:
                 history.set_messages(compacted)
-                self.ctx.state.tokens_used = 0  # Force recalculation
+                # Recalculate tokens for the retained history
+                retained_content = " ".join(m.get("content", "") or "" for m in compacted)
+                self.ctx.state.tokens_used = count_tokens(retained_content, model)
                 self.ctx.state.reset_context_warning()
                 bus.emit("context.compacted", type="micro", saved=original_len - len(compacted))
                 return True
@@ -119,13 +121,13 @@ class ContextManager:
         )
  
         try:
-            from ..tools.task import _run_sub_agent
+            from ..tools.task import _run_sub_agent_async
             from ..task_manager import task_manager
             task_id = f"c{abs(hash(compact_prompt)) % 10**7}"
             task_manager.create("Context compaction", None, task_id)
             
-            # Run in thread to not block
-            asyncio.create_task(asyncio.to_thread(_run_sub_agent, compact_prompt, 3, task_id, self.ctx))
+            # Run as async task on the main loop
+            asyncio.create_task(_run_sub_agent_async(compact_prompt, 3, task_id, self.ctx))
             return True
         except Exception:
             return False

@@ -82,6 +82,15 @@ def apply_theme(name: str = "lava"):
     # Notify listeners of the theme change
     from ..core import bus
     bus.emit("ui.theme_changed", name=name)
+    
+    # If a prompt_toolkit Application is running (e.g., a dialog), force it to re-render
+    try:
+        from prompt_toolkit.application import get_app
+        app = get_app()
+        if app:
+            app.invalidate()
+    except Exception:
+        pass
 
 def get_dialog_style():
     """Returns a dynamic prompt_toolkit Style for interactive dialogs based on current theme."""
@@ -90,21 +99,29 @@ def get_dialog_style():
     accent = theme.get("accent", "#ffaf00")
     
     return Style.from_dict({
+        "": f"bg:{bg}",
         "dialog": f"bg:{bg} #ffffff",
         "dialog.body": f"bg:{bg} #ffffff",
         "dialog.shadow": "bg:#080808",
         "dialog.border": accent,
         "dialog.title": f"bold {accent}",
-        "button": f"bg:{bg} {accent}",
-        "button.focused": f"bg:{accent} #000000 bold",
+        "button": f"bg:#111111 {accent}",
+        "button.focused": f"bg:{accent} #ffffff bold",
         "button.arrow": accent,
         "radiolist": f"bg:{bg} #ffffff",
         "radiolist.radio": accent,
-        "radiolist.radio.focused": f"bg:{accent} #000000 bold",
-        "radiolist.item.focused": f"bg:{accent} #000000 bold",
+        "radiolist.radio.focused": f"bg:{accent} #ffffff bold",
+        "radiolist.item.focused": f"bg:{accent} #ffffff bold",
         "input-field": "bg:#000000 #ffffff",
         "input-field.focused": f"bg:#000000 #ffffff border:{accent}",
         "label": "#ffffff",
         "dialog-frame.label": f"bg:#111111 {accent}",
-        "background": "bg:#0d0d0d", 
+        "background": f"bg:{bg}", 
+        "container": f"bg:{bg}",
+        "title": "bold #ffffff",
+        "esc": "dim #888888",
+        "search": f"fg:#888888 bg:{bg}",
+        "menu-item": "#888888",
+        "menu-item-focused": f"bg:{accent} #ffffff bold",
+        "menu-item-active": f"bold {accent}",
     })

@@ -44,17 +44,6 @@ class BaseTool(ABC):
     def execute(self, ctx: Optional["LoomContext"] = None, provider: Optional[Any] = None, **kwargs) -> Any:
         pass
 
-    def validate_path(self, path: str) -> bool:
-        """
-        Prevents path traversal by ensuring the path is within the current working directory.
-        """
-        import os
-        try:
-            cwd = os.path.realpath(os.getcwd())
-            target = os.path.realpath(os.path.abspath(path))
-            return target.startswith(cwd)
-        except Exception:
-            return False
 
 
 HookFn = Callable[[str, Dict], None]

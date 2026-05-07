@@ -44,34 +44,46 @@ def _build_memory_section(ctx: 'LoomContext') -> str:
     return ctx.memory.get_relevant_context()
 
 
+_prompt_file_cache: dict = {}
+_prompt_file_mtimes: dict = {}
+
+async def _get_file_content_cached(filename: str) -> Optional[str]:
+    """Helper to read file content with MTIME caching."""
+    if not os.path.exists(filename):
+        return None
+    
+    try:
+        mtime = os.stat(filename).st_mtime
+        if filename in _prompt_file_cache and mtime <= _prompt_file_mtimes.get(filename, 0):
+            return _prompt_file_cache[filename]
+        
+        import aiofiles
+        async with aiofiles.open(filename, mode='r', encoding="utf-8") as f:
+            content = await f.read()
+            _prompt_file_cache[filename] = content
+            _prompt_file_mtimes[filename] = mtime
+            return content
+    except Exception:
+        return None
+
 async def _build_loom_section_async() -> Optional[str]:
-    import aiofiles
-    if os.path.exists("LOOM.md"):
-        try:
-            async with aiofiles.open("LOOM.md", mode='r', encoding="utf-8") as f:
-                content = await f.read()
-                if "## System Prompt" in content:
-                    section = content.split("## System Prompt", 1)[1]
-                    if "## " in section:
-                        section = section.split("## ", 1)[0]
-                    return section.strip()
-                return "## Project Instructions\n" + content
-        except Exception:
-            return None
+    content = await _get_file_content_cached("LOOM.md")
+    if content:
+        if "## System Prompt" in content:
+            section = content.split("## System Prompt", 1)[1]
+            if "## " in section:
+                section = section.split("## ", 1)[0]
+            return section.strip()
+        return "## Project Instructions\n" + content
     return None
 
 
 async def _build_context_section_async() -> str:
-    import aiofiles
     parts = []
     for filename in ["README.md", "pyproject.toml"]:
-        if os.path.exists(filename):
-            try:
-                async with aiofiles.open(filename, mode="r", encoding="utf-8") as f:
-                    content = await f.read()
-                    parts.append(f"--- {filename} ---\n{content}")
-            except Exception:
-                pass
+        content = await _get_file_content_cached(filename)
+        if content:
+            parts.append(f"--- {filename} ---\n{content}")
     if parts:
         return "## Project Context\n" + "\n".join(parts)
     return ""

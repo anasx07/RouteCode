@@ -1,5 +1,6 @@
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from .config import CONFIG_DIR
@@ -37,8 +38,6 @@ class Skill:
             return
 
         for key, value in metadata.items():
-            key = key.lower()
-            value = value.strip('"').strip("'")
             if key == "name":
                 self.name = value
             elif key == "description":
@@ -55,7 +54,30 @@ class Skill:
         self.prompt = body.strip()
 
 
+_skill_cache: Dict[str, Skill] = None
+_skill_cache_mtime: float = 0.0
+
+
 def discover_skills() -> Dict[str, Skill]:
+    """
+    Discovers all available skills from the configured skill directories.
+    Uses MTIME-based caching to avoid expensive filesystem scans.
+    """
+    global _skill_cache, _skill_cache_mtime
+    
+    # Calculate the max MTIME across all existing skill directories
+    try:
+        current_mtime = 0.0
+        for d in SKILL_DIRS:
+            if d.exists():
+                current_mtime = max(current_mtime, d.stat().st_mtime)
+    except Exception:
+        # Fallback to re-scanning if stat fails
+        current_mtime = time.time()
+
+    if _skill_cache is not None and current_mtime <= _skill_cache_mtime:
+        return _skill_cache
+
     skills = {}
     for skill_dir in SKILL_DIRS:
         if skill_dir.exists():
@@ -65,6 +87,9 @@ def discover_skills() -> Dict[str, Skill]:
                     skills[skill.name] = skill
                 except Exception:
                     pass
+    
+    _skill_cache = skills
+    _skill_cache_mtime = current_mtime
     return skills
 
 
