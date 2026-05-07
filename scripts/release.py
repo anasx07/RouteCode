@@ -63,7 +63,9 @@ def git_out(*args: str) -> str:
 def find_tool(name: str) -> Optional[str]:
     """Find a tool, prioritising the local venv."""
     bin_dir = "Scripts" if os.name == "nt" else "bin"
-    venv_tool = REPO_ROOT / "venv" / bin_dir / (f"{name}.exe" if os.name == "nt" else name)
+    venv_tool = (
+        REPO_ROOT / "venv" / bin_dir / (f"{name}.exe" if os.name == "nt" else name)
+    )
     if venv_tool.exists():
         return str(venv_tool)
     return shutil.which(name)
@@ -170,7 +172,7 @@ def fail(msg: str):
     sys.exit(1)
 
 
-def run_step(label: str, *cmd: str) -> bool:
+def run_step(label: str, *cmd: str, hint: str = "") -> bool:
     """Run a shell command with a spinner. Returns True on success."""
     with Live(
         Spinner("dots", text=f"  [dim]{label}[/dim]"),
@@ -182,7 +184,10 @@ def run_step(label: str, *cmd: str) -> bool:
         ok(label)
         return True
     else:
-        fail(f"{label} failed\n{r.stderr.strip() or r.stdout.strip()}")
+        msg = f"{label} failed\n{r.stderr.strip() or r.stdout.strip()}"
+        if hint:
+            msg += f"\n\n  [bold yellow]💡 {hint}[/bold yellow]"
+        fail(msg)
         return False
 
 
@@ -365,7 +370,13 @@ def maybe_run_lint(n_steps: int, cur_step: int) -> int:
         console.print()
         return cur_step + 1
 
-    if run_step("Ruff check", ruff, "check", "."):
+    if run_step(
+        "Ruff check",
+        ruff,
+        "check",
+        ".",
+        hint=".\\venv\\Scripts\\python.exe -m ruff check . --fix",
+    ):
         console.print()
 
     return cur_step + 1
@@ -380,7 +391,14 @@ def maybe_run_format(n_steps: int, cur_step: int) -> int:
         console.print()
         return cur_step + 1
 
-    if run_step("Ruff format check", ruff, "format", "--check", "."):
+    if run_step(
+        "Ruff format check",
+        ruff,
+        "format",
+        "--check",
+        ".",
+        hint=".\\venv\\Scripts\\python.exe -m ruff format .",
+    ):
         console.print()
 
     return cur_step + 1
