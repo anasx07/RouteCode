@@ -65,4 +65,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths    = ["tests"]
+testpaths = ["tests"]
+norecursedirs = [".git", ".loomcli", "venv", ".venv", "build", "dist"]
+addopts = "--ignore=test.txt --ignore=test_progress.txt"
+python_files = "test_*.py"

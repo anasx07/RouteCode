@@ -3,14 +3,12 @@ import json
 from pathlib import Path
 from typing import Dict, Optional, Any
 
-from .core.storage import AtomicJsonStore
-from .agents.registry import PROVIDER_MAP
-
 CONFIG_DIR = Path.home() / ".loomcli"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 class Config:
     def __init__(self):
+        from .core.storage import AtomicJsonStore
         self._provider: str = os.environ.get("LOOM_PROVIDER", "openrouter")
         self._model: str = os.environ.get("LOOM_MODEL", "anthropic/claude-3.5-sonnet")
         self.personality: str = os.environ.get("LOOM_PERSONALITY", "default")
@@ -65,6 +63,7 @@ class Config:
             self.favorites = data.get("favorites", [])
 
     def _load_env_keys(self):
+        from .agents.registry import PROVIDER_MAP
         for provider in PROVIDER_MAP.keys():
             key = os.environ.get(f"LOOM_{provider.upper()}_KEY")
             if key:
