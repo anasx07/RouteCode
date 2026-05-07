@@ -11,26 +11,27 @@ class LiteLLMProvider(AIProvider):
     """
     Standardized AI provider using LiteLLM for cross-provider compatibility.
     """
-    def __init__(self, api_key: str, provider_name: str):
+    def __init__(self, api_key: str, provider_name: str, base_url: Optional[str] = None, models: Optional[List[Dict[str, Any]]] = None):
         super().__init__(api_key)
         self.provider_name = provider_name
+        self.base_url = base_url
+        self.models_list = models
         # LiteLLM uses provider-specific model names like "anthropic/claude-3-opus-20240229"
         # We'll prepend the provider if it's not already there.
 
     async def ask(self, messages: List[Dict[str, Any]], model: str, stream: bool = True, tools: Optional[List[Dict[str, Any]]] = None) -> AsyncGenerator[Dict[str, Any], None]:
-        # Prepare the model string for LiteLLM if it doesn't already have a prefix
+        # Prepare the model string for LiteLLM
         litellm_model = model
-        if "/" not in model and self.provider_name:
-            if self.provider_name == "google":
-                 litellm_model = f"gemini/{model}"
-            elif self.provider_name == "openai":
-                 litellm_model = f"openai/{model}"
-            elif self.provider_name == "anthropic":
-                 litellm_model = f"anthropic/{model}"
-            elif self.provider_name == "deepseek":
-                 litellm_model = f"deepseek/{model}"
-            elif self.provider_name == "openrouter":
-                 litellm_model = f"openrouter/{model}"
+        if self.provider_name:
+            # Common LiteLLM provider prefixes
+            prefixes = ["openai/", "anthropic/", "gemini/", "deepseek/", "openrouter/", "vertex_ai/", "groq/", "mistral/"]
+            has_prefix = any(model.startswith(p) for p in prefixes)
+            
+            if not has_prefix:
+                if self.provider_name == "google":
+                    litellm_model = f"gemini/{model}"
+                else:
+                    litellm_model = f"{self.provider_name}/{model}"
 
         # LiteLLM needs the API key. We can pass it directly or set it in environment.
         # Passing it in acompletion is safer for multiple providers.
@@ -42,6 +43,9 @@ class LiteLLMProvider(AIProvider):
             "num_retries": 3,
             "timeout": 60,
         }
+        
+        if self.base_url:
+            completion_args["base_url"] = self.base_url
 
         if stream:
             completion_args["stream_options"] = {"include_usage": True}
@@ -117,6 +121,9 @@ class LiteLLMProvider(AIProvider):
         """
         Return a list of common models for the active provider.
         """
+        if self.models_list:
+            return self.models_list
+
         defaults = {
             "openai": [
                 {"id": "gpt-4o", "name": "GPT-4o (Omni)"},
