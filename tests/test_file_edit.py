@@ -1,4 +1,3 @@
-import os
 import pytest
 from dataclasses import dataclass
 from loomcli.tools.file_edit import FileEditTool
