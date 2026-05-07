@@ -60,15 +60,21 @@ def git_out(*args: str) -> str:
     return git(*args).stdout.strip()
 
 
-def find_tool(name: str) -> Optional[str]:
-    """Find a tool, prioritising the local venv."""
+def find_tool_cmd(name: str) -> list[str]:
+    """Return the command list to run a tool via the local venv python."""
     bin_dir = "Scripts" if os.name == "nt" else "bin"
-    venv_tool = (
-        REPO_ROOT / "venv" / bin_dir / (f"{name}.exe" if os.name == "nt" else name)
+    venv_python = (
+        REPO_ROOT / "venv" / bin_dir / ("python.exe" if os.name == "nt" else "python")
     )
-    if venv_tool.exists():
-        return str(venv_tool)
-    return shutil.which(name)
+
+    if venv_python.exists():
+        return [str(venv_python), "-m", name]
+
+    # Fallback to system python -m if tool is available in path
+    if shutil.which(name):
+        return [sys.executable, "-m", name]
+
+    return []
 
 
 def current_branch() -> str:
@@ -172,7 +178,7 @@ def fail(msg: str):
     sys.exit(1)
 
 
-def run_step(label: str, *cmd: str, hint: str = "") -> bool:
+def run_step(label: str, *cmd: str, hint: str = "", exit_on_fail: bool = True) -> bool:
     """Run a shell command with a spinner. Returns True on success."""
     with Live(
         Spinner("dots", text=f"  [dim]{label}[/dim]"),
@@ -184,6 +190,9 @@ def run_step(label: str, *cmd: str, hint: str = "") -> bool:
         ok(label)
         return True
     else:
+        if not exit_on_fail:
+            return False
+
         msg = f"{label} failed\n{r.stderr.strip() or r.stdout.strip()}"
         if hint:
             msg += f"\n\n  [bold yellow]💡 {hint}[/bold yellow]"
@@ -364,43 +373,65 @@ def show_changelog(new_ver: Version, last_tag: Optional[str], n_steps: int):
 def maybe_run_lint(n_steps: int, cur_step: int) -> int:
     step(cur_step, n_steps, "Run linting (ruff)")
 
-    ruff = find_tool("ruff")
-    if not ruff:
+    cmd = find_tool_cmd("ruff")
+    if not cmd:
         warn("ruff not found — skipping.")
         console.print()
         return cur_step + 1
 
-    if run_step(
+    success = run_step(
         "Ruff check",
-        ruff,
+        *cmd,
         "check",
         ".",
-        hint=".\\venv\\Scripts\\python.exe -m ruff check . --fix",
-    ):
-        console.print()
+        exit_on_fail=False,
+    )
 
+    if not success:
+        if Confirm.ask(
+            "  [yellow]Linting issues found. Run 'ruff check . --fix'?[/yellow]",
+            default=True,
+        ):
+            run_step("Applying fixes", *cmd, "check", ".", "--fix")
+            # Recurse to re-verify
+            return maybe_run_lint(n_steps, cur_step)
+        else:
+            fail("Linting failed. Please fix issues and try again.")
+
+    console.print()
     return cur_step + 1
 
 
 def maybe_run_format(n_steps: int, cur_step: int) -> int:
     step(cur_step, n_steps, "Run formatting check (ruff)")
 
-    ruff = find_tool("ruff")
-    if not ruff:
+    cmd = find_tool_cmd("ruff")
+    if not cmd:
         warn("ruff not found — skipping.")
         console.print()
         return cur_step + 1
 
-    if run_step(
+    success = run_step(
         "Ruff format check",
-        ruff,
+        *cmd,
         "format",
         "--check",
         ".",
-        hint=".\\venv\\Scripts\\python.exe -m ruff format .",
-    ):
-        console.print()
+        exit_on_fail=False,
+    )
 
+    if not success:
+        if Confirm.ask(
+            "  [yellow]Formatting issues found. Run 'ruff format .'?[/yellow]",
+            default=True,
+        ):
+            run_step("Reformatting code", *cmd, "format", ".")
+            # Recurse to re-verify
+            return maybe_run_format(n_steps, cur_step)
+        else:
+            fail("Formatting check failed. Please format code and try again.")
+
+    console.print()
     return cur_step + 1
 
 
@@ -417,15 +448,15 @@ def maybe_run_tests(n_steps: int, cur_step: int) -> int:
         console.print()
         return cur_step + 1
 
-    pytest = find_tool("pytest")
-    if not pytest:
+    cmd = find_tool_cmd("pytest")
+    if not cmd:
         warn("pytest not found — skipping.")
         console.print()
         return cur_step + 1
 
     console.print()
     result = subprocess.run(
-        [pytest, "--tb=short", "-q"],
+        [*cmd, "--tb=short", "-q"],
         cwd=REPO_ROOT,
     )
     console.print()
