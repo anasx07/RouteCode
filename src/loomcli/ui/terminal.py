@@ -4,16 +4,20 @@ import atexit
 import signal
 from ..utils import parse_hex_color
 
+
 def _cleanup_terminal():
     """Ensure terminal is left in a clean state (e.g., mouse tracking disabled)."""
     TerminalManager.disable_mouse_tracking()
 
+
 atexit.register(_cleanup_terminal)
+
 
 # Handle termination signals to ensure cleanup
 def _signal_handler(signum, frame):
     _cleanup_terminal()
     sys.exit(signum)
+
 
 try:
     signal.signal(signal.SIGTERM, _signal_handler)
@@ -21,9 +25,10 @@ except (AttributeError, ValueError):
     # Some platforms or environments don't support SIGTERM
     pass
 
+
 class TerminalManager:
     """Unified manager for low-level terminal manipulation and state."""
-    
+
     @staticmethod
     def clear():
         """Clears the screen and resets cursor position using ANSI escapes."""

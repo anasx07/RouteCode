@@ -6,6 +6,7 @@ from .history import ConversationHistory
 from .storage import AtomicJsonStore
 from ..config import CONFIG_DIR
 
+
 def count_tokens(text: str, model: Optional[str] = None) -> int:
     """Delegates to the centralized cost_estimator."""
     return cost_estimator.count_tokens(text, model or "gpt-4")
@@ -24,20 +25,30 @@ class SessionState:
     provider: Optional[str] = None
     model: Optional[str] = None
 
-    def add_tokens(self, count: int, model: Optional[str] = None, input_tokens: Optional[int] = None, output_tokens: Optional[int] = None):
+    def add_tokens(
+        self,
+        count: int,
+        model: Optional[str] = None,
+        input_tokens: Optional[int] = None,
+        output_tokens: Optional[int] = None,
+    ):
         """
         Updates session statistics with new token usage.
         If input_tokens/output_tokens are provided, uses them for precise costing.
         Otherwise, treats 'count' as total and estimates a 50/50 split.
         """
         if input_tokens is not None and output_tokens is not None:
-            self.tokens_used += (input_tokens + output_tokens)
-            cost, ctx_limit, _ = cost_estimator.calculate_cost(input_tokens, output_tokens, model or "")
+            self.tokens_used += input_tokens + output_tokens
+            cost, ctx_limit, _ = cost_estimator.calculate_cost(
+                input_tokens, output_tokens, model or ""
+            )
         else:
             self.tokens_used += count
             # Estimate 50/50 split if only total is provided
-            cost, ctx_limit, _ = cost_estimator.calculate_cost(count // 2, count // 2, model or "")
-        
+            cost, ctx_limit, _ = cost_estimator.calculate_cost(
+                count // 2, count // 2, model or ""
+            )
+
         self.estimated_cost += cost
 
         if not self.context_warned and ctx_limit > 0:
@@ -70,7 +81,7 @@ class SessionState:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> 'SessionState':
+    def from_dict(cls, data: dict) -> "SessionState":
         return cls(
             tokens_used=data.get("tokens_used", 0),
             estimated_cost=data.get("estimated_cost", 0.0),
@@ -81,7 +92,7 @@ class SessionState:
             session_messages=ConversationHistory(data.get("messages", [])),
         )
 
-    def merge(self, other: 'SessionState'):
+    def merge(self, other: "SessionState"):
         """Aggregates statistics from another session state (e.g. from a sub-agent)."""
         self.tokens_used += other.tokens_used
         self.estimated_cost += other.estimated_cost
@@ -128,4 +139,3 @@ async def load_session_async(name: str) -> Optional[SessionState]:
     if not data:
         return None
     return SessionState.from_dict(data)
-

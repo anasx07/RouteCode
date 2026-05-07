@@ -1,11 +1,13 @@
 from typing import List, Dict, Any, Optional
 from .events import bus
 
+
 class ConversationHistory:
     """
     Unified manager for conversation messages.
     Wraps a list of messages and provides safe mutation methods.
     """
+
     def __init__(self, messages: Optional[List[Dict[str, Any]]] = None):
         self._messages: List[Dict[str, Any]] = messages if messages is not None else []
 

@@ -2,11 +2,13 @@ import io
 from typing import Optional
 from rich.console import Console
 
+
 class ConsoleProxy:
     """
-    A proxy for the Rich Console that allows the underlying instance to be 
+    A proxy for the Rich Console that allows the underlying instance to be
     swapped (e.g., during theme changes) without breaking existing references.
     """
+
     def __init__(self):
         self._instance: Optional[Console] = None
 
@@ -25,6 +27,7 @@ class ConsoleProxy:
     def __exit__(self, *args):
         return self._instance.__exit__(*args)
 
+
 # Global console proxy instances
 console = ConsoleProxy()
 mirror_console = ConsoleProxy()
@@ -32,17 +35,22 @@ mirror_console = ConsoleProxy()
 # Internal state for terminal mirroring
 _mirror_output = io.StringIO()
 
+
 def print_info(message: str):
     console.print(f"[info]ℹ[/info] {message}")
+
 
 def print_success(message: str):
     console.print(f"[success]✔[/success] {message}")
 
+
 def print_warning(message: str):
     console.print(f"[warning]⚠[/warning] {message}")
 
+
 def print_error(message: str):
     console.print(f"[error]✘[/error] {message}")
+
 
 def print_step(message: str):
     console.print(f"[accent]➤[/accent] {message}")

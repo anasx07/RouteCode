@@ -4,6 +4,7 @@ from rich.table import Table
 from ..ui import print_success, print_error
 from ..core import LoomContext
 
+
 def handle_tasks(args: List[str], ctx: LoomContext):
     tasks = ctx.task_manager.list()
     if not tasks:
@@ -15,11 +16,22 @@ def handle_tasks(args: List[str], ctx: LoomContext):
     table.add_column("Status", style="bold")
     table.add_column("Age")
     for t in tasks:
-        status_style = {"running": "bold green", "completed": "dim", "failed": "bold red", "killed": "dim"}.get(t["status"], "")
+        status_style = {
+            "running": "bold green",
+            "completed": "dim",
+            "failed": "bold red",
+            "killed": "dim",
+        }.get(t["status"], "")
         elapsed = time.time() - t["created_at"]
-        age = f"{elapsed:.0f}s" if elapsed < 120 else f"{elapsed/60:.0f}m"
-        table.add_row(t["task_id"], t["description"][:60], f"[{status_style}]{t['status']}[/{status_style}]", age)
+        age = f"{elapsed:.0f}s" if elapsed < 120 else f"{elapsed / 60:.0f}m"
+        table.add_row(
+            t["task_id"],
+            t["description"][:60],
+            f"[{status_style}]{t['status']}[/{status_style}]",
+            age,
+        )
     ctx.console.print(table)
+
 
 def handle_task_stop(args: List[str], ctx: LoomContext):
     if not args:

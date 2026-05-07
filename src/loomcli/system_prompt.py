@@ -42,31 +42,36 @@ Tools like `bash`, `file_edit`, `file_write` run serially (one at a time).
 When you have multiple read operations, batch them together in one response."""
 
 
-def _build_memory_section(ctx: 'LoomContext') -> str:
+def _build_memory_section(ctx: "LoomContext") -> str:
     return ctx.memory.get_relevant_context()
 
 
 _prompt_file_cache: dict = {}
 _prompt_file_mtimes: dict = {}
 
+
 async def _get_file_content_cached(filename: str) -> Optional[str]:
     """Helper to read file content with MTIME caching."""
     if not os.path.exists(filename):
         return None
-    
+
     try:
         mtime = os.stat(filename).st_mtime
-        if filename in _prompt_file_cache and mtime <= _prompt_file_mtimes.get(filename, 0):
+        if filename in _prompt_file_cache and mtime <= _prompt_file_mtimes.get(
+            filename, 0
+        ):
             return _prompt_file_cache[filename]
-        
+
         import aiofiles
-        async with aiofiles.open(filename, mode='r', encoding="utf-8") as f:
+
+        async with aiofiles.open(filename, mode="r", encoding="utf-8") as f:
             content = await f.read()
             _prompt_file_cache[filename] = content
             _prompt_file_mtimes[filename] = mtime
             return content
     except Exception:
         return None
+
 
 async def _build_loom_section_async() -> Optional[str]:
     content = await _get_file_content_cached("LOOM.md")
@@ -93,33 +98,38 @@ async def _build_context_section_async() -> str:
 
 async def _build_git_section_async() -> str:
     from .git import get_git_context_async
+
     return await get_git_context_async()
 
 
 def _build_skill_section() -> str:
     from .skills import get_skill_prompts
+
     return get_skill_prompts()
 
 
 def _build_env_section() -> str:
     import getpass
     import platform
+
     user = getpass.getuser()
     plat = platform.platform()
     cwd = os.getcwd()
     is_git = os.path.isdir(os.path.join(cwd, ".git")) if cwd else False
     return f"""<env>
 Working directory: {cwd}
-Is directory a git repo: {'Yes' if is_git else 'No'}
+Is directory a git repo: {"Yes" if is_git else "No"}
 Platform: {plat}
 User: {user}
 </env>"""
 
 
-async def compute_system_prompt(ctx: 'LoomContext') -> str:
+async def compute_system_prompt(ctx: "LoomContext") -> str:
     from .personalities import get_personality_section, get_active_personality
+
     if ctx.config.personality:
         from .personalities import load_personalities
+
         pers = load_personalities().get(ctx.config.personality)
     else:
         pers = get_active_personality()
@@ -129,14 +139,14 @@ async def compute_system_prompt(ctx: 'LoomContext') -> str:
     ]
     if pers.keep_base_instructions:
         sections.append(_build_behavior_section())
-    
+
     # Gather dynamic sections in parallel
     dynamic_results = await asyncio.gather(
         _build_loom_section_async(),
         _build_git_section_async(),
-        _build_context_section_async()
+        _build_context_section_async(),
     )
-    
+
     loom_sect, git_sect, context_sect = dynamic_results
 
     sections += [

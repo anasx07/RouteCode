@@ -6,11 +6,13 @@ from weakref import WeakSet
 
 logger = logging.getLogger(__name__)
 
+
 class EventBus:
     """
     A lightweight, thread-safe event bus for decoupling LoomCLI subsystems.
     Allows modules to emit events without knowing about their listeners.
     """
+
     def __init__(self):
         self._handlers: Dict[str, List[Callable]] = {}
         self._active_tasks = WeakSet()
@@ -41,7 +43,7 @@ class EventBus:
         """
         if event not in self._handlers:
             return
-            
+
         for handler in self._handlers[event]:
             try:
                 if inspect.iscoroutinefunction(handler):
@@ -57,7 +59,7 @@ class EventBus:
         """
         if event not in self._handlers:
             return
-            
+
         tasks = []
         for handler in self._handlers[event]:
             try:
@@ -67,28 +69,32 @@ class EventBus:
                     handler(**data)
             except Exception as e:
                 logger.error(f"Error in async event handler for {event}: {e}")
-        
+
         if tasks:
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for res in results:
                 if isinstance(res, Exception):
                     logger.error(f"Async error in handler for {event}: {res}")
 
-    def _fire_and_forget(self, handler: Callable, data: Dict[str, Any], event_name: str):
+    def _fire_and_forget(
+        self, handler: Callable, data: Dict[str, Any], event_name: str
+    ):
         try:
             loop = asyncio.get_running_loop()
             task = loop.create_task(handler(**data))
             self._active_tasks.add(task)
             task.add_done_callback(lambda t: self._active_tasks.discard(t))
-            
+
             def _log_error(t):
                 try:
                     t.result()
                 except Exception as e:
                     logger.error(f"Background task error for {event_name}: {e}")
+
             task.add_done_callback(_log_error)
         except RuntimeError:
             pass
+
 
 # Global bus instance
 bus = EventBus()

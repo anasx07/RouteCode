@@ -3,6 +3,7 @@ from ..config import CONFIG_DIR
 
 LOG_FILE = CONFIG_DIR / "loom.log"
 
+
 def setup_logging(level=logging.INFO):
     """
     Configures structured logging for LoomCLI.
@@ -20,9 +21,7 @@ def setup_logging(level=logging.INFO):
     logging.basicConfig(
         level=level,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        handlers=[
-            logging.FileHandler(LOG_FILE, encoding="utf-8")
-        ]
+        handlers=[logging.FileHandler(LOG_FILE, encoding="utf-8")],
     )
 
     # Suppress verbose third-party logs
@@ -31,6 +30,7 @@ def setup_logging(level=logging.INFO):
     logging.getLogger("prompt_toolkit").setLevel(logging.ERROR)
 
     logging.info("Logging initialized. File: %s", LOG_FILE)
+
 
 def get_logger(name: str):
     """Returns a logger for a specific module."""

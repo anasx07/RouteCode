@@ -5,12 +5,14 @@ import aiofiles
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+
 class AtomicJsonStore:
     """
     Unified, crash-safe JSON persistence layer.
-    Ensures that writes are atomic by writing to a temporary file and 
+    Ensures that writes are atomic by writing to a temporary file and
     renaming it to the target path.
     """
+
     def __init__(self, path: Path):
         self.path = Path(path)
         self._ensure_dir()
@@ -22,7 +24,7 @@ class AtomicJsonStore:
         """Loads JSON data from the file. Returns default if file doesn't exist or is invalid."""
         if not self.path.exists():
             return default if default is not None else {}
-        
+
         try:
             return json.loads(self.path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, Exception):
@@ -32,9 +34,9 @@ class AtomicJsonStore:
         """Asynchronously loads JSON data from the file."""
         if not self.path.exists():
             return default if default is not None else {}
-        
+
         try:
-            async with aiofiles.open(self.path, mode='r', encoding='utf-8') as f:
+            async with aiofiles.open(self.path, mode="r", encoding="utf-8") as f:
                 content = await f.read()
                 return json.loads(content)
         except (json.JSONDecodeError, Exception):
@@ -58,7 +60,7 @@ class AtomicJsonStore:
         """Asynchronously saves data atomically to the file."""
         tmp_path = self.path.with_suffix(".tmp")
         try:
-            async with aiofiles.open(tmp_path, mode='w', encoding='utf-8') as f:
+            async with aiofiles.open(tmp_path, mode="w", encoding="utf-8") as f:
                 await f.write(self._serialize(data))
             await asyncio.to_thread(os.replace, tmp_path, self.path)
         except Exception as e:

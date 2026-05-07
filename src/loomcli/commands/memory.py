@@ -3,6 +3,7 @@ from rich.table import Table
 from ..ui import print_success, print_error
 from ..core import LoomContext
 
+
 async def handle_remember(args: List[str], ctx: LoomContext):
     if not args:
         print_error("Usage: /remember <key> <value>")
@@ -16,6 +17,7 @@ async def handle_remember(args: List[str], ctx: LoomContext):
     await ctx.memory._save_async()
     print_success(msg)
 
+
 async def handle_forget(args: List[str], ctx: LoomContext):
     if not args:
         print_error("Usage: /forget <key>")
@@ -24,10 +26,13 @@ async def handle_forget(args: List[str], ctx: LoomContext):
     await ctx.memory._save_async()
     ctx.console.print(f" [dim]{msg}[/dim]")
 
+
 def handle_memories(args: List[str], ctx: LoomContext):
     memories = ctx.memory.list()
     if not memories:
-        ctx.console.print("[dim]No memories saved yet. Use /remember <key> <value> to save one.[/dim]")
+        ctx.console.print(
+            "[dim]No memories saved yet. Use /remember <key> <value> to save one.[/dim]"
+        )
         return
     table = Table(title="Session Memory", show_header=True, header_style="bold cyan")
     table.add_column("Key", style="bold yellow")

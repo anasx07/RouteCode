@@ -7,10 +7,19 @@ from .base import BaseTool
 if TYPE_CHECKING:
     from ..core import LoomContext
 
+
 class GrepInput(BaseModel):
-    pattern: str = Field(..., description="Regex pattern to search for in file contents")
-    include: Optional[str] = Field(None, description="Glob pattern to filter files (e.g., '*.py', '*.{ts,tsx}')")
-    path: Optional[str] = Field(None, description="Directory to search in (defaults to current working directory)")
+    pattern: str = Field(
+        ..., description="Regex pattern to search for in file contents"
+    )
+    include: Optional[str] = Field(
+        None, description="Glob pattern to filter files (e.g., '*.py', '*.{ts,tsx}')"
+    )
+    path: Optional[str] = Field(
+        None,
+        description="Directory to search in (defaults to current working directory)",
+    )
+
 
 class GrepTool(BaseTool):
     name = "grep"
@@ -20,17 +29,29 @@ class GrepTool(BaseTool):
     isReadOnly = True
 
     def prompt(self) -> str:
-        return ("- grep: Search file contents with regex patterns. "
-                "Use include='*.py' to filter by extension. Capped at 50 files. Safe for concurrent use.")
+        return (
+            "- grep: Search file contents with regex patterns. "
+            "Use include='*.py' to filter by extension. Capped at 50 files. Safe for concurrent use."
+        )
 
-    def execute(self, pattern: str, include: Optional[str] = None, path: Optional[str] = None, 
-                ctx: Optional["LoomContext"] = None, provider: Optional[Any] = None, **kwargs) -> Dict[str, Any]:
+    def execute(
+        self,
+        pattern: str,
+        include: Optional[str] = None,
+        path: Optional[str] = None,
+        ctx: Optional["LoomContext"] = None,
+        provider: Optional[Any] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
         import glob as glob_module
 
         try:
             search_root = path or os.getcwd()
             if not os.path.isdir(search_root):
-                return {"success": False, "error": f"Directory not found: {search_root}"}
+                return {
+                    "success": False,
+                    "error": f"Directory not found: {search_root}",
+                }
 
             compiled = re.compile(pattern, re.IGNORECASE)
 
@@ -46,11 +67,45 @@ class GrepTool(BaseTool):
 
             files = [f for f in files if os.path.isfile(f)]
 
-            text_extensions = {".py", ".ts", ".tsx", ".js", ".jsx", ".rs", ".go", ".java",
-                               ".c", ".cpp", ".h", ".hpp", ".cs", ".rb", ".php", ".swift",
-                               ".kt", ".scala", ".md", ".txt", ".json", ".yaml", ".yml",
-                               ".toml", ".cfg", ".ini", ".xml", ".html", ".css", ".scss",
-                               ".sql", ".sh", ".bat", ".ps1", ".env", ".gitignore", ".lock"}
+            text_extensions = {
+                ".py",
+                ".ts",
+                ".tsx",
+                ".js",
+                ".jsx",
+                ".rs",
+                ".go",
+                ".java",
+                ".c",
+                ".cpp",
+                ".h",
+                ".hpp",
+                ".cs",
+                ".rb",
+                ".php",
+                ".swift",
+                ".kt",
+                ".scala",
+                ".md",
+                ".txt",
+                ".json",
+                ".yaml",
+                ".yml",
+                ".toml",
+                ".cfg",
+                ".ini",
+                ".xml",
+                ".html",
+                ".css",
+                ".scss",
+                ".sql",
+                ".sh",
+                ".bat",
+                ".ps1",
+                ".env",
+                ".gitignore",
+                ".lock",
+            }
 
             results = []
             max_results = 50
@@ -74,11 +129,16 @@ class GrepTool(BaseTool):
                                     break
 
                         if matches_in_file:
-                            results.append({
-                                "file": fp,
-                                "matches": [{"line": ln, "content": lc} for ln, lc in matches_in_file],
-                                "match_count": len(matches_in_file)
-                            })
+                            results.append(
+                                {
+                                    "file": fp,
+                                    "matches": [
+                                        {"line": ln, "content": lc}
+                                        for ln, lc in matches_in_file
+                                    ],
+                                    "match_count": len(matches_in_file),
+                                }
+                            )
                 except Exception:
                     continue
 
@@ -86,7 +146,7 @@ class GrepTool(BaseTool):
                 "success": True,
                 "results": results,
                 "num_results": len(results),
-                "truncated": len(results) >= max_results
+                "truncated": len(results) >= max_results,
             }
         except Exception as e:
             return {"success": False, "error": f"Error during grep: {str(e)}"}

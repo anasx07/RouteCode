@@ -21,12 +21,15 @@ from prompt_toolkit.filters import has_focus
 
 from .core import get_logger, SessionState, LoomContext, bus
 from .ui import (
-    console, print_welcome_screen, 
+    console,
+    print_welcome_screen,
     print_status_line,
-    print_tool_call, print_tool_result, print_session_stats,
+    print_tool_call,
+    print_tool_result,
+    print_session_stats,
     get_tool_label,
     get_theme_bg,
-    print_diff
+    print_diff,
 )
 from .commands import execute_command, get_command_metadata
 from .tools import registry
@@ -39,11 +42,13 @@ from .orchestrator import AgentOrchestrator, OrchestratorHooks
 
 logger = get_logger(__name__)
 
+
 class LoomVt100Output(Vt100_Output):
     """
     Custom VT100 output that ensures the theme background color is preserved
     during screen clearing and attribute resets.
     """
+
     def erase_end_of_line(self):
         bg = get_theme_bg()
         try:
@@ -63,20 +68,19 @@ class LoomVt100Output(Vt100_Output):
             pass
 
 
-
-
-
-
 class SimpleAnsiLexer(Lexer):
     def lex_document(self, document):
         def get_line(i):
             return ANSI(document.lines[i]).__pt_formatted_text__()
+
         return get_line
+
 
 class LoomREPL:
     def __init__(self):
         command_metadata = get_command_metadata()
         from .skills import discover_skills
+
         skill_commands = {}
         for skill_name in discover_skills():
             skill_commands[f"/{skill_name}"] = "Run user-defined skill"
@@ -85,19 +89,17 @@ class LoomREPL:
             list(all_commands.keys()),
             meta_dict=all_commands,
             ignore_case=True,
-            sentence=True
+            sentence=True,
         )
 
         self.history_buffer = Buffer(read_only=False)
         self.input_buffer = Buffer(
-            multiline=False, 
-            completer=self.completer,
-            complete_while_typing=True
+            multiline=False, completer=self.completer, complete_while_typing=True
         )
-        
+
         # Setup redirection for rich console
         self._output_buffer = StringIO()
-        self._rich_console = console # The shared console
+        self._rich_console = console  # The shared console
         # Force colors and reasonable width for the intercepted console
         self._rich_console.force_terminal = True
         self._rich_console.color_system = "truecolor"
@@ -105,29 +107,33 @@ class LoomREPL:
             self._rich_console.width = os.get_terminal_size().columns
         except Exception:
             self._rich_console.width = 120
-            
+
         # We'll use a hook to capture output
         self._original_print = self._rich_console.print
         self._rich_console.print = self._intercepted_print
-        self.history_buffer.text = "" # Clear any initial junk
+        self.history_buffer.text = ""  # Clear any initial junk
 
-        self.style = Style.from_dict({
-            "":                "bg:#1a1a2e #ffffff",
-            "history":         "bg:#1a1a2e",
-            "input-area":      "bg:#1a1a2e",
-            "status-bar":      "bg:#161625 #aaaaaa",
-            "status-bar.workspace": "fg:#ffffff bold",
-            "status-bar.model": "fg:#ffaf00",
-            "status-bar.metrics": "fg:#666666",
-            "prompt":          "fg:#ffaf00 bold",
-            "divider":         "fg:#2a2a40",
-        })
+        self.style = Style.from_dict(
+            {
+                "": "bg:#1a1a2e #ffffff",
+                "history": "bg:#1a1a2e",
+                "input-area": "bg:#1a1a2e",
+                "status-bar": "bg:#161625 #aaaaaa",
+                "status-bar.workspace": "fg:#ffffff bold",
+                "status-bar.model": "fg:#ffaf00",
+                "status-bar.metrics": "fg:#666666",
+                "prompt": "fg:#ffaf00 bold",
+                "divider": "fg:#2a2a40",
+            }
+        )
         self._set_terminal_background()
 
         from .memory import MemoryManager
+
         self.memory = MemoryManager(CONFIG_DIR)
         self.state = SessionState()
         from .core import PathGuard
+
         self.path_guard = PathGuard()
         self.ctx = LoomContext(
             state=self.state,
@@ -135,16 +141,18 @@ class LoomREPL:
             console=self._rich_console,
             task_manager=task_manager,
             memory=self.memory,
-            path_guard=self.path_guard
+            path_guard=self.path_guard,
         )
         self.auto_save_counter = 0
         self.logo_animation_count = 0
         self.orchestrator = AgentOrchestrator(self.ctx)
         from .core.audit import audit_hook
+
         registry.add_post_hook(audit_hook)
         self._setup_event_handlers()
 
         self._kb = KeyBindings()
+
         @self._kb.add("c-c")
         def _(event):
             event.app.exit()
@@ -172,12 +180,20 @@ class LoomREPL:
 
     def _setup_event_handlers(self):
         from .notify import notify_task_complete
-        bus.on("task.completed", lambda task_id, description, **kwargs: notify_task_complete(task_id, description))
-        
+
+        bus.on(
+            "task.completed",
+            lambda task_id, description, **kwargs: notify_task_complete(
+                task_id, description
+            ),
+        )
+
         async def _on_turn_complete(count, **kwargs):
             if count > 0 and count % 5 == 0:
                 from .commands import handle_save
+
                 await handle_save(["auto"], self.ctx)
+
         bus.on("session.turn_complete", _on_turn_complete)
         bus.on("ui.theme_changed", lambda **kwargs: self._set_terminal_background())
 
@@ -186,13 +202,14 @@ class LoomREPL:
         # workspace (/directory)  /model gemini-3.1-flash-preview  quota % used  context 6% used  memory 385.3 MB
         try:
             import psutil
+
             process = psutil.Process(os.getpid())
             mem_info = process.memory_info().rss / (1024 * 1024)
         except ImportError:
             mem_info = None
-        
+
         ctx_usage = self.ctx.state.get_context_usage(self.ctx.config.model)
-        
+
         parts = [
             ("class:status-bar.workspace", f"  {os.path.basename(os.getcwd())}  "),
             ("class:status-bar.model", f" {self.ctx.config.model}  "),
@@ -200,24 +217,26 @@ class LoomREPL:
         ]
         if mem_info is not None:
             parts.append(("class:status-bar.metrics", f"mem {mem_info:.1f} MB  "))
-            
+
         return parts
 
     def _set_terminal_background(self):
         bg = get_theme_bg()
         # Ensure we keep our navy bg if it's the default dark theme, or use theme bg
-        self.style = Style.from_dict({
-            "":                f"bg:{bg} #ffffff",
-            "history":         f"bg:{bg}",
-            "input-area":      f"bg:{bg}",
-            "status-bar":      "bg:#161625 #aaaaaa",
-            "status-bar.workspace": "fg:#ffffff bold",
-            "status-bar.model": "fg:#ffaf00",
-            "status-bar.metrics": "fg:#666666",
-            "prompt":          "fg:#ffaf00 bold",
-            "divider":         "fg:#2a2a40",
-            "accent":          "#ffaf00",
-        })
+        self.style = Style.from_dict(
+            {
+                "": f"bg:{bg} #ffffff",
+                "history": f"bg:{bg}",
+                "input-area": f"bg:{bg}",
+                "status-bar": "bg:#161625 #aaaaaa",
+                "status-bar.workspace": "fg:#ffffff bold",
+                "status-bar.model": "fg:#ffaf00",
+                "status-bar.metrics": "fg:#666666",
+                "prompt": "fg:#ffaf00 bold",
+                "divider": "fg:#2a2a40",
+                "accent": "#ffaf00",
+            }
+        )
 
     def _on_resize(self):
         try:
@@ -227,69 +246,80 @@ class LoomREPL:
 
     async def run(self):
         import asyncio
+
         self.ctx.loop = asyncio.get_running_loop()
-        
+
         # Build Layout
         # History window with padding
         history_main = Window(
             content=BufferControl(buffer=self.history_buffer, lexer=SimpleAnsiLexer()),
             wrap_lines=True,
             always_hide_cursor=True,
-            style="class:history"
+            style="class:history",
         )
-        
-        history_window = VSplit([
-            Window(width=4, style="class:history"), # Left Padding
-            history_main,
-            Window(width=4, style="class:history"), # Right Padding
-        ])
-        
+
+        history_window = VSplit(
+            [
+                Window(width=4, style="class:history"),  # Left Padding
+                history_main,
+                Window(width=4, style="class:history"),  # Right Padding
+            ]
+        )
+
         input_window = Window(
             content=BufferControl(buffer=self.input_buffer),
             height=Dimension(min=1, max=3),
-            wrap_lines=True
+            wrap_lines=True,
         )
-        
+
         status_bar = Window(
             content=FormattedTextControl(self._get_status_bar_text),
             height=1,
-            style="class:status-bar"
+            style="class:status-bar",
         )
-        
-        body = HSplit([
-            history_window,
-            Window(height=1, char="\u2500", style="class:divider"), # Divider
-            VSplit([
-                Window(width=6, content=FormattedTextControl([("class:prompt", "    > ")])),
-                input_window,
-            ], height=Dimension(min=1, max=3), style="class:input-area"),
-            status_bar
-        ], style="class:history")
+
+        body = HSplit(
+            [
+                history_window,
+                Window(height=1, char="\u2500", style="class:divider"),  # Divider
+                VSplit(
+                    [
+                        Window(
+                            width=6,
+                            content=FormattedTextControl([("class:prompt", "    > ")]),
+                        ),
+                        input_window,
+                    ],
+                    height=Dimension(min=1, max=3),
+                    style="class:input-area",
+                ),
+                status_bar,
+            ],
+            style="class:history",
+        )
 
         root_container = FloatContainer(
             content=body,
             floats=[
                 Float(
-                    xcursor=True,
-                    ycursor=True,
-                    content=CompletionsMenu(max_height=16)
+                    xcursor=True, ycursor=True, content=CompletionsMenu(max_height=16)
                 )
-            ]
+            ],
         )
-        
+
         self.app = Application(
             layout=Layout(root_container, focused_element=input_window),
             key_bindings=self._kb,
             style=DynamicStyle(lambda: self.style),
             mouse_support=True,
             full_screen=True,
-            color_depth=ColorDepth.TRUE_COLOR
+            color_depth=ColorDepth.TRUE_COLOR,
         )
-        
+
         # Initial output
         user_name = getpass.getuser()
         print_welcome_screen(user_name, self.ctx.config.model, self.ctx.config.provider)
-        
+
         await self.app.run_async()
 
     async def handle_input(self, text):
@@ -303,23 +333,23 @@ class LoomREPL:
             await self.process_agent_request(text)
 
     async def process_agent_request(self, user_input: str):
-        # [Existing logic from process_agent_request remains mostly the same, 
+        # [Existing logic from process_agent_request remains mostly the same,
         # but outputs to self._rich_console which is intercepted]
-        
+
         if not self.orchestrator.provider:
             self.orchestrator.refresh_provider()
 
         system_content = await compute_system_prompt(self.ctx)
-        
+
         messages = self.ctx.state.session_messages.to_list()
         if messages and messages[0].get("role") == "system":
             messages[0]["content"] = system_content
         else:
             messages.insert(0, {"role": "system", "content": system_content})
-        
+
         self.ctx.state.session_messages.set_messages(messages)
         self.ctx.state.session_messages.append({"role": "user", "content": user_input})
-        
+
         class AppHooks(OrchestratorHooks):
             def __init__(self, repl):
                 self.repl = repl
@@ -336,12 +366,12 @@ class LoomREPL:
 
             async def on_turn_complete(self, full_response, tool_calls):
                 elapsed = time.time() - self.start_time
-                # We already streamed most of it, but rich.print(Markdown) 
-                # looks better for the final result. 
-                # However, to avoid duplication, we might just print a newline 
+                # We already streamed most of it, but rich.print(Markdown)
+                # looks better for the final result.
+                # However, to avoid duplication, we might just print a newline
                 # or the session stats.
                 self.repl._rich_console.print("\n")
-                
+
                 print_status_line(self.repl.ctx.config.model, elapsed)
                 print_session_stats(self.repl.ctx.state)
 
@@ -355,27 +385,36 @@ class LoomREPL:
 
         hooks = AppHooks(self)
         hooks.start_time = time.time()
-        
+
         async def tool_executor(name, args):
             result = await self.call_tool(name, args)
             return result
 
         try:
-            await self.orchestrator.run(self.ctx.state.session_messages, hooks=hooks, tool_executor=tool_executor)
+            await self.orchestrator.run(
+                self.ctx.state.session_messages,
+                hooks=hooks,
+                tool_executor=tool_executor,
+            )
         except Exception as e:
             self._rich_console.print(f" [error]✘[/error] Error: {e}")
 
     def _on_context_warning(self, usage: float, type: str, **kwargs):
         if type == "full":
-            self._rich_console.print(f" [warning]⚠[/warning] [bold red]Context critical: {usage:.1f}%![/bold red]")
+            self._rich_console.print(
+                f" [warning]⚠[/warning] [bold red]Context critical: {usage:.1f}%![/bold red]"
+            )
         else:
-            self._rich_console.print(f" [warning]⚠[/warning] [dim]Context usage: {usage:.1f}%[/dim]")
+            self._rich_console.print(
+                f" [warning]⚠[/warning] [dim]Context usage: {usage:.1f}%[/dim]"
+            )
 
     def _logoTooltip(self):
         self.logo_animation_count += 1
 
     def _get_git_context(self) -> str:
         from .git import get_git_context
+
         return get_git_context()
 
     async def _confirm_destructive(self, tool: BaseTool, args: dict) -> bool:
@@ -384,11 +423,14 @@ class LoomREPL:
         if self._check_permission_allow(tool, args):
             return True
         if self._check_permission_deny(tool, args):
-            self._rich_console.print(f" [error]✘[/error] [dim]Blocked by permission rules: {tool.name}[/dim]")
+            self._rich_console.print(
+                f" [error]✘[/error] [dim]Blocked by permission rules: {tool.name}[/dim]"
+            )
             return False
 
         from .ui import print_diff, LoomDialog
         import difflib
+
         label = get_tool_label(tool.name, args)
         if tool.name == "file_edit":
             old_str = args.get("old_string", "")
@@ -396,13 +438,21 @@ class LoomREPL:
             if old_str and new_str:
                 old_lines = old_str.splitlines(keepends=True)
                 new_lines = new_str.splitlines(keepends=True)
-                diff_lines = list(difflib.unified_diff(old_lines, new_lines, fromfile="original", tofile="proposed"))
+                diff_lines = list(
+                    difflib.unified_diff(
+                        old_lines, new_lines, fromfile="original", tofile="proposed"
+                    )
+                )
                 print_diff("".join(diff_lines))
 
         dialog = LoomDialog(
             title="Destructive Tool",
             text=f"Allow {label}?",
-            buttons=[("Allow", "allow"), ("Deny", "deny"), ("Always Allow", "always_allow")]
+            buttons=[
+                ("Allow", "allow"),
+                ("Deny", "deny"),
+                ("Always Allow", "always_allow"),
+            ],
         )
         result = await dialog.run_async()
         if result == "allow":
@@ -414,12 +464,15 @@ class LoomREPL:
                 allowlist.append(pattern)
                 self.ctx.config.allowlist = allowlist
                 await self.ctx.config.save_async()
-                self._rich_console.print(f" [success]✔[/success] [dim]Added {pattern} to allowlist.[/dim]")
+                self._rich_console.print(
+                    f" [success]✔[/success] [dim]Added {pattern} to allowlist.[/dim]"
+                )
             return True
         return False
 
     def _check_permission_allow(self, tool: BaseTool, args: dict) -> bool:
         from fnmatch import fnmatch
+
         allowlist = self.ctx.config.allowlist or []
         pattern = f"{tool.name}(*)"
         for rule in allowlist:
@@ -429,6 +482,7 @@ class LoomREPL:
 
     def _check_permission_deny(self, tool: BaseTool, args: dict) -> bool:
         from fnmatch import fnmatch
+
         denylist = self.ctx.config.denylist or []
         pattern = f"{tool.name}(*)"
         for rule in denylist:
@@ -438,6 +492,7 @@ class LoomREPL:
 
     async def call_tool(self, name: str, arguments: dict):
         import asyncio
+
         tool = registry.get_tool(name)
         if not tool:
             return {"error": f"Tool not found: {name}"}
@@ -446,7 +501,12 @@ class LoomREPL:
             registry.run_post_hooks(name, {"error": "Permission denied"})
             return {"error": "Permission denied by user"}
         try:
-            result = await asyncio.to_thread(tool.execute, **arguments, ctx=self.ctx, provider=self.orchestrator.provider)
+            result = await asyncio.to_thread(
+                tool.execute,
+                **arguments,
+                ctx=self.ctx,
+                provider=self.orchestrator.provider,
+            )
             registry.run_post_hooks(name, result)
             return result
         except Exception as e:

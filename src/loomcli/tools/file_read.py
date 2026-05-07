@@ -37,8 +37,14 @@ def add_line_numbers(content: str, start_line: int = 1) -> str:
 
 class FileReadInput(BaseModel):
     file_path: str = Field(..., description="The path to the file to read")
-    offset: int = Field(0, description="Line number to start reading from (1-indexed, default 0 = start of file)")
-    limit: int = Field(0, description="Maximum number of lines to read (default 0 = read entire file)")
+    offset: int = Field(
+        0,
+        description="Line number to start reading from (1-indexed, default 0 = start of file)",
+    )
+    limit: int = Field(
+        0, description="Maximum number of lines to read (default 0 = read entire file)"
+    )
+
 
 class FileReadTool(BaseTool):
     name = "file_read"
@@ -48,18 +54,27 @@ class FileReadTool(BaseTool):
     isReadOnly = True
 
     def prompt(self) -> str:
-        return ("- file_read: Reads a file from the filesystem. Results are returned "
-                "with cat -n format with line numbers. Use offset/limit for large files. "
-                "Can read text files, images (PNG, JPG, etc.), and notebooks.")
+        return (
+            "- file_read: Reads a file from the filesystem. Results are returned "
+            "with cat -n format with line numbers. Use offset/limit for large files. "
+            "Can read text files, images (PNG, JPG, etc.), and notebooks."
+        )
 
     def get_activity_description(self, file_path: str = "", **kwargs) -> str:
         return f"Read({file_path})"
 
-    def execute(self, file_path: str, offset: int = 0, limit: int = 0, 
-                ctx: Optional["LoomContext"] = None, provider: Optional[Any] = None, **kwargs) -> Dict[str, Any]:
+    def execute(
+        self,
+        file_path: str,
+        offset: int = 0,
+        limit: int = 0,
+        ctx: Optional["LoomContext"] = None,
+        provider: Optional[Any] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
         if ctx is None:
             return {"success": False, "error": "Context not found"}
-            
+
         resolved, error = ctx.path_guard.resolve(file_path)
         if error:
             return {"success": False, "error": error}
@@ -91,7 +106,7 @@ class FileReadTool(BaseTool):
                 "content": raw_content,
                 "numbered_content": numbered_content,
                 "total_lines": total_lines,
-                "info": info
+                "info": info,
             }
         except Exception as e:
             return {"success": False, "error": f"Error reading file: {str(e)}"}

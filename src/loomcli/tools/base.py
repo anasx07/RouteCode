@@ -26,8 +26,8 @@ class BaseTool(ABC):
             "function": {
                 "name": self.name,
                 "description": self.description,
-                "parameters": schema
-            }
+                "parameters": schema,
+            },
         }
 
     def prompt(self) -> str:
@@ -40,9 +40,13 @@ class BaseTool(ABC):
         return self.name
 
     @abstractmethod
-    def execute(self, ctx: Optional["LoomContext"] = None, provider: Optional[Any] = None, **kwargs) -> Any:
+    def execute(
+        self,
+        ctx: Optional["LoomContext"] = None,
+        provider: Optional[Any] = None,
+        **kwargs,
+    ) -> Any:
         pass
-
 
 
 HookFn = Callable[[str, Dict], None]
@@ -88,12 +92,12 @@ class ToolRegistry:
 
     def parse_and_validate(self, name: str, arguments: Any) -> Dict[str, Any]:
         """
-        Safely parses stringified JSON arguments and validates them against 
+        Safely parses stringified JSON arguments and validates them against
         the tool's Pydantic model. Centralizes error handling and formatting.
         """
         import json
         from pydantic import ValidationError
-        
+
         tool = self.get_tool(name)
         if not tool:
             raise ValueError(f"Unknown tool: {name}")
@@ -107,7 +111,9 @@ class ToolRegistry:
         elif isinstance(arguments, dict):
             args_dict = arguments
         else:
-            raise ValueError(f"Arguments must be a JSON string or dictionary, got {type(arguments).__name__}")
+            raise ValueError(
+                f"Arguments must be a JSON string or dictionary, got {type(arguments).__name__}"
+            )
 
         # Validate with Pydantic
         try:
@@ -120,7 +126,9 @@ class ToolRegistry:
                 loc = " -> ".join(str(part) for part in err["loc"])
                 msg = err["msg"]
                 errors.append(f" - {loc}: {msg}")
-            raise ValueError(f"Validation failed for tool '{name}':\n" + "\n".join(errors))
+            raise ValueError(
+                f"Validation failed for tool '{name}':\n" + "\n".join(errors)
+            )
 
 
 registry = ToolRegistry()

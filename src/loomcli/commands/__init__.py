@@ -1,9 +1,29 @@
 from typing import Dict
 import inspect
 from ..core import LoomContext
-from .core import handle_help, handle_tools, handle_attach, handle_version, handle_clear, handle_exit
-from .config import handle_provider, handle_model, handle_config, handle_theme, handle_personality
-from .session import handle_history, handle_save, handle_load, handle_rewind, handle_edit, handle_search
+from .core import (
+    handle_help,
+    handle_tools,
+    handle_attach,
+    handle_version,
+    handle_clear,
+    handle_exit,
+)
+from .config import (
+    handle_provider,
+    handle_model,
+    handle_config,
+    handle_theme,
+    handle_personality,
+)
+from .session import (
+    handle_history,
+    handle_save,
+    handle_load,
+    handle_rewind,
+    handle_edit,
+    handle_search,
+)
 from .tasks import handle_tasks, handle_task_stop
 from .memory import handle_remember, handle_forget, handle_memories
 
@@ -32,6 +52,7 @@ COMMANDS = {
     "/exit": handle_exit,
 }
 
+
 def get_command_metadata() -> Dict[str, str]:
     return {
         "/help": "Show help menu",
@@ -58,8 +79,10 @@ def get_command_metadata() -> Dict[str, str]:
         "/exit": "Exit the session",
     }
 
+
 async def execute_command(input_str: str, ctx: LoomContext) -> bool:
     from ..skills import discover_skills
+
     parts = input_str.split()
     if not parts:
         return False
@@ -85,6 +108,7 @@ async def execute_command(input_str: str, ctx: LoomContext) -> bool:
         ctx.state.commands_run += 1
         ctx.console.print_tool_call(label, {})
         from ..skills import run_skill
+
         # Skills might be sync or async, but for now they are mostly sync
         result = run_skill(skill, arg_str)
         ctx.console.print_tool_result(result)

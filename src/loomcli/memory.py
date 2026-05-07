@@ -14,10 +14,10 @@ class MemoryManager:
         self.config_dir = config_dir
         self.memory_dir = config_dir / "memory"
         self.memory_index = self.memory_dir / "index.json"
-        
+
         # Ensure directory exists
         self.memory_dir.mkdir(parents=True, exist_ok=True)
-        
+
         self._memories: Dict[str, str] = {}
         self.store = AtomicJsonStore(self.memory_index)
         # self._load() is now called asynchronously via _load_async in the REPL
@@ -40,21 +40,21 @@ class MemoryManager:
         if not key or not value:
             return "Key and value cannot be empty."
 
-        self._memories[key] = {
-            "value": value,
-            "created_at": time.time()
-        }
+        self._memories[key] = {"value": value, "created_at": time.time()}
 
         # Enforce max memory count
         if len(self._memories) > MAX_MEMORIES:
+
             def get_timestamp(item):
                 val = item[1]
                 if isinstance(val, dict):
                     return val.get("created_at", 0)
                 return 0
-            
+
             # Sort by timestamp (oldest first)
-            oldest = sorted(self._memories.items(), key=get_timestamp)[:len(self._memories) - MAX_MEMORIES]
+            oldest = sorted(self._memories.items(), key=get_timestamp)[
+                : len(self._memories) - MAX_MEMORIES
+            ]
             for k, _ in oldest:
                 del self._memories[k]
 
@@ -90,7 +90,7 @@ class MemoryManager:
 
         if query:
             query_lower = query.lower()
-            terms = re.findall(r'\w+', query_lower)
+            terms = re.findall(r"\w+", query_lower)
             scored = []
             for key, val in self._memories.items():
                 value = val.get("value", "") if isinstance(val, dict) else val
@@ -111,5 +111,3 @@ class MemoryManager:
                 lines.append(f"- {key}: {value}")
             return "\n".join(lines)
         return ""
-
-

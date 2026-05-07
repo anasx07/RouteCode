@@ -16,8 +16,6 @@ SKILL_DIRS = [
 ]
 
 
-
-
 class Skill:
     def __init__(self, path: Path):
         self.path = path
@@ -32,7 +30,7 @@ class Skill:
     def _parse(self):
         content = self.path.read_text(encoding="utf-8")
         metadata, body = parse_frontmatter(content)
-        
+
         if not metadata:
             self.name = self.path.stem
             self.prompt = content
@@ -65,7 +63,7 @@ def discover_skills() -> Dict[str, Skill]:
     Uses MTIME-based caching to avoid expensive filesystem scans.
     """
     global _skill_cache, _skill_cache_mtime
-    
+
     # Calculate the max MTIME across all existing skill directories
     try:
         current_mtime = 0.0
@@ -88,7 +86,7 @@ def discover_skills() -> Dict[str, Skill]:
                     skills[skill.name] = skill
                 except Exception:
                     pass
-    
+
     _skill_cache = skills
     _skill_cache_mtime = current_mtime
     return skills
@@ -105,9 +103,15 @@ def get_skill_prompts() -> str:
     return "\n".join(lines)
 
 
-def run_skill(skill: Skill, args: str = "", ctx: Optional["LoomContext"] = None, provider: Optional[Any] = None) -> Dict[str, Any]:
+def run_skill(
+    skill: Skill,
+    args: str = "",
+    ctx: Optional["LoomContext"] = None,
+    provider: Optional[Any] = None,
+) -> Dict[str, Any]:
     if skill.context == "fork":
         from .tools.task import _run_sub_agent
+
         prompt = skill.prompt + "\n\n" + args if args else skill.prompt
         task_id = f"s{abs(hash(prompt)) % 10**7}"
         task_manager.create(skill.name, None, task_id)
@@ -121,5 +125,5 @@ def run_skill(skill: Skill, args: str = "", ctx: Optional["LoomContext"] = None,
         "success": True,
         "type": "prompt",
         "content": skill.prompt,
-        "message": f"Skill '{skill.name}' expanded inline"
+        "message": f"Skill '{skill.name}' expanded inline",
     }

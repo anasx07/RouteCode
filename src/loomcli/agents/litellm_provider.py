@@ -7,11 +7,19 @@ from .base import AIProvider
 litellm.set_verbose = False
 litellm.suppress_debug_info = True
 
+
 class LiteLLMProvider(AIProvider):
     """
     Standardized AI provider using LiteLLM for cross-provider compatibility.
     """
-    def __init__(self, api_key: str, provider_name: str, base_url: Optional[str] = None, models: Optional[List[Dict[str, Any]]] = None):
+
+    def __init__(
+        self,
+        api_key: str,
+        provider_name: str,
+        base_url: Optional[str] = None,
+        models: Optional[List[Dict[str, Any]]] = None,
+    ):
         super().__init__(api_key)
         self.provider_name = provider_name
         self.base_url = base_url
@@ -19,14 +27,29 @@ class LiteLLMProvider(AIProvider):
         # LiteLLM uses provider-specific model names like "anthropic/claude-3-opus-20240229"
         # We'll prepend the provider if it's not already there.
 
-    async def ask(self, messages: List[Dict[str, Any]], model: str, stream: bool = True, tools: Optional[List[Dict[str, Any]]] = None) -> AsyncGenerator[Dict[str, Any], None]:
+    async def ask(
+        self,
+        messages: List[Dict[str, Any]],
+        model: str,
+        stream: bool = True,
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
         # Prepare the model string for LiteLLM
         litellm_model = model
         if self.provider_name:
             # Common LiteLLM provider prefixes
-            prefixes = ["openai/", "anthropic/", "gemini/", "deepseek/", "openrouter/", "vertex_ai/", "groq/", "mistral/"]
+            prefixes = [
+                "openai/",
+                "anthropic/",
+                "gemini/",
+                "deepseek/",
+                "openrouter/",
+                "vertex_ai/",
+                "groq/",
+                "mistral/",
+            ]
             has_prefix = any(model.startswith(p) for p in prefixes)
-            
+
             if not has_prefix:
                 if self.provider_name == "google":
                     litellm_model = f"gemini/{model}"
@@ -43,7 +66,7 @@ class LiteLLMProvider(AIProvider):
             "num_retries": 3,
             "timeout": 60,
         }
-        
+
         if self.base_url:
             completion_args["base_url"] = self.base_url
             if self.provider_name == "openai":
@@ -53,14 +76,14 @@ class LiteLLMProvider(AIProvider):
 
         if stream:
             completion_args["stream_options"] = {"include_usage": True}
-        
+
         if tools:
             completion_args["tools"] = tools
             # LiteLLM handles the translation of tools to the provider's format.
 
         try:
             response = await litellm.acompletion(**completion_args)
-            
+
             if stream:
                 accumulated_tool_calls = {}
                 async for chunk in response:
@@ -72,14 +95,14 @@ class LiteLLMProvider(AIProvider):
                     choices = chunk.get("choices", [])
                     if not choices:
                         continue
-                    
+
                     delta = choices[0].get("delta", {})
-                    
+
                     # Handle text content
                     content = delta.get("content")
                     if content:
                         yield {"type": "text", "content": content}
-                    
+
                     # Handle tool calls
                     tool_calls = delta.get("tool_calls")
                     if tool_calls:
@@ -91,15 +114,19 @@ class LiteLLMProvider(AIProvider):
                                     "type": "function",
                                     "function": {
                                         "name": tc.get("function", {}).get("name", ""),
-                                        "arguments": ""
-                                    }
+                                        "arguments": "",
+                                    },
                                 }
-                            
+
                             f_delta = tc.get("function", {})
                             if f_delta.get("name"):
-                                accumulated_tool_calls[index]["function"]["name"] += f_delta["name"]
+                                accumulated_tool_calls[index]["function"]["name"] += (
+                                    f_delta["name"]
+                                )
                             if f_delta.get("arguments"):
-                                accumulated_tool_calls[index]["function"]["arguments"] += f_delta["arguments"]
+                                accumulated_tool_calls[index]["function"][
+                                    "arguments"
+                                ] += f_delta["arguments"]
                             if tc.get("id"):
                                 accumulated_tool_calls[index]["id"] = tc["id"]
 
@@ -111,13 +138,13 @@ class LiteLLMProvider(AIProvider):
                 choice = response.choices[0]
                 if hasattr(response, "usage") and response.usage:
                     yield {"type": "usage", "usage": response.usage.model_dump()}
-                
+
                 if choice.message.content:
                     yield {"type": "text", "content": choice.message.content}
                 if choice.message.tool_calls:
                     for tc in choice.message.tool_calls:
                         yield {"type": "tool_call", "tool_call": tc.model_dump()}
-                        
+
         except Exception as e:
             yield {"type": "error", "content": str(e)}
 
@@ -129,10 +156,13 @@ class LiteLLMProvider(AIProvider):
         # 1. Try to fetch live list from LiteLLM
         try:
             # For custom OpenAI endpoints and OpenRouter, we try a direct fetch
-            if self.base_url and (self.provider_name == "openai" or self.provider_name == "openrouter"):
+            if self.base_url and (
+                self.provider_name == "openai" or self.provider_name == "openrouter"
+            ):
                 # Some providers don't support the 'openai/*' pattern in get_model_list
                 # but might work if we fetch directly from /models
                 import httpx
+
                 async with httpx.AsyncClient(timeout=10.0) as client:
                     # Try standard OpenAI /models endpoint
                     url = self.base_url.rstrip("/") + "/models"
@@ -148,7 +178,9 @@ class LiteLLMProvider(AIProvider):
                                 m_id = m.get("id") if isinstance(m, dict) else str(m)
                                 if m_id:
                                     # Strip prefix for display name (e.g. cohere/command-r -> command-r)
-                                    display_name = m_id.split("/")[-1] if "/" in m_id else m_id
+                                    display_name = (
+                                        m_id.split("/")[-1] if "/" in m_id else m_id
+                                    )
                                     results.append({"id": m_id, "name": display_name})
                             return results
 
@@ -156,12 +188,12 @@ class LiteLLMProvider(AIProvider):
             pattern = f"{self.provider_name}/*"
             if self.provider_name == "google":
                 pattern = "gemini/*"
-            
+
             live_models = await asyncio.to_thread(
                 litellm.get_model_list,
                 model=pattern,
                 api_key=self.api_key,
-                base_url=self.base_url
+                base_url=self.base_url,
             )
             if live_models:
                 results = []
@@ -198,6 +230,6 @@ class LiteLLMProvider(AIProvider):
             "deepseek": [
                 {"id": "deepseek-chat", "name": "DeepSeek Chat"},
                 {"id": "deepseek-coder", "name": "DeepSeek Coder"},
-            ]
+            ],
         }
         return defaults.get(self.provider_name, [])

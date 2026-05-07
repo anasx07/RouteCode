@@ -12,8 +12,13 @@ PERSONALITY_DIRS = [
 
 
 class Personality:
-    def __init__(self, name: str, description: str = "", prompt: str = "",
-                 keep_base_instructions: bool = True):
+    def __init__(
+        self,
+        name: str,
+        description: str = "",
+        prompt: str = "",
+        keep_base_instructions: bool = True,
+    ):
         self.name = name
         self.description = description
         self.prompt = prompt
@@ -60,7 +65,7 @@ def load_personalities() -> dict:
     Uses MTIME-based caching for better performance.
     """
     global _personality_cache, _personality_cache_mtime
-    
+
     try:
         current_mtime = 0.0
         for d in PERSONALITY_DIRS:
@@ -81,17 +86,20 @@ def load_personalities() -> dict:
             for f in sorted(base.glob("*.md")):
                 try:
                     fm, body = parse_frontmatter(f.read_text(encoding="utf-8"))
-                    
+
                     name = fm.get("name", f.stem)
                     personalities[name] = Personality(
                         name=name,
                         description=fm.get("description", ""),
                         prompt=body.strip(),
-                        keep_base_instructions=fm.get("keep-base-instructions", "true").lower() == "true",
+                        keep_base_instructions=fm.get(
+                            "keep-base-instructions", "true"
+                        ).lower()
+                        == "true",
                     )
                 except Exception:
                     pass
-    
+
     _personality_cache = personalities
     _personality_cache_mtime = current_mtime
     return personalities

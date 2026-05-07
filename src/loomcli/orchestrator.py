@@ -2,15 +2,25 @@ import asyncio
 import time
 import json
 from typing import Any, Dict, List, Optional, Callable
-from .core import get_logger, LoomContext, count_tokens, ConversationHistory, ContextManager, bus, AtomicJsonStore
+from .core import (
+    get_logger,
+    LoomContext,
+    count_tokens,
+    ConversationHistory,
+    ContextManager,
+    bus,
+    AtomicJsonStore,
+)
 from .tools import registry
 from .agents.registry import PROVIDER_MAP
 from .config import CONFIG_DIR
 
 logger = get_logger(__name__)
 
+
 class OrchestratorHooks:
     """Hooks for the AgentOrchestrator to signal progress and updates."""
+
     async def on_chunk(self, chunk: Dict[str, Any]):
         """Called for every chunk received from the provider."""
         pass
@@ -27,7 +37,9 @@ class OrchestratorHooks:
         """Called when an error occurs during the loop."""
         pass
 
-    async def on_turn_complete(self, full_response: str, tool_calls: List[Dict[str, Any]]):
+    async def on_turn_complete(
+        self, full_response: str, tool_calls: List[Dict[str, Any]]
+    ):
         """Called after a single LLM turn (response + tool results) is complete."""
         pass
 
@@ -35,15 +47,17 @@ class OrchestratorHooks:
         """Called to check if the loop should be terminated early."""
         return False
 
+
 class AgentOrchestrator:
     """Unified execution loop for AI agents in LoomCLI."""
+
     def __init__(self, ctx: LoomContext, provider: Optional[Any] = None):
         self.ctx = ctx
         self.provider = provider
         self.context_manager = ContextManager(ctx)
         if not self.provider:
             self._initialize_provider()
-        
+
         bus.on("config.provider_changed", self.refresh_provider)
 
     def _initialize_provider(self) -> bool:
@@ -51,12 +65,12 @@ class AgentOrchestrator:
         if not api_key:
             self.provider = None
             return False
-        
+
         provider_class = PROVIDER_MAP.get(self.ctx.config.provider)
         if provider_class:
             self.provider = provider_class(api_key)
             return True
-        
+
         self.provider = None
         return False
 
@@ -64,8 +78,13 @@ class AgentOrchestrator:
         """Forces a re-initialization of the provider, usually after a config change."""
         return self._initialize_provider()
 
-
-    async def run(self, history: ConversationHistory, hooks: Optional[OrchestratorHooks] = None, max_turns: int = 20, tool_executor: Optional[Callable] = None):
+    async def run(
+        self,
+        history: ConversationHistory,
+        hooks: Optional[OrchestratorHooks] = None,
+        max_turns: int = 20,
+        tool_executor: Optional[Callable] = None,
+    ):
         """
         Runs the core agent loop: LLM call -> Tool execution -> State update.
         """
@@ -77,7 +96,11 @@ class AgentOrchestrator:
 
         hooks = hooks or OrchestratorHooks()
         tool_executor = tool_executor or self._call_tool_safe
-        tool_schemas = [tool.to_json_schema() for tool in registry._tools.values() if tool.name != "task"]
+        tool_schemas = [
+            tool.to_json_schema()
+            for tool in registry._tools.values()
+            if tool.name != "task"
+        ]
 
         turn_count = 0
         while turn_count < max_turns:
@@ -94,12 +117,14 @@ class AgentOrchestrator:
 
             try:
                 provider_usage = None
-                async for chunk in self.provider.ask(history.get_messages(), self.ctx.config.model, tools=tool_schemas):
+                async for chunk in self.provider.ask(
+                    history.get_messages(), self.ctx.config.model, tools=tool_schemas
+                ):
                     if await hooks.should_stop():
                         return
-                    
+
                     await hooks.on_chunk(chunk)
-                    
+
                     if chunk["type"] == "text":
                         full_response += chunk["content"]
                     elif chunk["type"] == "tool_call":
@@ -124,15 +149,23 @@ class AgentOrchestrator:
                         t["function"] = fn
                         sanitized.append(t)
                     assistant_message["tool_calls"] = sanitized
-                
+
                 history.append(assistant_message)
-                
+
                 if provider_usage:
                     comp_tokens = provider_usage.get("completion_tokens", 0)
                     prompt_tokens = provider_usage.get("prompt_tokens", 0)
-                    self.ctx.state.add_tokens(0, self.ctx.config.model, input_tokens=prompt_tokens, output_tokens=comp_tokens)
+                    self.ctx.state.add_tokens(
+                        0,
+                        self.ctx.config.model,
+                        input_tokens=prompt_tokens,
+                        output_tokens=comp_tokens,
+                    )
                 elif full_response:
-                    self.ctx.state.add_tokens(count_tokens(full_response, self.ctx.config.model), self.ctx.config.model)
+                    self.ctx.state.add_tokens(
+                        count_tokens(full_response, self.ctx.config.model),
+                        self.ctx.config.model,
+                    )
 
                 await hooks.on_turn_complete(full_response, tool_calls)
 
@@ -153,7 +186,9 @@ class AgentOrchestrator:
                         args = registry.parse_and_validate(name, raw_args)
                     except ValueError as e:
                         # If validation fails, we still want to record the tool result with an error
-                        await self._append_tool_result(history, tc_id, name, {"error": str(e)})
+                        await self._append_tool_result(
+                            history, tc_id, name, {"error": str(e)}
+                        )
                         continue
 
                     tool_inputs.append((tc_id, name, args))
@@ -166,13 +201,14 @@ class AgentOrchestrator:
                         tasks = []
                         for tc_id, name, args in items:
                             await hooks.on_tool_call(name, args)
+
                             # We wrap the tool_executor in a coroutine
                             async def _exec(tid=tc_id, n=name, a=args):
                                 res = await tool_executor(n, a)
                                 return tid, n, res
 
                             tasks.append(_exec())
-                        
+
                         results = await asyncio.gather(*tasks)
                         for tid, n, res in results:
                             await self._append_tool_result(history, tid, n, res)
@@ -215,25 +251,34 @@ class AgentOrchestrator:
             return {"error": f"Tool not found: {name}"}
         try:
             # Most tools are still synchronous, so we run them in a thread to avoid blocking the event loop.
-            return await asyncio.to_thread(tool.execute, **args, ctx=self.ctx, provider=self.provider)
+            return await asyncio.to_thread(
+                tool.execute, **args, ctx=self.ctx, provider=self.provider
+            )
         except Exception as e:
             return {"error": str(e)}
 
-    async def _append_tool_result(self, history: ConversationHistory, tc_id: str, name: str, result: Dict[str, Any]):
+    async def _append_tool_result(
+        self,
+        history: ConversationHistory,
+        tc_id: str,
+        name: str,
+        result: Dict[str, Any],
+    ):
         MAX_CHARS = 50000
         content = json.dumps(result)
-        
+
         if len(content) > MAX_CHARS:
             path = CONFIG_DIR / "tool_results" / f"{tc_id}.json"
             store = AtomicJsonStore(path)
             await store.save_async(result)
-            result["content"] = f"[Result too large, saved to {path}]\n{result.get('content', '')[:2000]}"
+            result["content"] = (
+                f"[Result too large, saved to {path}]\n{result.get('content', '')[:2000]}"
+            )
             content = json.dumps(result)
 
-        history.append({
-            "role": "tool", 
-            "tool_call_id": tc_id,
-            "name": name, 
-            "content": content
-        })
-        self.ctx.state.add_tokens(count_tokens(content, self.ctx.config.model), self.ctx.config.model)
+        history.append(
+            {"role": "tool", "tool_call_id": tc_id, "name": name, "content": content}
+        )
+        self.ctx.state.add_tokens(
+            count_tokens(content, self.ctx.config.model), self.ctx.config.model
+        )

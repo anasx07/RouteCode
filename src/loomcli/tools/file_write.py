@@ -6,9 +6,13 @@ from .base import BaseTool
 if TYPE_CHECKING:
     from ..core import LoomContext
 
+
 class FileWriteInput(BaseModel):
-    file_path: str = Field(..., description="The path to the file to create or overwrite")
+    file_path: str = Field(
+        ..., description="The path to the file to create or overwrite"
+    )
     content: str = Field(..., description="The content to write to the file")
+
 
 class FileWriteTool(BaseTool):
     name = "file_write"
@@ -17,21 +21,29 @@ class FileWriteTool(BaseTool):
     isDestructive = True
 
     def prompt(self) -> str:
-        return ("- file_write: Create or overwrite a file with content. "
-                "Provide file_path and content. Creates parent directories automatically. Runs serially.")
+        return (
+            "- file_write: Create or overwrite a file with content. "
+            "Provide file_path and content. Creates parent directories automatically. Runs serially."
+        )
 
-    def execute(self, file_path: str, content: str, ctx: Optional["LoomContext"] = None, 
-                provider: Optional[Any] = None, **kwargs) -> Dict[str, Any]:
+    def execute(
+        self,
+        file_path: str,
+        content: str,
+        ctx: Optional["LoomContext"] = None,
+        provider: Optional[Any] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
         if ctx is None:
             return {"success": False, "error": "Context not found"}
-            
+
         resolved, error = ctx.path_guard.resolve(file_path)
         if error:
             return {"success": False, "error": error}
 
         try:
             os.makedirs(os.path.dirname(resolved), exist_ok=True)
-            
+
             # Check if file exists to count old lines
             old_line_count = 0
             if os.path.exists(resolved):
@@ -46,7 +58,7 @@ class FileWriteTool(BaseTool):
             return {
                 "success": True,
                 "message": f"Successfully wrote to {file_path}",
-                "stats": {"added": new_line_count, "removed": old_line_count}
+                "stats": {"added": new_line_count, "removed": old_line_count},
             }
         except Exception as e:
             return {"success": False, "error": f"Error writing file: {str(e)}"}

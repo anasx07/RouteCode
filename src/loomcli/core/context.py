@@ -9,12 +9,14 @@ from ..memory import MemoryManager
 
 from .path_guard import PathGuard
 
+
 @dataclass
 class LoomContext:
     """
     Unified context object for passing dependencies to commands and tools.
     Eliminates the need for reflection-based parameter detection.
     """
+
     state: SessionState
     config: Config
     console: Console

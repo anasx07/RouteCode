@@ -24,18 +24,28 @@ class SkillTool(BaseTool):
         names = ", ".join(skills.keys())
         return f"- skill: Invoke user-defined skills. Available: {names}"
 
-    def execute(self, skill: str, args: str = "", ctx: Optional["LoomContext"] = None, 
-                provider: Optional[Any] = None, **kwargs) -> Dict[str, Any]:
+    def execute(
+        self,
+        skill: str,
+        args: str = "",
+        ctx: Optional["LoomContext"] = None,
+        provider: Optional[Any] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
         skills = discover_skills()
         if skill not in skills:
             avail = ", ".join(skills.keys()) if skills else "none"
-            return {"success": False, "error": f"Skill '{skill}' not found. Available: {avail}"}
+            return {
+                "success": False,
+                "error": f"Skill '{skill}' not found. Available: {avail}",
+            }
 
         from ..skills import run_skill
+
         result = run_skill(skills[skill], args, ctx, provider=provider)
         if result.get("type") == "prompt":
             return {
                 "success": True,
-                "message": f"Skill '{skill}' invoked. Its prompt has been added to context."
+                "message": f"Skill '{skill}' invoked. Its prompt has been added to context.",
             }
         return result

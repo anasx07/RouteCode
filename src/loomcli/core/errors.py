@@ -3,7 +3,9 @@ from typing import Dict
 
 
 class ClassifiedError:
-    def __init__(self, category: str, message: str, guidance: str, recoverable: bool = True):
+    def __init__(
+        self, category: str, message: str, guidance: str, recoverable: bool = True
+    ):
         self.category = category
         self.message = message
         self.guidance = guidance
@@ -12,7 +14,7 @@ class ClassifiedError:
     def to_message(self) -> Dict[str, str]:
         return {
             "role": "assistant",
-            "content": f"[Error: {self.message}]\n{self.guidance}"
+            "content": f"[Error: {self.message}]\n{self.guidance}",
         }
 
 
@@ -104,7 +106,9 @@ def classify_http_error(status_code: int, body: str = "") -> ClassifiedError:
             return ERROR_CATEGORIES["insufficient_quota"]
         if "timeout" in body_lower or "timed out" in body_lower:
             return ERROR_CATEGORIES["timeout"]
-        if "model" in body_lower and ("not found" in body_lower or "not supported" in body_lower):
+        if "model" in body_lower and (
+            "not found" in body_lower or "not supported" in body_lower
+        ):
             return ERROR_CATEGORIES["model_not_found"]
         return ERROR_CATEGORIES["bad_request"]
     else:
@@ -118,7 +122,7 @@ def classify_exception(e: Exception) -> ClassifiedError:
         return ERROR_CATEGORIES["connection"]
     elif isinstance(e, httpx.HTTPStatusError):
         try:
-            body = e.response.text if hasattr(e.response, 'text') else ""
+            body = e.response.text if hasattr(e.response, "text") else ""
         except Exception:
             body = ""
         return classify_http_error(e.response.status_code, body)

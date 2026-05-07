@@ -5,12 +5,15 @@ from .. import ui as _ui
 from ..ui import print_success, print_error, LoomDialog
 from ..core import LoomContext
 
+
 def handle_history(args: List[str], ctx: LoomContext):
     if not ctx.state.session_messages:
         ctx.console.print("[dim]No conversation history yet.[/dim]")
         return
 
-    table = Table(title="Conversation History", show_header=True, header_style="bold magenta")
+    table = Table(
+        title="Conversation History", show_header=True, header_style="bold magenta"
+    )
     table.add_column("#", style="dim")
     table.add_column("Role", style="bold")
     table.add_column("Content")
@@ -19,7 +22,9 @@ def handle_history(args: List[str], ctx: LoomContext):
         role = msg["role"]
         content = msg.get("content", "")
         if isinstance(content, list):
-            content = " ".join(c.get("text", "") for c in content if c.get("type") == "text")
+            content = " ".join(
+                c.get("text", "") for c in content if c.get("type") == "text"
+            )
         tc = msg.get("tool_calls", [])
         if tc:
             names = [t.get("function", {}).get("name", "?") for t in tc]
@@ -30,6 +35,7 @@ def handle_history(args: List[str], ctx: LoomContext):
         table.add_row(str(i), role, display.replace("[", "\\["))
     ctx.console.print(table)
 
+
 async def handle_save(args: List[str], ctx: LoomContext):
     has_content = any(m.get("role") != "system" for m in ctx.state.session_messages)
     if not has_content:
@@ -38,20 +44,23 @@ async def handle_save(args: List[str], ctx: LoomContext):
         return
 
     from ..core import save_session_async
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     if args:
         name = "_".join(args).replace("/", "_")
     else:
         name = f"session_{timestamp}"
-    
+
     try:
         await save_session_async(ctx.state, name)
         print_success(f"Session saved: {name}")
     except Exception as e:
         print_error(f"Failed to save session: {e}")
 
+
 async def handle_load(args: List[str], ctx: LoomContext):
     from ..core import SESSIONS_DIR, load_session
+
     if not SESSIONS_DIR.exists():
         print_error("No saved sessions found.")
         return
@@ -65,6 +74,7 @@ async def handle_load(args: List[str], ctx: LoomContext):
     for sf in session_files[:20]:
         try:
             from ..core import AtomicJsonStore
+
             data = AtomicJsonStore(sf).load()
             label = f"{sf.stem} ({data.get('saved_at', '?')})"
             choices.append((sf.stem, label))
@@ -75,7 +85,7 @@ async def handle_load(args: List[str], ctx: LoomContext):
         title="Load Session",
         text=_ui.get_dialog_text("Select a session to load:", "radio"),
         values=choices,
-        dialog_type="radio"
+        dialog_type="radio",
     ).run_async()
 
     if result:
@@ -92,6 +102,7 @@ async def handle_load(args: List[str], ctx: LoomContext):
                 print_error(f"Failed to load session: {result}")
         except Exception as e:
             print_error(f"Error loading session: {e}")
+
 
 def handle_rewind(args: List[str], ctx: LoomContext):
     if not ctx.state.session_messages:
@@ -113,10 +124,15 @@ def handle_rewind(args: List[str], ctx: LoomContext):
                 cut_at = i
                 break
 
-    ctx.state.session_messages.set_messages(ctx.state.session_messages[:max(1, cut_at)])
+    ctx.state.session_messages.set_messages(
+        ctx.state.session_messages[: max(1, cut_at)]
+    )
     ctx.state.tokens_used = 0
     ctx.state.context_warned = False
-    print_success(f"Rewound {count} turn(s). {len(ctx.state.session_messages) - 1} message(s) remaining (excluding system).")
+    print_success(
+        f"Rewound {count} turn(s). {len(ctx.state.session_messages) - 1} message(s) remaining (excluding system)."
+    )
+
 
 async def handle_edit(args: List[str], ctx: LoomContext):
     if not ctx.state.session_messages:
@@ -129,29 +145,34 @@ async def handle_edit(args: List[str], ctx: LoomContext):
         return
 
     if idx < 0 or idx >= len(ctx.state.session_messages):
-        print_error(f"Index {idx} out of range (0-{len(ctx.state.session_messages) - 1}). Use /history to see indices.")
+        print_error(
+            f"Index {idx} out of range (0-{len(ctx.state.session_messages) - 1}). Use /history to see indices."
+        )
         return
 
     msg = ctx.state.session_messages[idx]
     old_content = msg.get("content", "")
     if isinstance(old_content, list):
-        old_content = " ".join(c.get("text", "") for c in old_content if isinstance(c, dict))
+        old_content = " ".join(
+            c.get("text", "") for c in old_content if isinstance(c, dict)
+        )
 
     new_content = await LoomDialog(
         title=f"Edit Message {idx} (role: {msg['role']})",
         text=_ui.get_dialog_text("Edit the message content:", "input"),
         default=old_content,
-        dialog_type="input"
+        dialog_type="input",
     ).run_async()
 
     if new_content is not None and new_content != old_content:
         msg["content"] = new_content
-        ctx.state.session_messages.set_messages(ctx.state.session_messages[:idx + 1])
+        ctx.state.session_messages.set_messages(ctx.state.session_messages[: idx + 1])
         ctx.state.tokens_used = 0
         ctx.state.context_warned = False
         print_success(f"Message {idx} updated. Conversation truncated after edit.")
     elif new_content is not None:
         ctx.console.print("[dim]No changes made.[/dim]")
+
 
 def handle_search(args: List[str], ctx: LoomContext):
     if not args:
@@ -166,7 +187,9 @@ def handle_search(args: List[str], ctx: LoomContext):
     for i, msg in enumerate(ctx.state.session_messages):
         content = msg.get("content", "")
         if isinstance(content, list):
-            content = " ".join(c.get("text", "") for c in content if isinstance(c, dict))
+            content = " ".join(
+                c.get("text", "") for c in content if isinstance(c, dict)
+            )
         if isinstance(content, str) and term.lower() in content.lower():
             results.append((i, msg["role"], content[:120]))
 
@@ -174,7 +197,9 @@ def handle_search(args: List[str], ctx: LoomContext):
         ctx.console.print(f"[dim]No matches for '{term}'.[/dim]")
         return
 
-    table = Table(title=f"Search: '{term}'", show_header=True, header_style="bold magenta")
+    table = Table(
+        title=f"Search: '{term}'", show_header=True, header_style="bold magenta"
+    )
     table.add_column("#", style="dim")
     table.add_column("Role", style="bold")
     table.add_column("Content")

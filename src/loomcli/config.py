@@ -5,9 +5,11 @@ from typing import Dict, Optional, Any
 CONFIG_DIR = Path.home() / ".loomcli"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
+
 class Config:
     def __init__(self):
         from .core.storage import AtomicJsonStore
+
         self._provider: str = os.environ.get("LOOM_PROVIDER", "openrouter")
         self._model: str = os.environ.get("LOOM_MODEL", "anthropic/claude-3.5-sonnet")
         self.personality: str = os.environ.get("LOOM_PERSONALITY", "default")
@@ -15,8 +17,8 @@ class Config:
         self.allowlist: list = []
         self.denylist: list = []
         self.api_keys: Dict[str, str] = {}
-        self.recent_models: list = [] # List of (provider, model) tuples
-        self.favorites: list = [] # List of (provider, model) tuples
+        self.recent_models: list = []  # List of (provider, model) tuples
+        self.favorites: list = []  # List of (provider, model) tuples
         self.store = AtomicJsonStore(CONFIG_FILE)
         self._load()
         self._load_env_keys()
@@ -30,6 +32,7 @@ class Config:
         if self._provider != value:
             self._provider = value
             from .core import bus
+
             bus.emit("config.provider_changed", provider=value)
 
     @property
@@ -42,6 +45,7 @@ class Config:
             self._model = value
             self.add_recent_model(self._provider, value)
             from .core import bus
+
             bus.emit("config.model_changed", model=value)
 
     def _load(self):
@@ -63,6 +67,7 @@ class Config:
 
     def _load_env_keys(self):
         from .agents.registry import PROVIDER_MAP
+
         for provider in PROVIDER_MAP.keys():
             key = os.environ.get(f"LOOM_{provider.upper()}_KEY")
             if key:
@@ -85,7 +90,7 @@ class Config:
             "allowlist": self.allowlist,
             "denylist": self.denylist,
             "recent_models": self.recent_models,
-            "favorites": self.favorites
+            "favorites": self.favorites,
         }
 
     def save(self):
@@ -100,6 +105,7 @@ class Config:
         self.api_keys[provider] = key
         if provider == self.provider:
             from .core import bus
+
             bus.emit("config.provider_changed", provider=provider)
         self.save()
 
@@ -112,7 +118,7 @@ class Config:
         if item in self.recent_models:
             self.recent_models.remove(item)
         self.recent_models.insert(0, item)
-        self.recent_models = self.recent_models[:10] # Keep last 10
+        self.recent_models = self.recent_models[:10]  # Keep last 10
         self.save()
 
     def toggle_favorite(self, provider: str, model: str):
@@ -122,6 +128,7 @@ class Config:
         else:
             self.favorites.append(item)
         self.save()
+
 
 # Global config instance
 config = Config()

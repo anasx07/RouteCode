@@ -38,17 +38,12 @@ def load_attachment(path: str) -> Optional[Dict]:
                 "mime_type": mime,
                 "data": data,
                 "path": resolved,
-                "size": len(data)
+                "size": len(data),
             }
 
         elif att_type == "pdf":
             content = f"[PDF file: {name}. Text extraction requires PyMuPDF. File at: {resolved}]"
-            return {
-                "type": "text",
-                "name": name,
-                "content": content,
-                "path": resolved
-            }
+            return {"type": "text", "name": name, "content": content, "path": resolved}
 
         elif att_type == "text":
             with open(resolved, "r", encoding="utf-8", errors="replace") as f:
@@ -56,19 +51,14 @@ def load_attachment(path: str) -> Optional[Dict]:
             MAX_TEXT = 50000
             if len(content) > MAX_TEXT:
                 content = content[:MAX_TEXT] + f"\n... [truncated at {MAX_TEXT} chars]"
-            return {
-                "type": "text",
-                "name": name,
-                "content": content,
-                "path": resolved
-            }
+            return {"type": "text", "name": name, "content": content, "path": resolved}
 
         else:
             return {
                 "type": "binary",
                 "name": name,
                 "content": f"[Binary file: {name} at {resolved}]",
-                "path": resolved
+                "path": resolved,
             }
 
     except Exception as e:
@@ -76,5 +66,5 @@ def load_attachment(path: str) -> Optional[Dict]:
             "type": "error",
             "name": name,
             "content": f"Error loading {name}: {e}",
-            "path": resolved
+            "path": resolved,
         }

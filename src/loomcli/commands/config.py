@@ -7,10 +7,12 @@ from ..agents.registry import PROVIDER_MAP
 
 PROVIDER_LIST = list(PROVIDER_MAP.keys())
 
+
 async def handle_provider(args: List[str], ctx: LoomContext):
     # Load models database to get provider names
     import json
     from pathlib import Path
+
     models_db_path = Path(__file__).parent.parent / "models_api.json"
     try:
         with open(models_db_path, "r", encoding="utf-8") as f:
@@ -24,14 +26,14 @@ async def handle_provider(args: List[str], ctx: LoomContext):
         "openai": "(ChatGPT Plus/Pro or API key)",
         "github": "",
         "anthropic": "(API key)",
-        "google": ""
+        "google": "",
     }
 
     from ..ui import ModelPaletteMenu
-    
+
     while True:
         values = []
-        
+
         # Popular category
         values.append((None, "Popular", True, None, None))
         for p_id, desc in popular_providers.items():
@@ -45,7 +47,7 @@ async def handle_provider(args: List[str], ctx: LoomContext):
                         if os.environ.get(env_var):
                             is_connected = True
                             break
-                
+
                 label = f"✓ {name}" if is_connected else f"  {name}"
                 values.append((p_id, label, False, desc, None))
 
@@ -56,21 +58,19 @@ async def handle_provider(args: List[str], ctx: LoomContext):
                 continue
             p_info = models_db.get(p_id, {})
             name = p_info.get("name", p_id.capitalize())
-            
+
             is_connected = bool(ctx.config.get_api_key(p_id))
             if not is_connected and "env" in p_info:
                 for env_var in p_info["env"]:
                     if os.environ.get(env_var):
                         is_connected = True
                         break
-            
+
             label = f"✓ {name}" if is_connected else f"  {name}"
             values.append((p_id, label, False, None, None))
 
         menu = ModelPaletteMenu(
-            title="Connect a provider",
-            values=values,
-            active_value=ctx.config.provider
+            title="Connect a provider", values=values, active_value=ctx.config.provider
         )
         menu.show_footer = False
         result = await menu.run_async()
@@ -91,31 +91,40 @@ async def handle_provider(args: List[str], ctx: LoomContext):
         if not is_connected:
             new_key = await LoomDialog(
                 title=f"Setup {result.capitalize()}",
-                text=_ui.get_dialog_text(f"Paste your {result} API key here and press Enter:", "input"),
+                text=_ui.get_dialog_text(
+                    f"Paste your {result} API key here and press Enter:", "input"
+                ),
                 password=True,
-                dialog_type="input"
+                dialog_type="input",
             ).run_async()
             if new_key:
                 ctx.config.set_api_key(result, new_key)
                 await ctx.config.save_async()
-                print_success(f"API key for {result} has been saved! You can now select its models in the model menu.")
+                print_success(
+                    f"API key for {result} has been saved! You can now select its models in the model menu."
+                )
                 break
             else:
                 continue
         else:
             action = await LoomDialog(
                 title=f"Update {result.capitalize()}",
-                text=_ui.get_dialog_text(f"{result} is already connected. Do you want to update the API key?", "button"),
+                text=_ui.get_dialog_text(
+                    f"{result} is already connected. Do you want to update the API key?",
+                    "button",
+                ),
                 buttons=[("Update", True), ("Back", False)],
-                dialog_type="button"
+                dialog_type="button",
             ).run_async()
-            
+
             if action:
                 new_key = await LoomDialog(
                     title=f"Update {result.capitalize()}",
-                    text=_ui.get_dialog_text(f"Paste your new {result} API key:", "input"),
+                    text=_ui.get_dialog_text(
+                        f"Paste your new {result} API key:", "input"
+                    ),
                     password=True,
-                    dialog_type="input"
+                    dialog_type="input",
                 ).run_async()
                 if new_key:
                     ctx.config.set_api_key(result, new_key)
@@ -127,6 +136,7 @@ async def handle_provider(args: List[str], ctx: LoomContext):
             else:
                 continue
 
+
 async def handle_model(args: List[str], ctx: LoomContext):
     if args:
         if ":" in args[0]:
@@ -136,12 +146,15 @@ async def handle_model(args: List[str], ctx: LoomContext):
         else:
             ctx.config.model = args[0]
         await ctx.config.save_async()
-        ctx.console.print(f"Model set to: [bold green]{ctx.config.model}[/bold green] ([dim]{ctx.config.provider}[/dim])")
+        ctx.console.print(
+            f"Model set to: [bold green]{ctx.config.model}[/bold green] ([dim]{ctx.config.provider}[/dim])"
+        )
         return
 
     # Load models database
     import json
     from pathlib import Path
+
     models_db_path = Path(__file__).parent.parent / "models_api.json"
     try:
         with open(models_db_path, "r", encoding="utf-8") as f:
@@ -151,7 +164,7 @@ async def handle_model(args: List[str], ctx: LoomContext):
 
     async def _build_values():
         values = []
-        
+
         # Determine which providers are connected
         connected_providers = []
         for p_id, p_info in models_db.items():
@@ -190,15 +203,17 @@ async def handle_model(args: List[str], ctx: LoomContext):
             p_info = models_db.get(p, {})
             m_info = p_info.get("models", {}).get(m_id, {})
             display_name = name or m_info.get("name", m_id)
-            label = f"★ {display_name}" if [p, m_id] in favorites else f"  {display_name}"
-            
+            label = (
+                f"★ {display_name}" if [p, m_id] in favorites else f"  {display_name}"
+            )
+
             # Check cost from metadata
             cost = m_info.get("cost", {})
             is_free_meta = cost.get("input") == 0 and cost.get("output") == 0
-            
+
             # Auto-detect free from name/id if not in meta
             is_free_auto = "free" in m_id.lower() or "free" in display_name.lower()
-            
+
             badge = "Free" if (is_free_meta or is_free_auto) else None
             return (f"{p}:{m_id}", label, False, p_info.get("name", p), badge)
 
@@ -227,9 +242,20 @@ async def handle_model(args: List[str], ctx: LoomContext):
                 values.extend(fav_items)
 
         # 3. All connected providers
-        curated = ["opencode", "opencode-go", "cloudflare", "nvidia", "google", "openai", "anthropic"]
-        sorted_pids = sorted(provider_models.keys(), key=lambda x: (x not in curated, curated.index(x) if x in curated else x))
-        
+        curated = [
+            "opencode",
+            "opencode-go",
+            "cloudflare",
+            "nvidia",
+            "google",
+            "openai",
+            "anthropic",
+        ]
+        sorted_pids = sorted(
+            provider_models.keys(),
+            key=lambda x: (x not in curated, curated.index(x) if x in curated else x),
+        )
+
         for p_id in sorted_pids:
             p_info = models_db.get(p_id, {})
             values.append((None, p_info.get("name", p_id), True, None, None))
@@ -237,28 +263,33 @@ async def handle_model(args: List[str], ctx: LoomContext):
                 m_id = m["id"]
                 name = m["name"]
                 values.append(format_item(p_id, m_id, name))
-        
+
         return values
 
     values = await _build_values()
 
     from ..ui import ModelPaletteMenu
-    
+
     active_val = f"{ctx.config.provider}:{ctx.config.model}"
-    menu = ModelPaletteMenu(title="Select model", values=values, active_value=active_val)
-    
+    menu = ModelPaletteMenu(
+        title="Select model", values=values, active_value=active_val
+    )
+
     def on_favorite(val):
         if val and ":" in val:
             p, m = val.split(":", 1)
             ctx.config.toggle_favorite(p, m)
             return _build_values()
+
     menu.on_favorite = on_favorite
-    
-    def on_connect_provider_stub(): pass 
+
+    def on_connect_provider_stub():
+        pass
+
     menu.on_connect_provider = on_connect_provider_stub
-    
+
     result = await menu.run_async()
-    
+
     if result == "__connect_provider__":
         await handle_provider([], ctx)
     elif result:
@@ -266,7 +297,10 @@ async def handle_model(args: List[str], ctx: LoomContext):
         ctx.config.provider = p
         ctx.config.model = m
         await ctx.config.save_async()
-        ctx.console.print(f"\n[success]✔[/success] Model set to [bold cyan]{m}[/bold cyan] ([dim]{p}[/dim])")
+        ctx.console.print(
+            f"\n[success]✔[/success] Model set to [bold cyan]{m}[/bold cyan] ([dim]{p}[/dim])"
+        )
+
 
 async def handle_config(args: List[str], ctx: LoomContext):
     action = await LoomDialog(
@@ -276,36 +310,47 @@ async def handle_config(args: List[str], ctx: LoomContext):
             ("View", "view"),
             ("Update Key", "update"),
             ("Delete Key", "delete"),
-            ("Back", "back")
+            ("Back", "back"),
         ],
-        dialog_type="button"
+        dialog_type="button",
     ).run_async()
 
     if action == "view":
         from rich.table import Table
-        table = Table(title="Current Configuration", show_header=True, header_style="bold magenta")
+
+        table = Table(
+            title="Current Configuration", show_header=True, header_style="bold magenta"
+        )
         table.add_column("Key")
         table.add_column("Value")
         table.add_row("Provider", ctx.config.provider)
         table.add_row("Model", ctx.config.model)
         for p, key in ctx.config.api_keys.items():
-            masked_key = key[:4] + "*" * (max(0, len(key) - 8)) + key[-4:] if len(key) > 8 else "****"
+            masked_key = (
+                key[:4] + "*" * (max(0, len(key) - 8)) + key[-4:]
+                if len(key) > 8
+                else "****"
+            )
             table.add_row(f"{p} API Key", masked_key)
         ctx.console.print(table)
 
     elif action == "update":
         p_to_update = await LoomDialog(
             title="Update API Key",
-            text=_ui.get_dialog_text("Select which provider's key you want to update:", "radio"),
+            text=_ui.get_dialog_text(
+                "Select which provider's key you want to update:", "radio"
+            ),
             values=[(p, p.capitalize()) for p in PROVIDER_LIST],
-            dialog_type="radio"
+            dialog_type="radio",
         ).run_async()
         if p_to_update:
             new_key = await LoomDialog(
                 title=f"Update {p_to_update.capitalize()}",
-                text=_ui.get_dialog_text(f"Paste your new {p_to_update} API key:", "input"),
+                text=_ui.get_dialog_text(
+                    f"Paste your new {p_to_update} API key:", "input"
+                ),
                 password=True,
-                dialog_type="input"
+                dialog_type="input",
             ).run_async()
             if new_key:
                 ctx.config.set_api_key(p_to_update, new_key)
@@ -315,26 +360,35 @@ async def handle_config(args: List[str], ctx: LoomContext):
     elif action == "delete":
         existing_keys = list(ctx.config.api_keys.keys())
         if not existing_keys:
-            await LoomDialog(title="Error", text=_ui.get_dialog_text("No API keys found to delete.", "message"), dialog_type="message").run_async()
+            await LoomDialog(
+                title="Error",
+                text=_ui.get_dialog_text("No API keys found to delete.", "message"),
+                dialog_type="message",
+            ).run_async()
             return
-            
+
         p_to_delete = await LoomDialog(
             title="Delete API Key",
-            text=_ui.get_dialog_text("Select which provider's key you want to remove:", "radio"),
+            text=_ui.get_dialog_text(
+                "Select which provider's key you want to remove:", "radio"
+            ),
             values=[(p, p.capitalize()) for p in existing_keys],
-            dialog_type="radio"
+            dialog_type="radio",
         ).run_async()
         if p_to_delete:
             confirm = await LoomDialog(
                 title="Confirm Deletion",
-                text=_ui.get_dialog_text(f"Are you sure you want to delete the {p_to_delete} key?", "button"),
+                text=_ui.get_dialog_text(
+                    f"Are you sure you want to delete the {p_to_delete} key?", "button"
+                ),
                 buttons=[("Yes", True), ("No", False)],
-                dialog_type="button"
+                dialog_type="button",
             ).run_async()
             if confirm:
                 del ctx.config.api_keys[p_to_delete]
                 await ctx.config.save_async()
                 print_success(f"Key for {p_to_delete} has been deleted.")
+
 
 async def handle_theme(args: List[str], ctx: LoomContext):
     from ..ui import THEMES, apply_theme
@@ -357,17 +411,14 @@ async def handle_theme(args: List[str], ctx: LoomContext):
     choices = [(n, n.capitalize()) for n in THEMES]
 
     from ..ui import PaletteMenu, apply_theme
-    
+
     original_theme = ctx.config.theme
-    
+
     def on_theme_hover(theme_name):
         apply_theme(theme_name)
 
     result = await PaletteMenu(
-        title="Themes",
-        values=choices,
-        active_value=active,
-        on_hover=on_theme_hover
+        title="Themes", values=choices, active_value=active, on_hover=on_theme_hover
     ).run_async()
 
     if result:
@@ -378,6 +429,7 @@ async def handle_theme(args: List[str], ctx: LoomContext):
         print_success(f"Theme set to: {result}")
     else:
         apply_theme(original_theme)
+
 
 async def handle_personality(args: List[str], ctx: LoomContext):
     from ..personalities import load_personalities, get_active_personality
@@ -400,9 +452,11 @@ async def handle_personality(args: List[str], ctx: LoomContext):
 
     result = await LoomDialog(
         title="Select Personality",
-        text=_ui.get_dialog_text(f"Current: {active.name} ({active.description})", "radio"),
+        text=_ui.get_dialog_text(
+            f"Current: {active.name} ({active.description})", "radio"
+        ),
         values=choices,
-        dialog_type="radio"
+        dialog_type="radio",
     ).run_async()
 
     if result:

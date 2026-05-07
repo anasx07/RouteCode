@@ -49,9 +49,9 @@ def get_model_pricing(model_id: str, provider_id: Optional[str] = None) -> tuple
         if model_id in litellm.model_cost:
             info = litellm.model_cost[model_id]
             return (
-                info.get("input_cost_per_token", 0) * 1_000_000, 
-                info.get("output_cost_per_token", 0) * 1_000_000, 
-                info.get("max_tokens", DEFAULT_CONTEXT)
+                info.get("input_cost_per_token", 0) * 1_000_000,
+                info.get("output_cost_per_token", 0) * 1_000_000,
+                info.get("max_tokens", DEFAULT_CONTEXT),
             )
     except Exception:
         pass
@@ -62,7 +62,11 @@ def get_model_pricing(model_id: str, provider_id: Optional[str] = None) -> tuple
         if model:
             cost = model.get("cost", {})
             limit = model.get("limit", {})
-            return (cost.get("input", DEFAULT_INPUT), cost.get("output", DEFAULT_OUTPUT), limit.get("context", DEFAULT_CONTEXT))
+            return (
+                cost.get("input", DEFAULT_INPUT),
+                cost.get("output", DEFAULT_OUTPUT),
+                limit.get("context", DEFAULT_CONTEXT),
+            )
 
     # 3. Full DB scan (triggers load)
     db = _load_db()
@@ -71,7 +75,11 @@ def get_model_pricing(model_id: str, provider_id: Optional[str] = None) -> tuple
         if model:
             cost = model.get("cost", {})
             limit = model.get("limit", {})
-            return (cost.get("input", DEFAULT_INPUT), cost.get("output", DEFAULT_OUTPUT), limit.get("context", DEFAULT_CONTEXT))
+            return (
+                cost.get("input", DEFAULT_INPUT),
+                cost.get("output", DEFAULT_OUTPUT),
+                limit.get("context", DEFAULT_CONTEXT),
+            )
 
     return (DEFAULT_INPUT, DEFAULT_OUTPUT, DEFAULT_CONTEXT)
 
@@ -99,14 +107,16 @@ def search_models(query: str) -> list:
         for mid, model in provider.get("models", {}).items():
             name = model.get("name", "").lower()
             if query_lower in mid.lower() or query_lower in name:
-                results.append({
-                    "provider": pid,
-                    "provider_name": provider.get("name", pid),
-                    "model": mid,
-                    "model_name": model.get("name", mid),
-                    "cost": model.get("cost", {}),
-                    "limit": model.get("limit", {}),
-                })
+                results.append(
+                    {
+                        "provider": pid,
+                        "provider_name": provider.get("name", pid),
+                        "model": mid,
+                        "model_name": model.get("name", mid),
+                        "cost": model.get("cost", {}),
+                        "limit": model.get("limit", {}),
+                    }
+                )
     return results[:20]
 
 

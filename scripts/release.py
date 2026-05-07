@@ -4,6 +4,7 @@ release.py — Loom Release CLI
 ==============================
 Run from the repo root:  python scripts/release.py
 """
+
 from __future__ import annotations
 
 import os
@@ -34,15 +35,16 @@ except ImportError:
 
 # ──────────────────────────────────────────────────────────────────────────
 REPO_ROOT = Path(__file__).resolve().parent.parent
-ACCENT    = "#ff4444"   # Loom lava red
-DIM       = "bright_black"
-BOLD      = "bold white"
+ACCENT = "#ff4444"  # Loom lava red
+DIM = "bright_black"
+BOLD = "bold white"
 
 console = Console(highlight=False)
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Git helpers
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def git(*args: str, check=True, capture=True) -> subprocess.CompletedProcess:
     return subprocess.run(
@@ -98,6 +100,7 @@ def has_upstream() -> bool:
 # Version helpers
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class Version:
     major: int
@@ -131,6 +134,7 @@ class Version:
 # UI helpers
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def header():
     console.print()
     title = Text()
@@ -159,7 +163,11 @@ def fail(msg: str):
 
 def run_step(label: str, *cmd: str) -> bool:
     """Run a shell command with a spinner. Returns True on success."""
-    with Live(Spinner("dots", text=f"  [dim]{label}[/dim]"), console=console, refresh_per_second=12):
+    with Live(
+        Spinner("dots", text=f"  [dim]{label}[/dim]"),
+        console=console,
+        refresh_per_second=12,
+    ):
         r = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
     if r.returncode == 0:
         ok(label)
@@ -172,6 +180,7 @@ def run_step(label: str, *cmd: str) -> bool:
 # ═══════════════════════════════════════════════════════════════════════════
 # Pre-flight checks
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def preflight(n_steps: int):
     step(1, n_steps, "Pre-flight checks")
@@ -197,7 +206,9 @@ def preflight(n_steps: int):
     branch = current_branch()
     if branch != "main":
         warn(f"Current branch is [bold]{branch}[/bold], not [bold]main[/bold].")
-        if not Confirm.ask(f"  Release from [bold]{branch}[/bold] anyway?", default=False):
+        if not Confirm.ask(
+            f"  Release from [bold]{branch}[/bold] anyway?", default=False
+        ):
             console.print("[dim]  Aborted.[/dim]")
             sys.exit(0)
     else:
@@ -210,7 +221,9 @@ def preflight(n_steps: int):
 
     # Upstream exists
     if not has_upstream():
-        warn("No upstream tracking branch set. Will push with [bold]--set-upstream origin[/bold].")
+        warn(
+            "No upstream tracking branch set. Will push with [bold]--set-upstream origin[/bold]."
+        )
     else:
         ok("Upstream tracking branch set")
 
@@ -221,11 +234,12 @@ def preflight(n_steps: int):
 # Version selection
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def pick_version(n_steps: int) -> tuple[Version, str]:
     step(2, n_steps, "Choose version")
 
-    tag   = latest_tag()
-    cur   = Version.parse(tag) if tag else Version(0, 0, 0)
+    tag = latest_tag()
+    cur = Version.parse(tag) if tag else Version(0, 0, 0)
     label = f"v{cur}" if tag else "(no tags yet)"
 
     console.print(f"  Current version: [{ACCENT}]{label}[/{ACCENT}]")
@@ -237,15 +251,15 @@ def pick_version(n_steps: int) -> tuple[Version, str]:
 
     # Build a table of options
     t = Table(box=box.SIMPLE, show_header=False, padding=(0, 2))
-    t.add_column("key",   style=f"bold {ACCENT}", width=6)
-    t.add_column("label", style="bold white",      width=10)
-    t.add_column("ver",   style="cyan",            width=12)
-    t.add_column("desc",  style=DIM)
+    t.add_column("key", style=f"bold {ACCENT}", width=6)
+    t.add_column("label", style="bold white", width=10)
+    t.add_column("ver", style="cyan", width=12)
+    t.add_column("desc", style=DIM)
 
     t.add_row("1", "patch", f"v{patch}", "Bug fixes, no new features")
     t.add_row("2", "minor", f"v{minor}", "New features, backwards compatible")
     t.add_row("3", "major", f"v{major}", "Breaking changes")
-    t.add_row("4", "custom", "v?.?.?",   "Enter manually")
+    t.add_row("4", "custom", "v?.?.?", "Enter manually")
 
     console.print(Padding(t, (0, 2)))
 
@@ -278,6 +292,7 @@ def pick_version(n_steps: int) -> tuple[Version, str]:
 # Changelog preview
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def show_changelog(new_ver: Version, last_tag: Optional[str], n_steps: int):
     step(3, n_steps, "Changelog preview")
 
@@ -301,6 +316,7 @@ def show_changelog(new_ver: Version, last_tag: Optional[str], n_steps: int):
             others.append(c)
 
     lines = Text()
+
     def section(icon, title, items, colour):
         if not items:
             return
@@ -309,24 +325,27 @@ def show_changelog(new_ver: Version, last_tag: Optional[str], n_steps: int):
             sha, _, msg = item.partition(" ")
             lines.append(f"   [{DIM}]{sha}[/{DIM}] {msg}\n")
 
-    section("✨", "Features",     features, "green")
-    section("🐛", "Bug Fixes",    fixes,    "yellow")
-    section("🔧", "Chores / CI",  chores,   DIM)
-    section("📝", "Other",        others,   "white")
+    section("✨", "Features", features, "green")
+    section("🐛", "Bug Fixes", fixes, "yellow")
+    section("🔧", "Chores / CI", chores, DIM)
+    section("📝", "Other", others, "white")
 
     since = f"since {last_tag}" if last_tag else "all commits"
-    console.print(Panel(
-        lines,
-        title=f"[{DIM}]{len(commits)} commits {since}[/{DIM}]",
-        border_style=DIM,
-        padding=(0, 1),
-    ))
+    console.print(
+        Panel(
+            lines,
+            title=f"[{DIM}]{len(commits)} commits {since}[/{DIM}]",
+            border_style=DIM,
+            padding=(0, 1),
+        )
+    )
     console.print()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Linting
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def maybe_run_lint(n_steps: int, cur_step: int) -> int:
     step(cur_step, n_steps, "Run linting (ruff)")
@@ -339,13 +358,29 @@ def maybe_run_lint(n_steps: int, cur_step: int) -> int:
 
     if run_step("Ruff check", ruff, "check", "."):
         console.print()
-    
+
+    return cur_step + 1
+
+
+def maybe_run_format(n_steps: int, cur_step: int) -> int:
+    step(cur_step, n_steps, "Run formatting check (ruff)")
+
+    ruff = shutil.which("ruff")
+    if not ruff:
+        warn("ruff not found — skipping.")
+        console.print()
+        return cur_step + 1
+
+    if run_step("Ruff format check", ruff, "format", "--check", "."):
+        console.print()
+
     return cur_step + 1
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Tests
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 def maybe_run_tests(n_steps: int, cur_step: int) -> int:
     step(cur_step, n_steps, "Run tests")
@@ -369,7 +404,9 @@ def maybe_run_tests(n_steps: int, cur_step: int) -> int:
     console.print()
 
     if result.returncode != 0:
-        if not Confirm.ask("  [yellow]Tests failed. Release anyway?[/yellow]", default=False):
+        if not Confirm.ask(
+            "  [yellow]Tests failed. Release anyway?[/yellow]", default=False
+        ):
             console.print("[dim]  Aborted.[/dim]")
             sys.exit(0)
         warn("Releasing despite failing tests.")
@@ -384,6 +421,7 @@ def maybe_run_tests(n_steps: int, cur_step: int) -> int:
 # Tag & push
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def tag_and_push(new_ver: Version, n_steps: int, cur_step: int):
     step(cur_step, n_steps, f"Tag [bold cyan]{new_ver.tag()}[/bold cyan] and push")
     console.print()
@@ -393,16 +431,19 @@ def tag_and_push(new_ver: Version, n_steps: int, cur_step: int):
     actions_url = f"{url}/actions" if url else ""
 
     t = Table(box=box.ROUNDED, border_style=DIM, show_header=False, padding=(0, 2))
-    t.add_column("k", style=DIM,        width=18)
+    t.add_column("k", style=DIM, width=18)
     t.add_column("v", style="bold white")
-    t.add_row("Tag",    new_ver.tag())
+    t.add_row("Tag", new_ver.tag())
     t.add_row("Branch", current_branch())
     t.add_row("Remote", url or "[dim]unknown[/dim]")
     t.add_row("Will trigger", "GitHub Actions release workflow")
     console.print(Padding(t, (0, 2)))
     console.print()
 
-    if not Confirm.ask(f"  [{ACCENT}]Push {new_ver.tag()} and trigger release?[/{ACCENT}]", default=True):
+    if not Confirm.ask(
+        f"  [{ACCENT}]Push {new_ver.tag()} and trigger release?[/{ACCENT}]",
+        default=True,
+    ):
         console.print("[dim]  Aborted.[/dim]")
         sys.exit(0)
 
@@ -411,7 +452,12 @@ def tag_and_push(new_ver: Version, n_steps: int, cur_step: int):
     # Create annotated tag
     run_step(
         f"Create annotated tag {new_ver.tag()}",
-        "git", "tag", "-a", new_ver.tag(), "-m", f"Release {new_ver.tag()}",
+        "git",
+        "tag",
+        "-a",
+        new_ver.tag(),
+        "-m",
+        f"Release {new_ver.tag()}",
     )
 
     # Push commits first
@@ -421,7 +467,11 @@ def tag_and_push(new_ver: Version, n_steps: int, cur_step: int):
     else:
         run_step(
             f"Push branch {branch} (set upstream)",
-            "git", "push", "--set-upstream", "origin", branch,
+            "git",
+            "push",
+            "--set-upstream",
+            "origin",
+            branch,
         )
 
     # Push tag
@@ -435,12 +485,15 @@ def tag_and_push(new_ver: Version, n_steps: int, cur_step: int):
 # Final summary
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def summary(new_ver: Version, actions_url: str):
     console.print(Rule(style=ACCENT))
     console.print()
 
     lines = Text()
-    lines.append(f"  🎉  Loom {new_ver.tag()} is on its way!\n\n", style=f"bold {ACCENT}")
+    lines.append(
+        f"  🎉  Loom {new_ver.tag()} is on its way!\n\n", style=f"bold {ACCENT}"
+    )
     lines.append("  GitHub Actions is now:\n", style="white")
     lines.append("    1. Building loom.exe          ", style=DIM)
     lines.append("Windows\n", style="cyan")
@@ -454,7 +507,10 @@ def summary(new_ver: Version, actions_url: str):
     lines.append("pipx install loomcli\n", style="green")
 
     if actions_url:
-        lines.append(f"\n  Monitor live →  [link={actions_url}]{actions_url}[/link]\n", style="bold white")
+        lines.append(
+            f"\n  Monitor live →  [link={actions_url}]{actions_url}[/link]\n",
+            style="bold white",
+        )
 
     console.print(Panel(lines, border_style=ACCENT, padding=(0, 1)))
     console.print()
@@ -467,10 +523,11 @@ def summary(new_ver: Version, actions_url: str):
 # Main
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def main():
     os.chdir(REPO_ROOT)
 
-    N_STEPS = 6  # preflight, version, changelog, lint, tests, tag+push
+    N_STEPS = 7  # preflight, version, changelog, lint, format, tests, tag+push
 
     header()
 
@@ -478,6 +535,7 @@ def main():
     new_ver, last_tag = pick_version(N_STEPS)
     show_changelog(new_ver, last_tag, N_STEPS)
     cur = maybe_run_lint(N_STEPS, 4)
+    cur = maybe_run_format(N_STEPS, cur)
     cur = maybe_run_tests(N_STEPS, cur)
     actions_url = tag_and_push(new_ver, N_STEPS, cur)
     summary(new_ver, actions_url)

@@ -23,13 +23,22 @@ class WebFetchTool(BaseTool):
     def get_activity_description(self, url: str = "", **kwargs) -> str:
         return f"WebFetch({url[:40]})"
 
-    def execute(self, url: str, ctx: Optional["LoomContext"] = None, 
-                provider: Optional[Any] = None, **kwargs) -> Dict[str, Any]:
+    def execute(
+        self,
+        url: str,
+        ctx: Optional["LoomContext"] = None,
+        provider: Optional[Any] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
         try:
             import httpx
+
             response = httpx.get(url, follow_redirects=True, timeout=30.0)
             if response.status_code != 200:
-                return {"success": False, "error": f"HTTP {response.status_code}: {response.text[:200]}"}
+                return {
+                    "success": False,
+                    "error": f"HTTP {response.status_code}: {response.text[:200]}",
+                }
 
             content_type = response.headers.get("content-type", "")
             text = response.text
@@ -39,20 +48,25 @@ class WebFetchTool(BaseTool):
                 if "text/html" in content_type:
                     try:
                         from html.parser import HTMLParser
+
                         class TextExtractor(HTMLParser):
                             def __init__(self):
                                 super().__init__()
                                 self._text = []
                                 self._skip = False
+
                             def handle_starttag(self, tag, attrs):
                                 if tag in ("script", "style"):
                                     self._skip = True
+
                             def handle_endtag(self, tag):
                                 if tag in ("script", "style"):
                                     self._skip = False
+
                             def handle_data(self, data):
                                 if not self._skip:
                                     self._text.append(data.strip())
+
                             def get_text(self):
                                 return "\n".join(t for t in self._text if t)
 

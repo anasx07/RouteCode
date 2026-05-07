@@ -22,7 +22,7 @@ class TaskRecord:
 
 def generate_task_id() -> str:
     prefix = random.choice(string.ascii_lowercase)
-    suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=7))
+    suffix = "".join(random.choices(string.ascii_lowercase + string.digits, k=7))
     return f"{prefix}{suffix}"
 
 
@@ -31,7 +31,12 @@ class TaskManager:
         self._tasks: Dict[str, TaskRecord] = {}
         self._lock = threading.Lock()
 
-    def create(self, description: str, worker: Optional[Any] = None, task_id: Optional[str] = None) -> str:
+    def create(
+        self,
+        description: str,
+        worker: Optional[Any] = None,
+        task_id: Optional[str] = None,
+    ) -> str:
         if task_id is None:
             task_id = generate_task_id()
         with self._lock:
@@ -54,7 +59,12 @@ class TaskManager:
                 record.completed_at = time.time()
                 record.result = result
                 record.worker = None
-                bus.emit("task.completed", task_id=task_id, description=record.description, result=result)
+                bus.emit(
+                    "task.completed",
+                    task_id=task_id,
+                    description=record.description,
+                    result=result,
+                )
         self.prune()
 
     def fail(self, task_id: str, error: str):
@@ -65,7 +75,12 @@ class TaskManager:
                 record.completed_at = time.time()
                 record.error = error
                 record.worker = None
-                bus.emit("task.failed", task_id=task_id, description=record.description, error=error)
+                bus.emit(
+                    "task.failed",
+                    task_id=task_id,
+                    description=record.description,
+                    error=error,
+                )
         self.prune()
 
     def kill(self, task_id: str) -> bool:
@@ -76,7 +91,7 @@ class TaskManager:
                 if record.status == "running":
                     record.status = "killed"
                     record.completed_at = time.time()
-                    
+
                     # If it's an asyncio Task, cancel it immediately
                     if isinstance(record.worker, asyncio.Task):
                         try:
@@ -85,7 +100,7 @@ class TaskManager:
                             pass
                     record.worker = None
                     killed = True
-        
+
         if killed:
             self.prune()
         return killed
@@ -97,15 +112,18 @@ class TaskManager:
     def list(self) -> list:
         with self._lock:
             return sorted(
-                [dict(
-                    task_id=t.task_id,
-                    description=t.description,
-                    status=t.status,
-                    created_at=t.created_at,
-                    completed_at=t.completed_at,
-                ) for t in self._tasks.values()],
+                [
+                    dict(
+                        task_id=t.task_id,
+                        description=t.description,
+                        status=t.status,
+                        created_at=t.created_at,
+                        completed_at=t.completed_at,
+                    )
+                    for t in self._tasks.values()
+                ],
                 key=lambda x: x["created_at"],
-                reverse=True
+                reverse=True,
             )
 
     def is_killed(self, task_id: str) -> bool:
@@ -116,13 +134,17 @@ class TaskManager:
     def prune(self, keep_last: int = 50):
         """Removes old terminal task records to prevent memory growth."""
         with self._lock:
-            terminal_tasks = [t for t in self._tasks.values() if t.status in ("completed", "failed", "killed")]
+            terminal_tasks = [
+                t
+                for t in self._tasks.values()
+                if t.status in ("completed", "failed", "killed")
+            ]
             if len(terminal_tasks) <= keep_last:
                 return
-            
+
             # Sort by completion time (oldest first)
             terminal_tasks.sort(key=lambda x: x.completed_at)
-            
+
             # Number of tasks to remove
             to_remove = len(terminal_tasks) - keep_last
             for i in range(to_remove):
