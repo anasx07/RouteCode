@@ -39,6 +39,7 @@ desktop.ini
 htmlcov/
 .coverage
 coverage.xml
+tests/
 
 # ── Project runtime data ──────────────────────
 # Don't commit local Loom session/config data
