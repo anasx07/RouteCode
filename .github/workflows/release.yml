@@ -33,7 +33,7 @@ jobs:
             artifact: loom
             asset:   loom-cli-macos-arm64
 
-          - os: macos-12            # Intel (x86_64)
+          - os: macos-15-intel      # Intel (x86_64)
             label: macOS x86_64
             artifact: loom
             asset:   loom-cli-macos-x86_64
@@ -44,6 +44,7 @@ jobs:
             asset:   loom-cli-linux-x86_64
 
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
@@ -92,6 +93,7 @@ jobs:
   publish-release:
     name: Publish GitHub Release
     needs: build-binaries
+    if: always() && !cancelled()
     runs-on: ubuntu-latest
 
     steps:
@@ -151,6 +153,7 @@ jobs:
   publish-pypi:
     name: Publish to PyPI
     needs: build-binaries
+    if: always() && !cancelled()
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
