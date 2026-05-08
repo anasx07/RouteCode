@@ -30,6 +30,11 @@ def main(
     ),
 ):
     """routecode: An AI assistant for your terminal."""
+    # Check for pending updates and apply them before doing anything else
+    from .updater import apply_pending_update
+
+    apply_pending_update()
+
     if ctx.invoked_subcommand is not None:
         return
 

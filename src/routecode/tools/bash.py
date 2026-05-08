@@ -14,7 +14,7 @@ class BashInput(BaseModel):
 
 
 class BashTool(BaseTool):
-    name = "bash"
+    name = "run_shell_command"
     description = "Execute a shell command and return the output"
     input_schema = BashInput
     isDestructive = True

@@ -82,10 +82,26 @@ def discover_skills() -> Dict[str, Skill]:
     skills = {}
     for skill_dir in SKILL_DIRS:
         if skill_dir.exists():
+            # Support both legacy .md files and new folder-based README.md structure
+            # First, check for folder-based skills (priority)
+            for readme in sorted(skill_dir.glob("**/README.md")):
+                try:
+                    skill = Skill(readme)
+                    # Use parent folder name as name if not in frontmatter
+                    if not skill.name:
+                        skill.name = readme.parent.name
+                    skills[skill.name] = skill
+                except Exception:
+                    pass
+
+            # Then check for flat .md files
             for f in sorted(skill_dir.glob("*.md")):
+                if f.name == "README.md":
+                    continue  # Skip if in root
                 try:
                     skill = Skill(f)
-                    skills[skill.name] = skill
+                    if skill.name not in skills:
+                        skills[skill.name] = skill
                 except Exception:
                     pass
 

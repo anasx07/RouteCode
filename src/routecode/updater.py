@@ -230,10 +230,27 @@ def _binary_update(update_info: UpdateInfo, console=None) -> bool:
         current_exe = sys.executable
         _platform = platform.system()
 
-        if _platform == "Windows":
-            return _replace_and_relaunch_windows(tmp_path, current_exe, console)
-        else:
-            return _replace_and_relaunch_unix(tmp_path, current_exe, console)
+        # Define persistent pending update path
+        update_dir = os.path.dirname(current_exe)
+        if not os.access(update_dir, os.W_OK):
+            # Fallback to home dir if we can't write to exe dir
+            update_dir = os.path.expanduser("~/.routecode")
+            os.makedirs(update_dir, exist_ok=True)
+
+        pending_ext = ".exe" if _platform == "Windows" else ""
+        pending_path = os.path.join(update_dir, f"update_pending{pending_ext}")
+
+        # Move temp file to persistent pending path
+        import shutil
+
+        shutil.move(tmp_path, pending_path)
+
+        if console:
+            console.print(
+                f"\n[success]✔[/success] Update {update_info.latest_version} downloaded.\n"
+                "[info]The update will be installed automatically the next time you start RouteCode.[/info]"
+            )
+        return True
 
     except Exception as e:
         if console:
@@ -244,6 +261,32 @@ def _binary_update(update_info: UpdateInfo, console=None) -> bool:
             except Exception:
                 pass
         return False
+
+
+def apply_pending_update():
+    """Check for and apply any pending updates at startup."""
+    if not getattr(sys, "frozen", False):
+        return
+
+    current_exe = sys.executable
+    _platform = platform.system()
+    update_dir = os.path.dirname(current_exe)
+    pending_ext = ".exe" if _platform == "Windows" else ""
+    pending_path = os.path.join(update_dir, f"update_pending{pending_ext}")
+
+    # Check fallback dir too
+    if not os.path.exists(pending_path):
+        pending_path = os.path.expanduser(f"~/.routecode/update_pending{pending_ext}")
+
+    if not os.path.exists(pending_path):
+        return
+
+    # Trigger the swap and exit
+    if _platform == "Windows":
+        _replace_and_relaunch_windows(pending_path, current_exe)
+    else:
+        _replace_and_relaunch_unix(pending_path, current_exe)
+    sys.exit(0)
 
 
 def _replace_and_relaunch_windows(new_exe: str, current_exe: str, console=None) -> bool:
@@ -257,11 +300,11 @@ def _replace_and_relaunch_windows(new_exe: str, current_exe: str, console=None) 
             "@echo off\n"
             "echo RouteCode CLI Updater\n"
             f":retry\n"
-            f"ping -n 3 127.0.0.1 >nul\n"
+            f"ping -n 2 127.0.0.1 >nul\n"
             f"echo Installing...\n"
             f'move /Y "{new_exe}" "{current_exe}"\n'
             f'if exist "{new_exe}" goto retry\n'
-            f"echo Done. Restarting...\n"
+            f"echo Done. Starting RouteCode...\n"
             f'start "" "{current_exe}"\n'
             f'del "%~f0"\n'
         )
@@ -273,11 +316,6 @@ def _replace_and_relaunch_windows(new_exe: str, current_exe: str, console=None) 
         if hasattr(subprocess, "CREATE_NO_WINDOW")
         else 0,
     )
-
-    if console:
-        console.print(
-            "[success]Update will install on exit. RouteCode will restart automatically.[/success]"
-        )
     return True
 
 
@@ -293,6 +331,7 @@ def _replace_and_relaunch_unix(new_exe: str, current_exe: str, console=None) -> 
             "sleep 1\n"
             f'mv -f "{new_exe}" "{current_exe}"\n'
             f'chmod +x "{current_exe}"\n'
+            f'echo "Update installed. Starting RouteCode..."\n'
             f'exec "{current_exe}"\n'
             f'rm -f "$0"\n'
         )
@@ -306,11 +345,6 @@ def _replace_and_relaunch_unix(new_exe: str, current_exe: str, console=None) -> 
         stderr=subprocess.DEVNULL,
         close_fds=True,
     )
-
-    if console:
-        console.print(
-            "[success]Update will install on exit. RouteCode will restart automatically.[/success]"
-        )
     return True
 
 

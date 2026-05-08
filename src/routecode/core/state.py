@@ -27,6 +27,7 @@ class SessionState:
 
     provider: Optional[str] = None
     model: Optional[str] = None
+    workspace_path: Optional[str] = None
 
     def bind_tokenizer(self, tokenizer):
         self._tokenizer = tokenizer
@@ -55,6 +56,8 @@ class SessionState:
         self.context_warned = False
 
     def to_dict(self) -> dict:
+        import os
+
         return {
             "tokens_used": self.tokens_used,
             "estimated_cost": self.estimated_cost,
@@ -62,6 +65,7 @@ class SessionState:
             "tools_called": self.tools_called,
             "provider": self.provider,
             "model": self.model,
+            "workspace_path": self.workspace_path or os.getcwd(),
             "messages": self.session_messages.to_list(),
             "session_allowlist": self.session_allowlist,
         }
@@ -75,6 +79,7 @@ class SessionState:
             tools_called=data.get("tools_called", 0),
             provider=data.get("provider"),
             model=data.get("model"),
+            workspace_path=data.get("workspace_path"),
             session_messages=ConversationHistory(data.get("messages", [])),
             session_allowlist=data.get("session_allowlist", []),
         )

@@ -1,4 +1,5 @@
 from typing import Any, Dict, Optional, TYPE_CHECKING
+from pathlib import Path
 from pydantic import BaseModel, Field
 from .base import BaseTool
 from ..domain.skills import discover_skills
@@ -42,10 +43,88 @@ class SkillTool(BaseTool):
 
         from ..domain.skills import run_skill
 
-        result = run_skill(skills[skill], args, ctx, provider=provider)
-        if result.get("type") == "prompt":
+        return run_skill(skills[skill], args, ctx, provider=provider)
+
+
+class SkillCreatorInput(BaseModel):
+    name: str = Field(..., description="Name of the skill (e.g., 'deploy-lambda')")
+    description: str = Field(
+        ..., description="Short description of what the skill does"
+    )
+    prompt: str = Field(
+        ..., description="The system prompt or instructions for the skill"
+    )
+    context: str = Field(
+        "inline",
+        description="Execution context: 'inline' (appends prompt) or 'fork' (runs as sub-agent)",
+    )
+
+
+class SkillCreatorTool(BaseTool):
+    name = "skill_creator"
+    description = "Create a new reusable skill. This extends your capabilities with a custom workflow."
+    input_schema = SkillCreatorInput
+
+    def prompt(self) -> str:
+        return "- skill_creator: Create a new reusable skill to extend your own capabilities."
+
+    def _run(
+        self,
+        name: str,
+        description: str,
+        prompt: str,
+        context: str = "inline",
+        **kwargs,
+    ) -> Dict[str, Any]:
+        # Normalize name for filename
+        safe_name = name.lower().replace(" ", "-").strip()
+
+        # We prefer local project skills dir
+        skill_dir = Path(".routecode") / "skills" / safe_name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+
+        file_path = skill_dir / "README.md"
+
+        content = f"""---
+name: {name}
+description: {description}
+context: {context}
+---
+
+{prompt}
+"""
+        try:
+            file_path.write_text(content, encoding="utf-8")
             return {
                 "success": True,
-                "message": f"Skill '{skill}' invoked. Its prompt has been added to context.",
+                "message": f"Skill '{name}' created successfully at {skill_dir}",
+                "path": str(file_path),
             }
-        return result
+        except Exception as e:
+            return {"success": False, "error": f"Failed to create skill: {str(e)}"}
+
+
+class FindSkillsTool(BaseTool):
+    name = "find_skills"
+    description = "List all currently installed skills and their descriptions."
+    input_schema = BaseModel
+
+    def prompt(self) -> str:
+        return "- find_skills: List all installed skills and discover your extended capabilities."
+
+    def _run(self, **kwargs) -> Dict[str, Any]:
+        skills = discover_skills()
+        if not skills:
+            return {
+                "success": True,
+                "skills": [],
+                "message": "No skills installed yet.",
+            }
+
+        result = []
+        for s in skills.values():
+            result.append(
+                {"name": s.name, "description": s.description, "context": s.context}
+            )
+
+        return {"success": True, "skills": result}

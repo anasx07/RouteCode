@@ -47,7 +47,7 @@ class FileReadInput(BaseModel):
 
 
 class FileReadTool(BaseTool):
-    name = "file_read"
+    name = "read_file"
     description = "Read the content of a file"
     input_schema = FileReadInput
     isConcurrencySafe = True

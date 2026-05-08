@@ -11,7 +11,7 @@ class WebFetchInput(BaseModel):
 
 
 class WebFetchTool(BaseTool):
-    name = "webfetch"
+    name = "web_fetch"
     description = "Fetch content from a URL and return it as markdown. Use for reading documentation, APIs, or web pages."
     input_schema = WebFetchInput
     isConcurrencySafe = True

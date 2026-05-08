@@ -22,7 +22,7 @@ class GrepInput(BaseModel):
 
 
 class GrepTool(BaseTool):
-    name = "grep"
+    name = "grep_search"
     description = "Search file contents for a regex pattern, returning matching files with line numbers"
     input_schema = GrepInput
     isConcurrencySafe = True

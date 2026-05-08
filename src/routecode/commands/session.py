@@ -60,26 +60,46 @@ async def handle_save(args: List[str], ctx: RouteCodeContext):
 
 async def handle_load(args: List[str], ctx: RouteCodeContext):
     from ..core import SESSIONS_DIR, load_session
+    import os
 
     if not SESSIONS_DIR.exists():
         print_error("No saved sessions found.")
         return
 
-    session_files = sorted(SESSIONS_DIR.glob("*.json"), reverse=True)
+    session_files = sorted(
+        SESSIONS_DIR.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True
+    )
     if not session_files:
         print_error("No saved sessions found.")
         return
 
-    choices = []
-    for sf in session_files[:20]:
+    cwd = os.getcwd()
+    workspace_sessions = []
+    other_sessions = []
+
+    for sf in session_files[:50]:  # Check more files to find workspace matches
         try:
             from ..utils.storage import AtomicJsonStore
 
             data = AtomicJsonStore(sf).load()
+            swp = data.get("workspace_path")
+
             label = f"{sf.stem} ({data.get('saved_at', '?')})"
-            choices.append((sf.stem, label))
+            choice = (sf.stem, label)
+
+            if swp and os.path.abspath(swp) == os.path.abspath(cwd):
+                workspace_sessions.append(choice)
+            else:
+                other_sessions.append(choice)
         except Exception:
-            choices.append((sf.stem, sf.stem))
+            other_sessions.append((sf.stem, sf.stem))
+
+    # Combine: workspace ones first, then others
+    choices = (
+        workspace_sessions + [("---", "--- Other Sessions ---")] + other_sessions
+        if workspace_sessions
+        else other_sessions
+    )
 
     result = await RouteCodeDialog(
         title="Load Session",
@@ -88,7 +108,7 @@ async def handle_load(args: List[str], ctx: RouteCodeContext):
         dialog_type="radio",
     ).run_async()
 
-    if result:
+    if result and result != "---":
         try:
             new_state = load_session(result)
             if new_state:
@@ -97,11 +117,88 @@ async def handle_load(args: List[str], ctx: RouteCodeContext):
                 ctx.state.estimated_cost = new_state.estimated_cost
                 ctx.state.commands_run = new_state.commands_run
                 ctx.state.tools_called = new_state.tools_called
+                ctx.state.workspace_path = new_state.workspace_path
                 print_success(f"Loaded session: {result}")
             else:
                 print_error(f"Failed to load session: {result}")
         except Exception as e:
             print_error(f"Error loading session: {e}")
+
+
+async def handle_resume(args: List[str], ctx: RouteCodeContext):
+    from ..core import SESSIONS_DIR, load_session
+    import os
+
+    cwd = os.getcwd()
+
+    if args:
+        name = args[0]
+        try:
+            new_state = load_session(name)
+            if new_state:
+                ctx.state.session_messages.set_messages(new_state.session_messages)
+                ctx.state.tokens_used = new_state.tokens_used
+                ctx.state.estimated_cost = new_state.estimated_cost
+                ctx.state.commands_run = new_state.commands_run
+                ctx.state.tools_called = new_state.tools_called
+                ctx.state.workspace_path = new_state.workspace_path
+                print_success(f"Resumed session: {name}")
+                return
+            else:
+                print_error(f"Failed to find session: {name}")
+        except Exception as e:
+            print_error(f"Error resuming session: {e}")
+            return
+
+    if not SESSIONS_DIR.exists():
+        print_error("No saved sessions found.")
+        return
+
+    session_files = sorted(
+        SESSIONS_DIR.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True
+    )
+
+    # Try to find the latest session for THIS workspace
+    latest_workspace_session = None
+    for sf in session_files:
+        try:
+            from ..utils.storage import AtomicJsonStore
+
+            data = AtomicJsonStore(sf).load()
+            swp = data.get("workspace_path")
+            if swp and os.path.abspath(swp) == os.path.abspath(cwd):
+                latest_workspace_session = sf.stem
+                break
+        except Exception:
+            continue
+
+    target = latest_workspace_session or (
+        session_files[0].stem if session_files else None
+    )
+
+    if not target:
+        print_error("No sessions found to resume.")
+        return
+
+    try:
+        new_state = load_session(target)
+        if new_state:
+            ctx.state.session_messages.set_messages(new_state.session_messages)
+            ctx.state.tokens_used = new_state.tokens_used
+            ctx.state.estimated_cost = new_state.estimated_cost
+            ctx.state.commands_run = new_state.commands_run
+            ctx.state.tools_called = new_state.tools_called
+            ctx.state.workspace_path = new_state.workspace_path
+            msg = (
+                f"Resumed latest workspace session: {target}"
+                if latest_workspace_session
+                else f"Resumed latest global session: {target}"
+            )
+            print_success(msg)
+        else:
+            print_error(f"Failed to load session: {target}")
+    except Exception as e:
+        print_error(f"Error resuming session: {e}")
 
 
 async def handle_new(args: List[str], ctx: RouteCodeContext):

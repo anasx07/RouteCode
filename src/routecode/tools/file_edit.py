@@ -19,7 +19,7 @@ class FileEditInput(BaseModel):
 
 
 class FileEditTool(BaseTool):
-    name = "file_edit"
+    name = "replace"
     description = "Surgically edit a file by replacing specific strings"
     input_schema = FileEditInput
     isDestructive = True

@@ -15,7 +15,7 @@ class FileWriteInput(BaseModel):
 
 
 class FileWriteTool(BaseTool):
-    name = "file_write"
+    name = "write_file"
     description = "Create a new file or overwrite an existing one with content"
     input_schema = FileWriteInput
     isDestructive = True
