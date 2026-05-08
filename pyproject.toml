@@ -34,7 +34,6 @@ requires-python = ">=3.10"
 # Both 'routecode' and 'routecode' invoke the same entry point
 [project.scripts]
 routecode         = "routecode.main:app"
-routecode      = "routecode.main:app"
 routecode-release = "routecode._release:main"
 
 [project.optional-dependencies]
