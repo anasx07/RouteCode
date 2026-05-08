@@ -25,23 +25,23 @@ jobs:
         include:
           - os: windows-latest
             label: Windows x86_64
-            artifact: loom.exe
-            asset:   loom-cli-windows-x86_64.exe
+            artifact: routecode.exe
+            asset:   routecode-cli-windows-x86_64.exe
 
           - os: macos-latest        # Apple Silicon (arm64)
             label: macOS arm64
-            artifact: loom
-            asset:   loom-cli-macos-arm64
+            artifact: routecode
+            asset:   routecode-cli-macos-arm64
 
           - os: macos-15-intel      # Intel (x86_64)
             label: macOS x86_64
-            artifact: loom
-            asset:   loom-cli-macos-x86_64
+            artifact: routecode
+            asset:   routecode-cli-macos-x86_64
 
           - os: ubuntu-latest
             label: Linux x86_64
-            artifact: loom
-            asset:   loom-cli-linux-x86_64
+            artifact: routecode
+            asset:   routecode-cli-linux-x86_64
 
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
@@ -64,20 +64,20 @@ jobs:
       - name: Build binary (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: pyinstaller --clean loom.spec
+        run: pyinstaller --clean routecode.spec
 
       - name: Build binary (Unix)
         if: runner.os != 'Windows'
-        run: pyinstaller --clean loom.spec
+        run: pyinstaller --clean routecode.spec
 
       - name: Stage artifact
         shell: bash
         run: |
           mkdir -p release
-          if [ -f "dist/loom.exe" ]; then
-            cp dist/loom.exe release/${{ matrix.asset }}
+          if [ -f "dist/routecode.exe" ]; then
+            cp dist/routecode.exe release/${{ matrix.asset }}
           else
-            cp dist/loom release/${{ matrix.asset }}
+            cp dist/routecode release/${{ matrix.asset }}
           fi
 
       - name: Upload artifact
@@ -114,7 +114,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name || inputs.tag }}
-          name: "Loom ${{ github.ref_name || inputs.tag }}"
+          name: "RouteCode ${{ github.ref_name || inputs.tag }}"
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
@@ -135,20 +135,20 @@ jobs:
 
             **Python (pip / pipx):**
             ```sh
-            pipx install loomcli
+            pipx install routecode
             ```
 
             ---
 
             | Platform | Binary |
             |---|---|
-            | Windows x86_64 | `loom-cli-windows-x86_64.exe` |
-            | macOS Apple Silicon | `loom-cli-macos-arm64` |
-            | macOS Intel | `loom-cli-macos-x86_64` |
-            | Linux x86_64 | `loom-cli-linux-x86_64` |
+            | Windows x86_64 | `routecode-cli-windows-x86_64.exe` |
+            | macOS Apple Silicon | `routecode-cli-macos-arm64` |
+            | macOS Intel | `routecode-cli-macos-x86_64` |
+            | Linux x86_64 | `routecode-cli-linux-x86_64` |
 
   # ─────────────────────────────────────────────
-  # Publish to PyPI (pipx install loomcli)
+  # Publish to PyPI (pipx install routecode)
   # ─────────────────────────────────────────────
   publish-pypi:
     name: Publish to PyPI

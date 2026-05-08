@@ -1,7 +1,7 @@
 import pytest
 from dataclasses import dataclass
-from loomcli.tools.file_edit import FileEditTool
-from loomcli.core.path_guard import PathGuard
+from routecode.tools.file_edit import FileEditTool
+from routecode.core.path_guard import PathGuard
 
 
 @dataclass
@@ -19,11 +19,11 @@ def test_file_edit_success(tmp_path, ctx):
     test_file.write_text("Hello World\nThis is a test.")
 
     tool = FileEditTool()
-    result = tool.execute("test.txt", "World", "Loom", ctx=ctx)
+    result = tool.execute("test.txt", "World", "RouteCode", ctx=ctx)
 
     assert result["success"] is True
     assert "Replaced 1 occurrence" in result["message"]
-    assert test_file.read_text() == "Hello Loom\nThis is a test."
+    assert test_file.read_text() == "Hello RouteCode\nThis is a test."
 
 
 def test_file_edit_multiple_fail(tmp_path, ctx):

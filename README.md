@@ -1,11 +1,11 @@
-# 🪡 Loom
+# 🪡 RouteCode
 
 > An AI coding assistant that lives in your terminal — powered by any LLM.
 
-[![CI](https://github.com/anasx07/loom/actions/workflows/ci.yml/badge.svg)](https://github.com/anasx07/loom/actions/workflows/ci.yml)
-[![Release](https://github.com/anasx07/loom/actions/workflows/release.yml/badge.svg)](https://github.com/anasx07/loom/actions/workflows/release.yml)
-[![PyPI](https://img.shields.io/pypi/v/loomcli)](https://pypi.org/project/loomcli/)
-[![Python](https://img.shields.io/pypi/pyversions/loomcli)](https://pypi.org/project/loomcli/)
+[![CI](https://github.com/anasx07/routecode/actions/workflows/ci.yml/badge.svg)](https://github.com/anasx07/routecode/actions/workflows/ci.yml)
+[![Release](https://github.com/anasx07/routecode/actions/workflows/release.yml/badge.svg)](https://github.com/anasx07/routecode/actions/workflows/release.yml)
+[![PyPI](https://img.shields.io/pypi/v/routecodecli)](https://pypi.org/project/routecodecli/)
+[![Python](https://img.shields.io/pypi/pyversions/routecodecli)](https://pypi.org/project/routecodecli/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
@@ -16,56 +16,56 @@
 
 **macOS / Linux:**
 ```sh
-curl -fsSL https://raw.githubusercontent.com/anasx07/loom/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/anasx07/routecode/main/install.sh | sh
 ```
 
 **Windows (PowerShell):**
 ```powershell
-irm https://raw.githubusercontent.com/anasx07/loom/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/anasx07/routecode/main/install.ps1 | iex
 ```
 
-Downloads a self-contained binary and puts `loom` on your PATH automatically.
+Downloads a self-contained binary and puts `routecode` on your PATH automatically.
 
 ---
 
 ### 🐍 Via pip / pipx
 
 ```sh
-pipx install loomcli   # recommended — isolated environment
+pipx install routecodecli   # recommended — isolated environment
 # or
-pip install loomcli
+pip install routecodecli
 ```
 
-Both `loom` and `loomcli` commands are registered after install.
+Both `routecode` and `routecodecli` commands are registered after install.
 
 ---
 
 ### 📦 Manual binary download
 
-Grab the right binary from the [latest release](https://github.com/anasx07/loom/releases/latest):
+Grab the right binary from the [latest release](https://github.com/anasx07/routecode/releases/latest):
 
 | Platform            | Binary                      |
 |---------------------|-----------------------------|
-| Windows x86_64      | `loom-windows-x86_64.exe`   |
-| macOS Apple Silicon | `loom-macos-arm64`          |
-| macOS Intel         | `loom-macos-x86_64`         |
-| Linux x86_64        | `loom-linux-x86_64`         |
+| Windows x86_64      | `routecode-windows-x86_64.exe`   |
+| macOS Apple Silicon | `routecode-macos-arm64`          |
+| macOS Intel         | `routecode-macos-x86_64`         |
+| Linux x86_64        | `routecode-linux-x86_64`         |
 
-Place the binary anywhere on your `PATH` and rename it to `loom`.
+Place the binary anywhere on your `PATH` and rename it to `routecode`.
 
 ---
 
 ## Quick start
 
 ```sh
-loom                            # start interactive session
-loom --model gpt-4o             # specific model
-loom --provider anthropic       # specific provider
-loom --resume                   # resume last session
-loom --print "refactor this"    # single-shot, non-interactive
+routecode                            # start interactive session
+routecode --model gpt-4o             # specific model
+routecode --provider anthropic       # specific provider
+routecode --resume                   # resume last session
+routecode --print "refactor this"    # single-shot, non-interactive
 ```
 
-On first run, Loom will ask for your API key and save it to `~/.loomcli/config.json`.
+On first run, RouteCode will ask for your API key and save it to `~/.routecodecli/config.json`.
 
 ---
 
@@ -81,13 +81,13 @@ On first run, Loom will ask for your API key and save it to `~/.loomcli/config.j
 
 ---
 
-## What Loom can do
+## What RouteCode can do
 
 - **Read, write, and edit files** with diff preview and a permission system
 - **Run bash commands** with captured output and audit logging
 - **Spawn background sub-agents** for long tasks while you keep chatting
 - **Context compaction** — auto-summarises history so long sessions never hit limits
-- **Skills** — drop Markdown files into `.loomcli/skills/` to give Loom reusable instructions
+- **Skills** — drop Markdown files into `.routecodecli/skills/` to give RouteCode reusable instructions
 - **Session resume** — every conversation is saved; pick up where you left off
 - **Themes & personalities** — customise the look and the agent's tone
 
@@ -111,27 +111,27 @@ On first run, Loom will ask for your API key and save it to `~/.loomcli/config.j
 ## Building from source
 
 ```sh
-git clone https://github.com/anasx07/loom
-cd loom
+git clone https://github.com/anasx07/routecode
+cd routecode
 python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -e ".[dev]"
-loom
+routecode
 ```
 
 Build a standalone binary locally:
 ```sh
-pyinstaller --clean loom.spec
-./dist/loom
+pyinstaller --clean routecode.spec
+./dist/routecode
 ```
 
 ---
 
 ## Architecture & Project Structure
 
-Loom follows a domain-driven, modular architecture designed for stability and scalability.
+RouteCode follows a domain-driven, modular architecture designed for stability and scalability.
 
 ```text
-src/loomcli/
+src/routecodecli/
 ├── agents/             # Provider-specific implementations (LiteLLM, Anthropic, etc.)
 ├── commands/           # CLI slash-command handlers (/config, /session, etc.)
 ├── config/             # Global settings, models database, and system prompt logic

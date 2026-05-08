@@ -1,2 +1,2 @@
-py D:\DEV\Apps\Loom\scripts\release.py
+py D:\DEV\Apps\RouteCode\scripts\release.py
 pause

@@ -9,7 +9,7 @@ set RUFF_OPTS=--exclude=__pycache__,.venv,venv,dist,build,.gemini
 :: --- Header ---
 echo.
 echo  [96m==================================================== [0m
-echo  [96m       LoomCLI Linting ^& Formatting (Ruff)         [0m
+echo  [96m       routecode Linting ^& Formatting (Ruff)         [0m
 echo  [96m==================================================== [0m
 echo.
 

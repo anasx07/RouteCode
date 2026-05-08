@@ -1,7 +1,7 @@
 [project]
-name = "loomcli"
+name = "routecode"
 dynamic = ["version"]
-description = "Loom — an AI coding assistant for your terminal"
+description = "RouteCode — an AI coding assistant for your terminal"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [
@@ -31,11 +31,11 @@ dependencies = [
 ]
 requires-python = ">=3.10"
 
-# Both 'loom' and 'loomcli' invoke the same entry point
+# Both 'routecode' and 'routecode' invoke the same entry point
 [project.scripts]
-loom         = "loomcli.main:app"
-loomcli      = "loomcli.main:app"
-loom-release = "loomcli._release:main"
+routecode         = "routecode.main:app"
+routecode      = "routecode.main:app"
+routecode-release = "routecode._release:main"
 
 [project.optional-dependencies]
 dev = [
@@ -46,10 +46,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage      = "https://github.com/anasx07/loom"
-Repository    = "https://github.com/anasx07/loom"
-Documentation = "https://github.com/anasx07/loom#readme"
-"Bug Tracker" = "https://github.com/anasx07/loom/issues"
+Homepage      = "https://github.com/anasx07/routecode"
+Repository    = "https://github.com/anasx07/routecode"
+Documentation = "https://github.com/anasx07/routecode#readme"
+"Bug Tracker" = "https://github.com/anasx07/routecode/issues"
 
 [build-system]
 requires      = ["setuptools>=61.0", "setuptools-scm>=8.0"]
@@ -57,7 +57,7 @@ build-backend = "setuptools.build_meta"
 
 # Version is derived automatically from git tags (v1.2.3 → "1.2.3")
 [tool.setuptools_scm]
-write_to = "src/loomcli/_version.py"
+write_to = "src/routecode/_version.py"
 fallback_version = "0.0.0-dev"
 
 [tool.setuptools.packages.find]
@@ -66,6 +66,6 @@ where = ["src"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-norecursedirs = [".git", ".loomcli", "venv", ".venv", "build", "dist"]
+norecursedirs = [".git", ".routecode", "venv", ".venv", "build", "dist"]
 addopts = "--ignore=test.txt --ignore=test_progress.txt"
 python_files = "test_*.py"

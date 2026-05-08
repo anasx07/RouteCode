@@ -1,18 +1,18 @@
 #!/bin/sh
-# Loom installer — macOS & Linux
-# Usage: curl -fsSL https://raw.githubusercontent.com/anasx07/loom/main/install.sh | sh
+# RouteCode installer — macOS & Linux
+# Usage: curl -fsSL https://raw.githubusercontent.com/anasx07/routecode/main/install.sh | sh
 set -e
 
-REPO="anasx07/loom"
-BINARY="loom-cli"
-INSTALL_DIR="${LOOM_INSTALL_DIR:-$HOME/.local/bin}"
+REPO="anasx07/routecode"
+BINARY="routecode-cli"
+INSTALL_DIR="${ROUTECODE_INSTALL_DIR:-$HOME/.local/bin}"
 
 # ── Colour helpers ────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BOLD='\033[1m'; RESET='\033[0m'
-info()    { printf "${BOLD}[loom]${RESET} %s\n" "$1"; }
-success() { printf "${GREEN}[loom]${RESET} %s\n" "$1"; }
-warn()    { printf "${YELLOW}[loom]${RESET} %s\n" "$1"; }
-error()   { printf "${RED}[loom]${RESET} %s\n" "$1" >&2; exit 1; }
+info()    { printf "${BOLD}[routecode]${RESET} %s\n" "$1"; }
+success() { printf "${GREEN}[routecode]${RESET} %s\n" "$1"; }
+warn()    { printf "${YELLOW}[routecode]${RESET} %s\n" "$1"; }
+error()   { printf "${RED}[routecode]${RESET} %s\n" "$1" >&2; exit 1; }
 
 # ── Detect OS ────────────────────────────────
 OS="$(uname -s)"
@@ -47,7 +47,7 @@ LATEST=$($FETCH "https://api.github.com/repos/${REPO}/releases/latest" \
 
 [ -z "$LATEST" ] && error "Could not determine latest release. Check your internet connection."
 
-info "Installing loom ${LATEST} (${OS_NAME}/${ARCH_NAME})..."
+info "Installing routecode ${LATEST} (${OS_NAME}/${ARCH_NAME})..."
 
 URL="https://github.com/${REPO}/releases/download/${LATEST}/${ASSET}"
 
@@ -64,12 +64,12 @@ fi
 chmod +x "$TMP"
 mv "$TMP" "${INSTALL_DIR}/${BINARY}"
 
-success "loom installed to ${INSTALL_DIR}/${BINARY}"
+success "routecode installed to ${INSTALL_DIR}/${BINARY}"
 
 # ── PATH check ────────────────────────────────
 case ":$PATH:" in
   *":${INSTALL_DIR}:"*)
-    success "Already on PATH. Type 'loom' to get started."
+    success "Already on PATH. Type 'routecode' to get started."
     ;;
   *)
     warn "${INSTALL_DIR} is not on your PATH."

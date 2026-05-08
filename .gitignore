@@ -9,7 +9,7 @@ __pycache__/
 MANIFEST
 
 # ── Build artefacts ───────────────────────────
-# NOTE: loom.spec is intentionally NOT excluded — it is needed by PyInstaller CI
+# NOTE: routecode.spec is intentionally NOT excluded — it is needed by PyInstaller CI
 dist/
 build/
 *.whl
@@ -42,12 +42,12 @@ coverage.xml
 
 
 # ── Project runtime data ──────────────────────
-# Don't commit local Loom session/config data
-.loomcli/sessions/
-.loomcli/memory.json
+# Don't commit local RouteCode session/config data
+.routecodecli/sessions/
+.routecodecli/memory.json
 
-# Keep .loomcli/skills/ — project-level skills worth committing
-!.loomcli/skills/
+# Keep .routecodecli/skills/ — project-level skills worth committing
+!.routecodecli/skills/
 
 # ── Temporary / scratch files ─────────────────
 tests/tmp/

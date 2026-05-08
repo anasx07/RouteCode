@@ -1,6 +1,6 @@
 @echo off
 echo ========================================
-echo Building LoomCLI Portable Executable
+echo Building routecode Portable Executable
 echo ========================================
 
 :: Check for virtual environment
@@ -20,7 +20,7 @@ pip install pyinstaller
 
 :: Run PyInstaller
 echo [*] Running PyInstaller...
-pyinstaller --clean loomcli.spec
+pyinstaller --clean routecode.spec
 
 echo.
 echo ========================================

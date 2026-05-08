@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-release.py — Loom Release CLI
+release.py — RouteCode Release CLI
 ==============================
 Run from the repo root:  python scripts/release.py
 """
@@ -35,7 +35,7 @@ except ImportError:
 
 # ──────────────────────────────────────────────────────────────────────────
 REPO_ROOT = Path(__file__).resolve().parent.parent
-ACCENT = "#ff4444"  # Loom lava red
+ACCENT = "#ff4444"  # RouteCode lava red
 DIM = "bright_black"
 BOLD = "bold white"
 
@@ -155,7 +155,7 @@ class Version:
 def header():
     console.print()
     title = Text()
-    title.append("🪡  LOOM ", style=f"bold {ACCENT}")
+    title.append("🪡  ROUTECODE ", style=f"bold {ACCENT}")
     title.append("Release CLI", style=BOLD)
     console.print(Panel(title, border_style=ACCENT, padding=(0, 2)))
     console.print()
@@ -309,7 +309,7 @@ def pick_version(n_steps: int) -> tuple[Version, str]:
 def update_version_file(new_ver: Version, n_steps: int):
     step(3, n_steps, "Update version fallback & commit")
 
-    path = REPO_ROOT / "src" / "loomcli" / "__init__.py"
+    path = REPO_ROOT / "src" / "routecode" / "__init__.py"
     if not path.exists():
         warn(f"Version file not found at {path}. Skipping.")
     else:
@@ -585,19 +585,19 @@ def summary(new_ver: Version, actions_url: str):
 
     lines = Text()
     lines.append(
-        f"  🎉  Loom {new_ver.tag()} is on its way!\n\n", style=f"bold {ACCENT}"
+        f"  🎉  RouteCode {new_ver.tag()} is on its way!\n\n", style=f"bold {ACCENT}"
     )
     lines.append("  GitHub Actions is now:\n", style="white")
-    lines.append("    1. Building loom.exe          ", style=DIM)
+    lines.append("    1. Building routecode.exe          ", style=DIM)
     lines.append("Windows\n", style="cyan")
-    lines.append("    2. Building loom (arm64)      ", style=DIM)
+    lines.append("    2. Building routecode (arm64)      ", style=DIM)
     lines.append("macOS Apple Silicon\n", style="cyan")
-    lines.append("    3. Building loom (x86_64)     ", style=DIM)
+    lines.append("    3. Building routecode (x86_64)     ", style=DIM)
     lines.append("macOS Intel\n", style="cyan")
-    lines.append("    4. Building loom              ", style=DIM)
+    lines.append("    4. Building routecode              ", style=DIM)
     lines.append("Linux\n", style="cyan")
     lines.append("    5. Publishing to PyPI         ", style=DIM)
-    lines.append("pipx install loomcli\n", style="green")
+    lines.append("pipx install routecode\n", style="green")
 
     if actions_url:
         lines.append(

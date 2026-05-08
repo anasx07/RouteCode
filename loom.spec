@@ -1,7 +1,7 @@
 from PyInstaller.utils.hooks import collect_data_files
 
 a = Analysis(
-    ['run_loomcli.py'],
+    ['run_routecode.py'],
     pathex=[],
     binaries=[],
     datas=collect_data_files('litellm') + collect_data_files('tiktoken'),
@@ -21,7 +21,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='loom',
+    name='routecode',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
