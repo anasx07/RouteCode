@@ -4,7 +4,7 @@
 set -e
 
 REPO="anasx07/loom"
-BINARY="loom"
+BINARY="loom-cli"
 INSTALL_DIR="${LOOM_INSTALL_DIR:-$HOME/.local/bin}"
 
 # ── Colour helpers ────────────────────────────

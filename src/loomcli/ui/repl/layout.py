@@ -261,10 +261,9 @@ class LoomLayout:
     def _get_welcome_model_line(self):
         accent = THEME_ACCENTS.get(_current_theme_name, "#ffaf00")
         return [
-            (f"fg:{accent} bold", "Build"),
+            (f"fg:{accent} bold", f"{self.repl.ctx.config.provider.title()}"),
             ("fg:#555566", " · "),
-            ("bold #ffffff", f"{self.repl.ctx.config.model} "),
-            ("fg:#555566", f"{self.repl.ctx.config.provider}"),
+            ("bold #ffffff", f"{self.repl.ctx.config.model}"),
         ]
 
     def _get_welcome_tip(self):
@@ -280,10 +279,12 @@ class LoomLayout:
     def _get_input_model_line(self):
         accent = THEME_ACCENTS.get(_current_theme_name, "#ffaf00")
         return [
-            (f"bg:#22222a fg:{accent} bold", "Build"),
+            (
+                f"bg:#22222a fg:{accent} bold",
+                f"{self.repl.ctx.config.provider.title()}",
+            ),
             ("bg:#22222a fg:#555566", " · "),
-            ("bg:#22222a #ffffff bold", f"{self.repl.ctx.config.model} "),
-            ("bg:#22222a fg:#555566", f"{self.repl.ctx.config.provider}"),
+            ("bg:#22222a #ffffff bold", f"{self.repl.ctx.config.model}"),
         ]
 
     def _get_session_footer_left(self):

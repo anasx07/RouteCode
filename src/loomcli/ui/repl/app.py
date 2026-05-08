@@ -296,6 +296,19 @@ class LoomREPL:
                 self.request_invalidate()
             await asyncio.sleep(0.1)
 
+    async def _check_for_updates(self):
+        """Background task: check for Loom updates on startup."""
+        try:
+            await asyncio.sleep(3)
+            from ...updater import check_for_update
+
+            info = check_for_update()
+            if info.is_available:
+                self.toast_message = f"Update {info.latest_version} available — /update"
+                self.request_invalidate()
+        except Exception:
+            pass
+
     def _on_session_reset(self, **kwargs):
         self.history_buffer.text = ""
         self._welcome_mode = True
@@ -355,6 +368,8 @@ class LoomREPL:
 
         # Start periodic refresh loop for animations
         asyncio.create_task(self._periodic_refresh_loop())
+        # Start background update check (fires after 3s delay)
+        asyncio.create_task(self._check_for_updates())
 
         await self.app.run_async()
 

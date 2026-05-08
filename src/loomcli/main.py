@@ -23,6 +23,9 @@ def main(
     print_mode: bool = typer.Option(
         False, "--print", help="Run a single query and print the result (headless)"
     ),
+    update: bool = typer.Option(
+        False, "--update", help="Check for and install the latest version of Loom"
+    ),
 ):
     """LoomCLI: An AI assistant for your terminal."""
     if ctx.invoked_subcommand is not None:
@@ -31,6 +34,26 @@ def main(
     from .utils.logger import setup_logging
 
     setup_logging()
+
+    if update:
+        from .updater import check_for_update, perform_update
+
+        _ui.console.print("[accent]Checking for updates...[/accent]")
+        info = check_for_update()
+        if info.error:
+            _ui.console.print(f"[dim]{info.error}[/dim]")
+        elif info.is_available:
+            _ui.console.print(
+                f"[accent]Update available:[/accent] "
+                f"[white]{info.current_version}[/white] → [white]{info.latest_version}[/white]"
+            )
+            perform_update(info, console=_ui.console)
+            raise typer.Exit()
+        else:
+            _ui.console.print(
+                f"[success]Already up to date[/success] [dim]({info.current_version})[/dim]"
+            )
+            raise typer.Exit()
 
     if model:
         config.model = model

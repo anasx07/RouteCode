@@ -6,4 +6,4 @@ try:
 
         __version__ = version("loomcli")
 except Exception:
-    __version__ = "1.0.3"
+    __version__ = "1.1.0"

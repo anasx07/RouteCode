@@ -8,6 +8,7 @@ from .core import (
     handle_version,
     handle_clear,
     handle_exit,
+    handle_update,
 )
 from .config import (
     handle_provider,
@@ -52,6 +53,7 @@ COMMANDS = {
     "/memories": handle_memories,
     "/clear": handle_clear,
     "/exit": handle_exit,
+    "/update": handle_update,
 }
 
 
@@ -80,6 +82,7 @@ def get_command_metadata() -> Dict[str, str]:
         "/memories": "List all saved memories",
         "/clear": "Clear the terminal screen",
         "/exit": "Exit the session",
+        "/update": "Check for and install Loom updates",
     }
 
 

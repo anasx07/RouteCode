@@ -26,22 +26,22 @@ jobs:
           - os: windows-latest
             label: Windows x86_64
             artifact: loom.exe
-            asset:   loom-windows-x86_64.exe
+            asset:   loom-cli-windows-x86_64.exe
 
           - os: macos-latest        # Apple Silicon (arm64)
             label: macOS arm64
             artifact: loom
-            asset:   loom-macos-arm64
+            asset:   loom-cli-macos-arm64
 
           - os: macos-12            # Intel (x86_64)
             label: macOS x86_64
             artifact: loom
-            asset:   loom-macos-x86_64
+            asset:   loom-cli-macos-x86_64
 
           - os: ubuntu-latest
             label: Linux x86_64
             artifact: loom
-            asset:   loom-linux-x86_64
+            asset:   loom-cli-linux-x86_64
 
     runs-on: ${{ matrix.os }}
 
@@ -140,10 +140,10 @@ jobs:
 
             | Platform | Binary |
             |---|---|
-            | Windows x86_64 | `loom-windows-x86_64.exe` |
-            | macOS Apple Silicon | `loom-macos-arm64` |
-            | macOS Intel | `loom-macos-x86_64` |
-            | Linux x86_64 | `loom-linux-x86_64` |
+            | Windows x86_64 | `loom-cli-windows-x86_64.exe` |
+            | macOS Apple Silicon | `loom-cli-macos-arm64` |
+            | macOS Intel | `loom-cli-macos-x86_64` |
+            | Linux x86_64 | `loom-cli-linux-x86_64` |
 
   # ─────────────────────────────────────────────
   # Publish to PyPI (pipx install loomcli)

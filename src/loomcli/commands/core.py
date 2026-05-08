@@ -86,6 +86,34 @@ def handle_clear(args: List[str], ctx: LoomContext):
     refresh_screen(ctx)
 
 
+def handle_update(args: List[str], ctx: LoomContext):
+    from ..updater import check_for_update, perform_update
+
+    ctx.console.print("[accent]Checking for updates...[/accent]")
+    info = check_for_update()
+
+    if info.error:
+        ctx.console.print(f"[dim]Could not check for updates: {info.error}[/dim]")
+        ctx.console.print(
+            f"[dim]Visit [link={info.release_url}]{info.release_url}[/link][/dim]"
+        )
+        return
+
+    if not info.is_available:
+        ctx.console.print(
+            f"[success]Loom is up to date[/success] [dim]({info.current_version})[/dim]"
+        )
+        return
+
+    ctx.console.print(
+        f"[accent]Update available![/accent] "
+        f"[white]{info.current_version}[/white] → [white]{info.latest_version}[/white]"
+    )
+    ctx.console.print(f"[dim]{info.install_type} install[/dim]")
+
+    perform_update(info, console=ctx.console)
+
+
 async def handle_exit(args: List[str], ctx: LoomContext):
     from .session import handle_save
 

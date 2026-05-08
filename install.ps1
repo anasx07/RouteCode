@@ -5,7 +5,7 @@ $ErrorActionPreference = "Stop"
 
 $REPO = "anasx07/loom"
 $BINARY = "loom"
-$ASSET = "loom-windows-x86_64.exe"
+$ASSET = "loom-cli-windows-x86_64.exe"
 $INSTALL_DIR = "$env:LOCALAPPDATA\Programs\loom"
 
 function Write-Info { Write-Host "[loom] $args" -ForegroundColor Cyan }
