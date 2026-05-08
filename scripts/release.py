@@ -307,7 +307,7 @@ def pick_version(n_steps: int) -> tuple[Version, str]:
 
 
 def update_version_file(new_ver: Version, n_steps: int):
-    step(3, n_steps, "Update version fallback & commit")
+    step(3, n_steps, "Update version fallback")
 
     path = REPO_ROOT / "src" / "routecode" / "__init__.py"
     if not path.exists():
@@ -323,14 +323,23 @@ def update_version_file(new_ver: Version, n_steps: int):
             ok(
                 f"Updated version to [bold cyan]{new_ver}[/bold cyan] in {path.relative_to(REPO_ROOT)}"
             )
-
     console.print()
+
+
+def wait_for_commit(new_ver: Version, n_steps: int, cur_step: int) -> int:
+    step(cur_step, n_steps, "Final commit check")
+
+    if not is_dirty():
+        ok("Working tree is clean.")
+        console.print()
+        return cur_step + 1
+
     console.print("  [bold yellow]ACTION REQUIRED:[/bold yellow]")
     console.print(
-        "  Please commit the version update (and any other pending changes) to proceed."
+        "  Please commit the version update and all lint/test fixes to proceed."
     )
-    console.print(f"  [dim]git add {path.relative_to(REPO_ROOT)}[/dim]")
-    console.print(f'  [dim]git commit -m "chore: bump version to {new_ver}"[/dim]')
+    console.print("  [dim]git add .[/dim]")
+    console.print(f'  [dim]git commit -m "chore: release {new_ver.tag()}"[/dim]')
     console.print()
 
     while is_dirty():
@@ -342,8 +351,9 @@ def update_version_file(new_ver: Version, n_steps: int):
                 "Working tree is still dirty. Please ensure all changes are committed."
             )
 
-    ok("Changes committed. Proceeding with release pipeline.")
+    ok("All changes committed. Proceeding to tag.")
     console.print()
+    return cur_step + 1
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -620,7 +630,7 @@ def summary(new_ver: Version, actions_url: str):
 def main():
     os.chdir(REPO_ROOT)
 
-    N_STEPS = 8  # preflight, version, update, changelog, lint, format, tests, tag+push
+    N_STEPS = 9  # preflight, version, update, changelog, lint, format, tests, commit, tag+push
 
     header()
 
@@ -631,6 +641,7 @@ def main():
     cur = maybe_run_lint(N_STEPS, 5)
     cur = maybe_run_format(N_STEPS, cur)
     cur = maybe_run_tests(N_STEPS, cur)
+    cur = wait_for_commit(new_ver, N_STEPS, cur)
     actions_url = tag_and_push(new_ver, N_STEPS, cur)
     summary(new_ver, actions_url)
 

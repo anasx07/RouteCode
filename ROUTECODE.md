@@ -4,7 +4,7 @@
 - If you create a file, always explain why.
 
 ## Recent Enhancements
-- **Persistent History**: The REPL now saves your command history in `~/.routecodecli/history`.
+- **Persistent History**: The REPL now saves your command history in `~/.routecode/history`.
 - **Comprehensive Project Context**: The AI now automatically reads `ROUTECODE.md`, `README.md`, and `pyproject.toml` to understand your project better.
 - **Enhanced Tools**: 
     - `file_edit` now supports an `allow_multiple` flag for bulk replacements.
@@ -14,5 +14,5 @@
 
 ## Development & Testing
 - To run tests: `$env:PYTHONPATH="src"; python -m pytest`
-- History is stored in `~/.routecodecli/history`
-- Configuration is in `~/.routecodecli/config.json`
+- History is stored in `~/.routecode/history`
+- Configuration is in `~/.routecode/config.json`

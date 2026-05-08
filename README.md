@@ -4,8 +4,8 @@
 
 [![CI](https://github.com/anasx07/routecode/actions/workflows/ci.yml/badge.svg)](https://github.com/anasx07/routecode/actions/workflows/ci.yml)
 [![Release](https://github.com/anasx07/routecode/actions/workflows/release.yml/badge.svg)](https://github.com/anasx07/routecode/actions/workflows/release.yml)
-[![PyPI](https://img.shields.io/pypi/v/routecodecli)](https://pypi.org/project/routecodecli/)
-[![Python](https://img.shields.io/pypi/pyversions/routecodecli)](https://pypi.org/project/routecodecli/)
+[![PyPI](https://img.shields.io/pypi/v/routecode)](https://pypi.org/project/routecode/)
+[![Python](https://img.shields.io/pypi/pyversions/routecode)](https://pypi.org/project/routecode/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
@@ -31,12 +31,12 @@ Downloads a self-contained binary and puts `routecode` on your PATH automaticall
 ### 🐍 Via pip / pipx
 
 ```sh
-pipx install routecodecli   # recommended — isolated environment
+pipx install routecode   # recommended — isolated environment
 # or
-pip install routecodecli
+pip install routecode
 ```
 
-Both `routecode` and `routecodecli` commands are registered after install.
+Both `routecode` commands are registered after install.
 
 ---
 
@@ -65,7 +65,7 @@ routecode --resume                   # resume last session
 routecode --print "refactor this"    # single-shot, non-interactive
 ```
 
-On first run, RouteCode will ask for your API key and save it to `~/.routecodecli/config.json`.
+On first run, RouteCode will ask for your API key and save it to `~/.routecode/config.json`.
 
 ---
 
@@ -87,7 +87,7 @@ On first run, RouteCode will ask for your API key and save it to `~/.routecodecl
 - **Run bash commands** with captured output and audit logging
 - **Spawn background sub-agents** for long tasks while you keep chatting
 - **Context compaction** — auto-summarises history so long sessions never hit limits
-- **Skills** — drop Markdown files into `.routecodecli/skills/` to give RouteCode reusable instructions
+- **Skills** — drop Markdown files into `.routecode/skills/` to give RouteCode reusable instructions
 - **Session resume** — every conversation is saved; pick up where you left off
 - **Themes & personalities** — customise the look and the agent's tone
 

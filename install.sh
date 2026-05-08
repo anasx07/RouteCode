@@ -4,7 +4,7 @@
 set -e
 
 REPO="anasx07/routecode"
-BINARY="routecode-cli"
+BINARY="routecode"
 INSTALL_DIR="${ROUTECODE_INSTALL_DIR:-$HOME/.local/bin}"
 
 # ── Colour helpers ────────────────────────────
