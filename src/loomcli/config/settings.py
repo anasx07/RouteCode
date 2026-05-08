@@ -8,7 +8,7 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 
 class Config:
     def __init__(self):
-        from .core.storage import AtomicJsonStore
+        from ..utils.storage import AtomicJsonStore
 
         self._provider: str = os.environ.get("LOOM_PROVIDER", "openrouter")
         self._model: str = os.environ.get("LOOM_MODEL", "anthropic/claude-3.5-sonnet")
@@ -31,7 +31,7 @@ class Config:
     def provider(self, value: str):
         if self._provider != value:
             self._provider = value
-            from .core import bus
+            from ..core.events import bus
 
             bus.emit("config.provider_changed", provider=value)
 
@@ -44,7 +44,7 @@ class Config:
         if self._model != value:
             self._model = value
             self.add_recent_model(self._provider, value)
-            from .core import bus
+            from ..core.events import bus
 
             bus.emit("config.model_changed", model=value)
 
@@ -66,7 +66,7 @@ class Config:
             self.favorites = data.get("favorites", [])
 
     def _load_env_keys(self):
-        from .agents.registry import PROVIDER_MAP
+        from ..agents.registry import PROVIDER_MAP
 
         for provider in PROVIDER_MAP.keys():
             key = os.environ.get(f"LOOM_{provider.upper()}_KEY")
@@ -104,7 +104,7 @@ class Config:
     def set_api_key(self, provider: str, key: str):
         self.api_keys[provider] = key
         if provider == self.provider:
-            from .core import bus
+            from ..core.events import bus
 
             bus.emit("config.provider_changed", provider=provider)
         self.save()

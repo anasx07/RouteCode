@@ -1,17 +1,17 @@
 import os
 import asyncio
 from typing import Optional, TYPE_CHECKING
-from .tools import registry
+from ..tools import registry
 
 if TYPE_CHECKING:
-    from .core import LoomContext
+    from ..core import LoomContext
 
 
 SYSTEM_PROMPT_DYNAMIC_BOUNDARY = "__DYNAMIC__"
 
 
 def _build_identity_section() -> str:
-    return """You are Loomb CLI, an AI software engineering assistant running in a terminal.
+    return """You are Loom CLI, an AI software engineering assistant running in a terminal.
 You have access to local file system tools and a shell environment.
 When responding, start with a <thought> block for your internal reasoning and plan, then provide your response."""
 
@@ -97,13 +97,13 @@ async def _build_context_section_async() -> str:
 
 
 async def _build_git_section_async() -> str:
-    from .git import get_git_context_async
+    from ..domain.git import get_git_context_async
 
     return await get_git_context_async()
 
 
 def _build_skill_section() -> str:
-    from .skills import get_skill_prompts
+    from ..domain.skills import get_skill_prompts
 
     return get_skill_prompts()
 
@@ -125,10 +125,10 @@ User: {user}
 
 
 async def compute_system_prompt(ctx: "LoomContext") -> str:
-    from .personalities import get_personality_section, get_active_personality
+    from ..domain.personalities import get_personality_section, get_active_personality
 
     if ctx.config.personality:
-        from .personalities import load_personalities
+        from ..domain.personalities import load_personalities
 
         pers = load_personalities().get(ctx.config.personality)
     else:

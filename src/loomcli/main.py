@@ -1,7 +1,7 @@
 import typer
 import sys
 from typing import Optional
-from .repl import LoomREPL
+from .ui.repl import LoomREPL
 from . import ui as _ui
 from .config import config
 
@@ -28,7 +28,7 @@ def main(
     if ctx.invoked_subcommand is not None:
         return
 
-    from .core import setup_logging
+    from .utils.logger import setup_logging
 
     setup_logging()
 

@@ -5,7 +5,7 @@ import time
 import asyncio
 from typing import Dict, Optional, Any
 from dataclasses import dataclass, field
-from .core.events import bus
+from ..core.events import bus
 
 
 @dataclass

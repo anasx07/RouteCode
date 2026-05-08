@@ -1,12 +1,12 @@
 import asyncio
 import dataclasses
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, TYPE_CHECKING
 from pydantic import BaseModel, Field
 from .base import BaseTool
-from ..core import SessionState, LoomContext
-from ..orchestrator import AgentOrchestrator, OrchestratorHooks
-from ..core import ConversationHistory
-from ..utils import strip_thought, extract_tag
+from ..utils.helpers import strip_thought, extract_tag
+
+if TYPE_CHECKING:
+    from ..core.context import LoomContext
 
 
 class TaskInput(BaseModel):
@@ -25,9 +25,13 @@ async def _run_sub_agent_async(
     task: str,
     max_iterations: int,
     task_id: str,
-    ctx: LoomContext,
+    ctx: "LoomContext",
     provider: Optional[Any] = None,
 ):
+    from ..core.state import SessionState
+    from ..core.orchestrator import AgentOrchestrator, OrchestratorHooks
+    from ..core.history import ConversationHistory
+
     # Isolate sub-agent state to prevent interference with parent context management
     sub_ctx = dataclasses.replace(ctx, state=SessionState())
 
@@ -109,18 +113,18 @@ class TaskTool(BaseTool):
     def get_activity_description(self, task: str = "", **kwargs) -> str:
         return f"Task({task[:50]})"
 
-    def execute(
+    def _run(
         self,
         task: str,
         max_iterations: int = 10,
         run_in_background: bool = False,
-        ctx: Optional[LoomContext] = None,
+        ctx: Optional["LoomContext"] = None,
         provider: Optional[Any] = None,
         **kwargs,
     ) -> Dict[str, Any]:
-        from ..task_manager import generate_task_id
+        from ..domain.task_manager import generate_task_id
 
-        task_id = generate_task_id()
+        task_id = kwargs.get("task_id_override", generate_task_id())
 
         if ctx is None or ctx.loop is None:
             return {
@@ -163,3 +167,21 @@ class TaskTool(BaseTool):
             return {"success": False, "error": f"Task {task_id} failed or was killed"}
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+
+def _run_sub_agent(
+    task: str,
+    max_iterations: int = 10,
+    task_id: str = "tmp",
+    ctx: Optional["LoomContext"] = None,
+    provider: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """Sync convenience wrapper for sub-agent execution (used by skills)."""
+    tool = TaskTool()
+    return tool.execute(
+        task=task,
+        max_iterations=max_iterations,
+        ctx=ctx,
+        provider=provider,
+        task_id_override=task_id,
+    )

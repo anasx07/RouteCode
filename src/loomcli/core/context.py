@@ -1,13 +1,15 @@
 import asyncio
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from dataclasses import dataclass
 from rich.console import Console
 from .state import SessionState
 from ..config import Config
-from ..task_manager import TaskManager
-from ..memory import MemoryManager
+from .memory import MemoryManager
 
 from .path_guard import PathGuard
+
+if TYPE_CHECKING:
+    from ..domain.task_manager import TaskManager
 
 
 @dataclass
@@ -20,7 +22,7 @@ class LoomContext:
     state: SessionState
     config: Config
     console: Console
-    task_manager: TaskManager
+    task_manager: "TaskManager"
     memory: MemoryManager
     path_guard: PathGuard
     loop: Optional[asyncio.AbstractEventLoop] = None

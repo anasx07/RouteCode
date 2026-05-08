@@ -26,7 +26,7 @@ class FileWriteTool(BaseTool):
             "Provide file_path and content. Creates parent directories automatically. Runs serially."
         )
 
-    def execute(
+    def _run(
         self,
         file_path: str,
         content: str,

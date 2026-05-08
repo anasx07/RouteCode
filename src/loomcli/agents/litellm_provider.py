@@ -103,6 +103,11 @@ class LiteLLMProvider(AIProvider):
                     if content:
                         yield {"type": "text", "content": content}
 
+                    # Handle reasoning content (e.g. DeepSeek, OpenAI O1)
+                    reasoning = delta.get("reasoning_content")
+                    if reasoning:
+                        yield {"type": "reasoning", "content": reasoning}
+
                     # Handle tool calls
                     tool_calls = delta.get("tool_calls")
                     if tool_calls:
@@ -113,7 +118,7 @@ class LiteLLMProvider(AIProvider):
                                     "id": tc.get("id"),
                                     "type": "function",
                                     "function": {
-                                        "name": tc.get("function", {}).get("name", ""),
+                                        "name": "",
                                         "arguments": "",
                                     },
                                 }

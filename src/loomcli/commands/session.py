@@ -73,7 +73,7 @@ async def handle_load(args: List[str], ctx: LoomContext):
     choices = []
     for sf in session_files[:20]:
         try:
-            from ..core import AtomicJsonStore
+            from ..utils.storage import AtomicJsonStore
 
             data = AtomicJsonStore(sf).load()
             label = f"{sf.stem} ({data.get('saved_at', '?')})"
@@ -102,6 +102,20 @@ async def handle_load(args: List[str], ctx: LoomContext):
                 print_error(f"Failed to load session: {result}")
         except Exception as e:
             print_error(f"Error loading session: {e}")
+
+
+async def handle_new(args: List[str], ctx: LoomContext):
+    from ..core.events import bus
+
+    ctx.state.session_messages.clear()
+    ctx.state.tokens_used = 0
+    ctx.state.estimated_cost = 0.0
+    ctx.state.commands_run = 0
+    ctx.state.tools_called = 0
+    ctx.state.start_time = 0.0
+
+    bus.emit("session.reset")
+    print_success("New session started.")
 
 
 def handle_rewind(args: List[str], ctx: LoomContext):

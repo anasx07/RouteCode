@@ -432,7 +432,7 @@ async def handle_theme(args: List[str], ctx: LoomContext):
 
 
 async def handle_personality(args: List[str], ctx: LoomContext):
-    from ..personalities import load_personalities, get_active_personality
+    from ..domain.personalities import load_personalities, get_active_personality
 
     if args:
         name = args[0]

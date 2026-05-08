@@ -63,7 +63,7 @@ class FileReadTool(BaseTool):
     def get_activity_description(self, file_path: str = "", **kwargs) -> str:
         return f"Read({file_path})"
 
-    def execute(
+    def _run(
         self,
         file_path: str,
         offset: int = 0,

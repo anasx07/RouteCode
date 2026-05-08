@@ -2,7 +2,7 @@ import sys
 import shutil
 import atexit
 import signal
-from ..utils import parse_hex_color
+from ..utils.helpers import parse_hex_color
 
 
 def _cleanup_terminal():

@@ -40,7 +40,13 @@ class ContextManager:
                 retained_content = " ".join(
                     m.get("content", "") or "" for m in compacted
                 )
-                self.ctx.state.tokens_used = count_tokens(retained_content, model)
+                if hasattr(self.ctx.state, '_tokenizer') and self.ctx.state._tokenizer:
+                    new_token_count = self.ctx.state._tokenizer.count_tokens(retained_content, model)
+                    self.ctx.state._tokenizer.load_state(new_token_count, self.ctx.state.estimated_cost)
+                    self.ctx.state.tokens_used = new_token_count
+                else:
+                    self.ctx.state.tokens_used = count_tokens(retained_content, model)
+                
                 self.ctx.state.reset_context_warning()
                 bus.emit(
                     "context.compacted",

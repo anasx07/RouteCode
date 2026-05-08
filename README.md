@@ -84,7 +84,7 @@ On first run, Loom will ask for your API key and save it to `~/.loomcli/config.j
 ## What Loom can do
 
 - **Read, write, and edit files** with diff preview and a permission system
-- **Run bash commands** with sandboxed output and audit logging
+- **Run bash commands** with captured output and audit logging
 - **Spawn background sub-agents** for long tasks while you keep chatting
 - **Context compaction** — auto-summarises history so long sessions never hit limits
 - **Skills** — drop Markdown files into `.loomcli/skills/` to give Loom reusable instructions
@@ -122,6 +122,25 @@ Build a standalone binary locally:
 ```sh
 pyinstaller --clean loom.spec
 ./dist/loom
+```
+
+---
+
+## Architecture & Project Structure
+
+Loom follows a domain-driven, modular architecture designed for stability and scalability.
+
+```text
+src/loomcli/
+├── agents/             # Provider-specific implementations (LiteLLM, Anthropic, etc.)
+├── commands/           # CLI slash-command handlers (/config, /session, etc.)
+├── config/             # Global settings, models database, and system prompt logic
+├── core/               # Orchestration, event bus, context management, and state
+├── domain/             # Business logic (Task management, Skills, Git, Personalities)
+├── tools/              # AI-accessible tools (file_edit, bash, webfetch, etc.)
+├── ui/                 # TUI components, theme engine, and dialogs
+│   └── repl/           # Core interactive application logic (split-pane TUI)
+└── utils/              # Shared utilities (logging, atomic storage, cost estimation)
 ```
 
 ---

@@ -21,6 +21,7 @@ from .session import (
     handle_save,
     handle_load,
     handle_rewind,
+    handle_new,
     handle_edit,
     handle_search,
 )
@@ -38,6 +39,7 @@ COMMANDS = {
     "/history": handle_history,
     "/save": handle_save,
     "/load": handle_load,
+    "/new": handle_new,
     "/tasks": handle_tasks,
     "/task-stop": handle_task_stop,
     "/rewind": handle_rewind,
@@ -65,6 +67,7 @@ def get_command_metadata() -> Dict[str, str]:
         "/history": "Show recent conversation messages",
         "/save [name]": "Save the current conversation",
         "/load": "Load a saved conversation",
+        "/new": "Start a new session (clears history & counters)",
         "/tasks": "List active and recent tasks",
         "/task-stop <id>": "Stop a running task",
         "/rewind [n]": "Remove the last N turns from the conversation",
@@ -81,7 +84,7 @@ def get_command_metadata() -> Dict[str, str]:
 
 
 async def execute_command(input_str: str, ctx: LoomContext) -> bool:
-    from ..skills import discover_skills
+    from ..domain.skills import discover_skills
 
     parts = input_str.split()
     if not parts:
@@ -107,7 +110,7 @@ async def execute_command(input_str: str, ctx: LoomContext) -> bool:
         label = f"Skill({skill.name})"
         ctx.state.commands_run += 1
         ctx.console.print_tool_call(label, {})
-        from ..skills import run_skill
+        from ..domain.skills import run_skill
 
         # Skills might be sync or async, but for now they are mostly sync
         result = run_skill(skill, arg_str)

@@ -1,14 +1,16 @@
 import time
 from dataclasses import dataclass, field
 from typing import Optional
-from .costs import cost_estimator
+
 from .history import ConversationHistory
-from .storage import AtomicJsonStore
+from ..utils.storage import AtomicJsonStore
 from ..config import CONFIG_DIR
 
 
 def count_tokens(text: str, model: Optional[str] = None) -> int:
     """Delegates to the centralized cost_estimator."""
+    from ..utils.costs import cost_estimator
+
     return cost_estimator.count_tokens(text, model or "gpt-4")
 
 
@@ -25,41 +27,21 @@ class SessionState:
     provider: Optional[str] = None
     model: Optional[str] = None
 
-    def add_tokens(
-        self,
-        count: int,
-        model: Optional[str] = None,
-        input_tokens: Optional[int] = None,
-        output_tokens: Optional[int] = None,
-    ):
-        """
-        Updates session statistics with new token usage.
-        If input_tokens/output_tokens are provided, uses them for precise costing.
-        Otherwise, treats 'count' as total and estimates a 50/50 split.
-        """
-        if input_tokens is not None and output_tokens is not None:
-            self.tokens_used += input_tokens + output_tokens
-            cost, ctx_limit, _ = cost_estimator.calculate_cost(
-                input_tokens, output_tokens, model or ""
-            )
-        else:
-            self.tokens_used += count
-            # Estimate 50/50 split if only total is provided
-            cost, ctx_limit, _ = cost_estimator.calculate_cost(
-                count // 2, count // 2, model or ""
-            )
+    def bind_tokenizer(self, tokenizer):
+        self._tokenizer = tokenizer
+        from .events import bus
+        bus.on("tokenizer.usage_updated", self._on_usage_updated)
 
-        self.estimated_cost += cost
-
-        if not self.context_warned and ctx_limit > 0:
-            pct = self.tokens_used / ctx_limit * 100
-            if pct > 70:
-                self.context_warned = True
-                return pct
-        return None
+    def _on_usage_updated(self, tokens: int, cost: float, **kwargs):
+        self.tokens_used = tokens
+        self.estimated_cost = cost
 
     def get_context_usage(self, model: str) -> float:
         """Returns the current context usage percentage."""
+        if hasattr(self, '_tokenizer') and self._tokenizer:
+            return self._tokenizer.get_context_usage_percent(model)
+        
+        from ..utils.costs import cost_estimator
         _, ctx_limit, _ = cost_estimator.calculate_cost(0, 0, model)
         if ctx_limit <= 0:
             return 0.0

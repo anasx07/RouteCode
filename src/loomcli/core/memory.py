@@ -2,7 +2,7 @@ import time
 import re
 from pathlib import Path
 from typing import Dict, Optional
-from .core.storage import AtomicJsonStore
+from ..utils.storage import AtomicJsonStore
 
 
 MAX_MEMORIES = 50

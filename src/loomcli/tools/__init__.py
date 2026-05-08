@@ -9,6 +9,7 @@ from .task import TaskTool
 from .skill import SkillTool
 
 from .webfetch import WebFetchTool
+from .auth import AuthorizationMiddleware
 
 registry.register(BashTool())
 registry.register(FileEditTool())

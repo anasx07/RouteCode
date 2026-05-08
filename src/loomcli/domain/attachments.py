@@ -3,7 +3,7 @@ import base64
 from typing import Dict, Optional
 
 
-from .utils import TEXT_EXTENSIONS, IMAGE_EXTENSIONS, PDF_EXTENSIONS
+from ..utils.helpers import TEXT_EXTENSIONS, IMAGE_EXTENSIONS, PDF_EXTENSIONS
 
 
 def get_attachment_type(path: str) -> str:

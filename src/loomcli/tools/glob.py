@@ -31,7 +31,7 @@ class GlobTool(BaseTool):
             "Results sorted by modification time, capped at 100. Safe for concurrent use."
         )
 
-    def execute(
+    def _run(
         self,
         pattern: str,
         path: Optional[str] = None,

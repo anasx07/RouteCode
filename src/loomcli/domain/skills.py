@@ -1,12 +1,12 @@
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
-from .config import CONFIG_DIR
+from ..config import CONFIG_DIR
 
 if TYPE_CHECKING:
-    from .core import LoomContext
+    from ..core import LoomContext
 from .task_manager import task_manager
-from .utils import parse_frontmatter
+from ..utils.helpers import parse_frontmatter
 
 
 SKILL_DIRS = [
@@ -110,7 +110,7 @@ def run_skill(
     provider: Optional[Any] = None,
 ) -> Dict[str, Any]:
     if skill.context == "fork":
-        from .tools.task import _run_sub_agent
+        from ..tools.task import _run_sub_agent
 
         prompt = skill.prompt + "\n\n" + args if args else skill.prompt
         task_id = f"s{abs(hash(prompt)) % 10**7}"

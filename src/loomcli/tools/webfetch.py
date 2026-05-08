@@ -23,7 +23,7 @@ class WebFetchTool(BaseTool):
     def get_activity_description(self, url: str = "", **kwargs) -> str:
         return f"WebFetch({url[:40]})"
 
-    def execute(
+    def _run(
         self,
         url: str,
         ctx: Optional["LoomContext"] = None,

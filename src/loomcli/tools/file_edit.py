@@ -31,7 +31,7 @@ class FileEditTool(BaseTool):
             "Set allow_multiple=True to replace all occurrences. Runs serially."
         )
 
-    def execute(
+    def _run(
         self,
         file_path: str,
         old_string: str,

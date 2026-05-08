@@ -1,7 +1,7 @@
 from typing import Any, Dict, Optional, TYPE_CHECKING
 from pydantic import BaseModel, Field
 from .base import BaseTool
-from ..skills import discover_skills
+from ..domain.skills import discover_skills
 
 if TYPE_CHECKING:
     from ..core import LoomContext
@@ -24,7 +24,7 @@ class SkillTool(BaseTool):
         names = ", ".join(skills.keys())
         return f"- skill: Invoke user-defined skills. Available: {names}"
 
-    def execute(
+    def _run(
         self,
         skill: str,
         args: str = "",
@@ -40,7 +40,7 @@ class SkillTool(BaseTool):
                 "error": f"Skill '{skill}' not found. Available: {avail}",
             }
 
-        from ..skills import run_skill
+        from ..domain.skills import run_skill
 
         result = run_skill(skills[skill], args, ctx, provider=provider)
         if result.get("type") == "prompt":

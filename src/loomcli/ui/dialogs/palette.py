@@ -16,13 +16,13 @@ from prompt_toolkit.formatted_text import ANSI
 from prompt_toolkit.layout.dimension import D
 from prompt_toolkit.styles import DynamicStyle
 
-from .base import _get_backdrop_ansi
+from .base import _get_backdrop_ansi, BaseModalLayer
 from .widgets import MenuRadioList, CategoryRadioList
 from ..terminal import TerminalManager
 from ..theme import THEMES, THEME_ACCENTS, _current_theme_name, get_theme_bg
 
 
-class PaletteMenu:
+class PaletteMenu(BaseModalLayer):
     def __init__(
         self,
         title: str,
@@ -30,20 +30,26 @@ class PaletteMenu:
         active_value: Optional[str] = None,
         on_hover=None,
     ):
+        super().__init__()
         self.title = title
         self.values = values
         self.active_value = active_value
         self.on_hover = on_hover
         self.result = None
+        self._search_field = None
 
-    async def run_async(self):
+    def _get_focus_target(self):
+        return self._search_field
+
+    def _build_container(self):
         backdrop_ansi = _get_backdrop_ansi()
         kb = KeyBindings()
 
         @kb.add("c-c")
         @kb.add("escape", eager=True)
         def _(event):
-            event.app.exit()
+            if not self.future.done():
+                self.future.set_result(None)
 
         menu_list = MenuRadioList(self.values, self.active_value, self.on_hover)
 
@@ -51,7 +57,8 @@ class PaletteMenu:
         def _(event):
             if menu_list.values:
                 self.result = menu_list.current_value
-                event.app.exit()
+                if not self.future.done():
+                    self.future.set_result(self.result)
 
         @kb.add("up", eager=True)
         def _(event):
@@ -63,7 +70,8 @@ class PaletteMenu:
             menu_list._selected_index += 1
             event.app.invalidate()
 
-        search_field = TextArea(multiline=False, prompt="search ", style="class:search")
+        self._search_field = TextArea(multiline=False, prompt="search ", style="class:search")
+        self._search_field.control.key_bindings = kb
 
         def on_text_changed(buf):
             query = buf.text.lower()
@@ -75,7 +83,7 @@ class PaletteMenu:
                 menu_list.values = self.values
             menu_list._selected_index = 0
 
-        search_field.buffer.on_text_changed += on_text_changed
+        self._search_field.buffer.on_text_changed += on_text_changed
 
         header = VSplit(
             [
@@ -107,7 +115,7 @@ class PaletteMenu:
             [
                 header,
                 Window(height=1),
-                search_field,
+                self._search_field,
                 Window(height=1),
                 menu_list,
                 Window(height=1),
@@ -118,102 +126,11 @@ class PaletteMenu:
         )
 
         menu_box = Box(body=inner_split, padding=1, style="class:container")
+        return Shadow(body=menu_box)
 
-        menu_container = Shadow(body=menu_box)
 
-        # When on_hover is set (e.g. theme preview), intelligently swap accent colors
-        # in the backdrop and strip background colors.
-        if self.on_hover:
-            import re
 
-            def hex_to_rgb(h):
-                h = h.lstrip("#")
-                return tuple(int(h[i : i + 2], 16) for i in (0, 2, 4))
 
-            accent_rgbs = {hex_to_rgb(v): k for k, v in THEME_ACCENTS.items()}
-
-            def get_preview_text():
-                from ..theme import _current_theme_name
-
-                target_hex = THEME_ACCENTS.get(_current_theme_name, "#ff0000")
-                tr, tg, tb = hex_to_rgb(target_hex)
-                processed = re.sub(
-                    r"\033\[(?:4[0-7]|10[0-7]|48;[25];[^m]*)m", "", backdrop_ansi
-                )
-
-                def replace_truecolor(match):
-                    r, g, b = (
-                        int(match.group(1)),
-                        int(match.group(2)),
-                        int(match.group(3)),
-                    )
-                    if (r, g, b) in accent_rgbs:
-                        return f"\033[38;2;{tr};{tg};{tb}m"
-                    return match.group(0)
-
-                processed = re.sub(
-                    r"\033\[38;2;(\d+);(\d+);(\d+)m", replace_truecolor, processed
-                )
-                return ANSI(processed)
-
-            backdrop_content = Window(
-                content=FormattedTextControl(get_preview_text), align=WindowAlign.LEFT
-            )
-        else:
-            backdrop_content = Window(
-                content=FormattedTextControl(ANSI(backdrop_ansi)),
-                align=WindowAlign.LEFT,
-            )
-
-        dialog = FloatContainer(
-            content=backdrop_content, floats=[Float(content=menu_container)]
-        )
-
-        TerminalManager.enable_mouse_tracking()
-        app = Application(
-            layout=PTLayout(dialog, focused_element=search_field),
-            key_bindings=kb,
-            style=DynamicStyle(self._get_style),
-            full_screen=True,
-            mouse_support=True,
-        )
-        try:
-            await app.run_async()
-        finally:
-            TerminalManager.disable_mouse_tracking()
-        return self.result
-
-    def _get_style(self):
-        from ..theme import THEMES, _current_theme_name, get_theme_bg
-        from prompt_toolkit.styles import Style
-
-        theme = THEMES.get(_current_theme_name, THEMES["lava"])
-        accent = theme.get("accent", "#ffaf00")
-        bg = get_theme_bg()
-
-        return Style.from_dict(
-            {
-                "": f"bg:{bg}",
-                "title": "bold #ffffff",
-                "esc": "dim #888888",
-                "search": f"fg:#888888 bg:{bg}",
-                "menu-item": "#888888",
-                "menu-item-focused": f"bg:{accent} #ffffff bold",
-                "menu-item-focused-dim": f"bg:{accent} #cccccc",
-                "menu-item-focused-tag": f"bg:{accent} #ffffff bold",
-                "menu-item-active": "bg:#333333 #ffffff bold",
-                "menu-item-active-dim": "bg:#222222 dim #666666",
-                "menu-item-active-tag": "bg:#222222 dim #888888",
-                "menu-item-dim": "dim #666666",
-                "menu-item-tag": "dim #888888",
-                "menu-header": f"bold {accent}",
-                "container": f"bg:{bg}",
-                "prompt": "dim #888888",
-                "footer": "#ffffff",
-                "footer-label": "bold #ffffff",
-                "footer-key": "dim #888888",
-            }
-        )
 
 
 class ModelPaletteMenu(PaletteMenu):
@@ -224,25 +141,28 @@ class ModelPaletteMenu(PaletteMenu):
         self.on_connect_provider = None
         self.on_favorite = None
 
-    async def run_async(self):
+    def _build_container(self):
         backdrop_ansi = _get_backdrop_ansi()
         kb = KeyBindings()
 
         @kb.add("c-c")
         @kb.add("escape", eager=True)
         def _(event):
-            event.app.exit()
+            if not self.future.done():
+                self.future.set_result(None)
 
         menu_list = CategoryRadioList(self.values, self.active_value)
 
         def _on_click_enter():
             if menu_list.values:
                 self.result = menu_list.current_value
-                get_app().exit()
+                if not self.future.done():
+                    self.future.set_result(self.result)
 
         menu_list._on_enter = _on_click_enter
 
-        search_field = TextArea(multiline=False, prompt="Search ", style="class:search")
+        self._search_field = TextArea(multiline=False, prompt="/ ", style="class:search")
+        self._search_field.control.key_bindings = kb
 
         def on_text_changed(buf):
             query = buf.text.lower()
@@ -271,7 +191,7 @@ class ModelPaletteMenu(PaletteMenu):
             if app:
                 app.invalidate()
 
-        search_field.buffer.on_text_changed += on_text_changed
+        self._search_field.buffer.on_text_changed += on_text_changed
 
         @kb.add("up", eager=True)
         def _(event):
@@ -353,7 +273,8 @@ class ModelPaletteMenu(PaletteMenu):
         def _(event):
             if menu_list.values:
                 self.result = menu_list.current_value
-                event.app.exit()
+                if not self.future.done():
+                    self.future.set_result(self.result)
 
         header = VSplit(
             [
@@ -369,33 +290,29 @@ class ModelPaletteMenu(PaletteMenu):
         items = [
             header,
             Window(height=1),
-            search_field,
+            self._search_field,
             Window(height=1),
             menu_list,
         ]
 
         if getattr(self, "show_footer", True):
-            footer = VSplit(
-                [
-                    Window(
-                        FormattedTextControl(
-                            [
-                                ("class:footer-key", "[ Ctrl+A ] "),
-                                ("class:footer-label", "Connect Provider"),
-                                ("", "    "),
-                                ("class:footer-key", "[ Ctrl+F ] "),
-                                ("class:footer-label", "Favorite Model"),
-                                ("", "\n\n"),
-                                ("class:footer-key", "[ ↑/↓ ] "),
-                                ("class:footer-label", "Navigate Models"),
-                                ("", "      "),
-                                ("class:footer-key", "[ ←/→ ] "),
-                                ("class:footer-label", "Jump Category"),
-                            ]
-                        ),
-                        style="class:footer",
-                    )
-                ]
+            footer = Window(
+                FormattedTextControl(
+                    [
+                        ("class:footer-key", " Ctrl+A "),
+                        ("class:footer-label", " Connect Provider"),
+                        ("class:footer-dim", "   │   "),
+                        ("class:footer-key", " Ctrl+F "),
+                        ("class:footer-label", " Favorite\n"),
+                        ("class:footer-key", " ↑/↓ "),
+                        ("class:footer-label", " Navigate"),
+                        ("class:footer-dim", "       │   "),
+                        ("class:footer-key", " ←/→ "),
+                        ("class:footer-label", " Jump Category"),
+                    ]
+                ),
+                height=2,
+                style="class:footer",
             )
             items.extend([Window(height=1), footer])
 
@@ -403,57 +320,6 @@ class ModelPaletteMenu(PaletteMenu):
         inner_split = HSplit(items, width=D(preferred=60, max=70), height=menu_height)
 
         menu_box = Box(body=inner_split, padding=1, style="class:container")
+        return Shadow(body=menu_box)
 
-        menu_container = Shadow(body=menu_box)
-        TerminalManager.enable_mouse_tracking()
-        dialog = FloatContainer(
-            content=Window(
-                content=FormattedTextControl(ANSI(backdrop_ansi)),
-                align=WindowAlign.LEFT,
-            ),
-            floats=[Float(content=menu_container)],
-        )
 
-        app = Application(
-            layout=PTLayout(dialog, focused_element=search_field),
-            key_bindings=kb,
-            style=DynamicStyle(self._get_style),
-            full_screen=True,
-            mouse_support=True,
-        )
-        try:
-            await app.run_async()
-        finally:
-            TerminalManager.disable_mouse_tracking()
-        return self.result
-
-    def _get_style(self):
-        theme = THEMES.get(_current_theme_name, THEMES["lava"])
-        accent = theme.get("accent", "#ffaf00")
-        bg = get_theme_bg()
-
-        from prompt_toolkit.styles import Style
-
-        return Style.from_dict(
-            {
-                "": f"bg:{bg}",
-                "title": "bold #ffffff",
-                "esc": "dim #888888",
-                "search": f"fg:#888888 bg:{bg}",
-                "menu-item": "#888888",
-                "menu-item-focused": f"bg:{accent} #ffffff bold",
-                "menu-item-focused-dim": f"bg:{accent} #cccccc",
-                "menu-item-focused-tag": f"bg:{accent} #ffffff bold",
-                "menu-item-active": "bg:#333333 #ffffff bold",
-                "menu-item-active-dim": "bg:#222222 dim #666666",
-                "menu-item-active-tag": "bg:#222222 dim #888888",
-                "menu-item-dim": "dim #666666",
-                "menu-item-tag": "dim #888888",
-                "menu-header": f"bold {accent}",
-                "container": f"bg:{bg}",
-                "prompt": "dim #888888",
-                "footer": "#ffffff",
-                "footer-label": "bold #ffffff",
-                "footer-key": "dim #888888",
-            }
-        )

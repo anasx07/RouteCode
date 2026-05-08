@@ -16,13 +16,13 @@ from prompt_toolkit.formatted_text import ANSI
 from prompt_toolkit.layout.dimension import D
 from prompt_toolkit.styles import DynamicStyle
 
-from .base import _get_backdrop_ansi
+from .base import _get_backdrop_ansi, BaseModalLayer
 from .widgets import HoverRadioList, FlatButton
 from ..terminal import TerminalManager
 from ..theme import get_dialog_style
 
 
-class LoomDialog:
+class LoomDialog(BaseModalLayer):
     def __init__(
         self,
         title: str,
@@ -33,6 +33,7 @@ class LoomDialog:
         default: str = "",
         password: bool = False,
     ):
+        super().__init__()
         self.title = title
         self.text = text
         self.dialog_type = dialog_type
@@ -41,15 +42,19 @@ class LoomDialog:
         self.default = default
         self.password = password
         self.result = None
+        self._focus_target = None
 
-    async def run_async(self):
-        backdrop_ansi = _get_backdrop_ansi()
+    def _get_focus_target(self):
+        return self._focus_target
+
+    def _build_container(self):
         kb = KeyBindings()
 
         @kb.add("c-c")
         @kb.add("escape", eager=True)
         def _(event):
-            event.app.exit()
+            if not self.future.done():
+                self.future.set_result(None)
 
         # Add intuitive arrow navigation for buttons
         @kb.add("right")
@@ -75,19 +80,22 @@ class LoomDialog:
 
             def handler(v=value):
                 self.result = v
-                get_app().exit()
+                res = self._handle_result()
+                if not self.future.done():
+                    self.future.set_result(res)
 
             buttons.append(FlatButton(label, handler=handler))
-
-        from prompt_toolkit.application import get_app
 
         content = None
         if self.dialog_type == "radio":
             self.radio_list = HoverRadioList(self.values)
+            self._focus_target = self.radio_list
 
             def _on_radio_enter():
                 self.result = "ok"
-                get_app().exit()
+                res = self._handle_result()
+                if not self.future.done():
+                    self.future.set_result(res)
 
             self.radio_list._on_enter = _on_radio_enter
             content = HSplit([Label(self.text), self.radio_list])
@@ -95,17 +103,26 @@ class LoomDialog:
             self.text_area = TextArea(
                 text=self.default, password=self.password, multiline=False
             )
+            self._focus_target = self.text_area
             content = HSplit([Label(self.text), self.text_area])
 
             @kb.add("enter")
             def _(event):
                 self.result = "ok"
-                event.app.exit()
+                res = self._handle_result()
+                if not self.future.done():
+                    self.future.set_result(res)
         elif self.dialog_type == "button":
             content = Label(self.text)
+            if buttons:
+                self._focus_target = buttons[0]
         elif self.dialog_type == "message":
             content = Label(self.text)
-            buttons = [FlatButton("OK", handler=lambda: get_app().exit())]
+            def _ok_handler():
+                if not self.future.done():
+                    self.future.set_result(None)
+            buttons = [FlatButton("OK", handler=_ok_handler)]
+            self._focus_target = buttons[0]
 
         header = VSplit(
             [
@@ -144,28 +161,7 @@ class LoomDialog:
         inner_split = HSplit(items, width=D(preferred=60, max=70), height=dialog_height)
 
         dialog_box = Box(body=inner_split, padding=1, style="class:container")
-        dialog_container = Shadow(body=dialog_box)
-
-        root_container = FloatContainer(
-            content=Window(
-                content=FormattedTextControl(ANSI(backdrop_ansi)),
-                align=WindowAlign.LEFT,
-            ),
-            floats=[Float(content=dialog_container)],
-        )
-        TerminalManager.enable_mouse_tracking()
-        app = Application(
-            layout=PTLayout(root_container),
-            key_bindings=kb,
-            style=DynamicStyle(get_dialog_style),
-            full_screen=True,
-            mouse_support=True,
-        )
-        try:
-            await app.run_async()
-        finally:
-            TerminalManager.disable_mouse_tracking()
-        return self._handle_result()
+        return Shadow(body=dialog_box)
 
     def _handle_result(self):
         if self.dialog_type == "radio" and self.result == "ok":

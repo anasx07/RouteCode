@@ -2,18 +2,17 @@ import asyncio
 import time
 import json
 from typing import Any, Dict, List, Optional, Callable
-from .core import (
-    get_logger,
-    LoomContext,
-    count_tokens,
-    ConversationHistory,
-    ContextManager,
-    bus,
-    AtomicJsonStore,
-)
-from .tools import registry
-from .agents.registry import PROVIDER_MAP
-from .config import CONFIG_DIR
+from .context import LoomContext
+from .state import count_tokens
+from .history import ConversationHistory
+from .context_manager import ContextManager
+from .events import bus
+from ..utils.storage import AtomicJsonStore
+from ..utils.logger import get_logger
+
+from ..tools import registry
+from ..agents.registry import PROVIDER_MAP
+from ..config import CONFIG_DIR
 
 logger = get_logger(__name__)
 
@@ -51,10 +50,16 @@ class OrchestratorHooks:
 class AgentOrchestrator:
     """Unified execution loop for AI agents in LoomCLI."""
 
-    def __init__(self, ctx: LoomContext, provider: Optional[Any] = None):
+    def __init__(self, ctx: LoomContext, provider: Optional[Any] = None, tokenizer: Optional[Any] = None):
         self.ctx = ctx
         self.provider = provider
         self.context_manager = ContextManager(ctx)
+        
+        from .tokenizer import TokenizerService
+        self.tokenizer = tokenizer or TokenizerService()
+        self.ctx.state.bind_tokenizer(self.tokenizer)
+        self.tokenizer.load_state(self.ctx.state.tokens_used, self.ctx.state.estimated_cost)
+
         if not self.provider:
             self._initialize_provider()
 
@@ -155,15 +160,15 @@ class AgentOrchestrator:
                 if provider_usage:
                     comp_tokens = provider_usage.get("completion_tokens", 0)
                     prompt_tokens = provider_usage.get("prompt_tokens", 0)
-                    self.ctx.state.add_tokens(
+                    self.tokenizer.add_usage(
                         0,
                         self.ctx.config.model,
                         input_tokens=prompt_tokens,
                         output_tokens=comp_tokens,
                     )
                 elif full_response:
-                    self.ctx.state.add_tokens(
-                        count_tokens(full_response, self.ctx.config.model),
+                    self.tokenizer.add_usage(
+                        self.tokenizer.count_tokens(full_response, self.ctx.config.model),
                         self.ctx.config.model,
                     )
 
@@ -279,6 +284,6 @@ class AgentOrchestrator:
         history.append(
             {"role": "tool", "tool_call_id": tc_id, "name": name, "content": content}
         )
-        self.ctx.state.add_tokens(
-            count_tokens(content, self.ctx.config.model), self.ctx.config.model
+        self.tokenizer.add_usage(
+            self.tokenizer.count_tokens(content, self.ctx.config.model), self.ctx.config.model
         )

@@ -3,7 +3,7 @@ from rich.table import Table
 from ..ui import print_success, print_error
 from ..tools import registry
 from ..core import LoomContext
-from ..attachments import load_attachment
+from ..domain.attachments import load_attachment
 
 
 def handle_help(args: List[str], ctx: LoomContext):

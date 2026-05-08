@@ -1,3 +1,4 @@
+import asyncio
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, List, Optional, Type, TYPE_CHECKING
 from pydantic import BaseModel
@@ -39,12 +40,24 @@ class BaseTool(ABC):
     def get_tool_use_summary(self, **kwargs) -> str:
         return self.name
 
-    @abstractmethod
-    def execute(
+    async def execute(
         self,
         ctx: Optional["LoomContext"] = None,
         provider: Optional[Any] = None,
         **kwargs,
+    ) -> Any:
+        return await asyncio.to_thread(self._run, ctx=ctx, provider=provider, **kwargs)
+
+    @abstractmethod
+    def _run(self, **kwargs) -> Any:
+        """Actual tool implementation."""
+        pass
+
+
+class ToolMiddleware(ABC):
+    @abstractmethod
+    async def __call__(
+        self, tool: BaseTool, args: Dict[str, Any], ctx: "LoomContext", next_call: Callable
     ) -> Any:
         pass
 
@@ -57,6 +70,39 @@ class ToolRegistry:
         self._tools: Dict[str, BaseTool] = {}
         self._pre_hooks: List[HookFn] = []
         self._post_hooks: List[HookFn] = []
+        self._middlewares: List[ToolMiddleware] = []
+
+    def add_middleware(self, middleware: ToolMiddleware):
+        self._middlewares.append(middleware)
+
+    async def execute_tool(
+        self, name: str, args: Dict[str, Any], ctx: "LoomContext", **kwargs
+    ) -> Any:
+        tool = self.get_tool(name)
+        if not tool:
+            return {"error": f"Tool not found: {name}"}
+
+        self.run_pre_hooks(name, args)
+
+        async def _final_call(t, a, c):
+            return await t.execute(ctx=c, **a, **kwargs)
+
+        pipeline = _final_call
+        for middleware in reversed(self._middlewares):
+            def make_next(mw=middleware, next_fn=pipeline):
+                async def _next(t, a, c):
+                    return await mw(t, a, c, next_fn)
+                return _next
+            pipeline = make_next()
+
+        try:
+            result = await pipeline(tool, args, ctx)
+            self.run_post_hooks(name, result)
+            return result
+        except Exception as e:
+            result = {"error": str(e)}
+            self.run_post_hooks(name, result)
+            return result
 
     def register(self, tool: BaseTool):
         self._tools[tool.name] = tool

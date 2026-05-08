@@ -2,7 +2,7 @@ import litellm
 import re
 from typing import Tuple
 from .logger import get_logger
-from .models_db import get_model_pricing
+from ..config.models_db import get_model_pricing
 
 logger = get_logger(__name__)
 

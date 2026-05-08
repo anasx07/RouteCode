@@ -33,7 +33,7 @@ class BashTool(BaseTool):
     def get_tool_use_summary(self, command: str = "", **kwargs) -> str:
         return f"Ran: {command[:60]}"
 
-    def execute(
+    def _run(
         self,
         command: str,
         timeout: int = 30,

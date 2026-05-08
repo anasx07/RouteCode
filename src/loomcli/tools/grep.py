@@ -34,7 +34,7 @@ class GrepTool(BaseTool):
             "Use include='*.py' to filter by extension. Capped at 50 files. Safe for concurrent use."
         )
 
-    def execute(
+    def _run(
         self,
         pattern: str,
         include: Optional[str] = None,

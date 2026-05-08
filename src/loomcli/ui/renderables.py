@@ -12,19 +12,21 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 from rich.markdown import Markdown
+from rich.spinner import Spinner
+from rich.columns import Columns
 from .console import console
 from .theme import get_theme_bg
 
 
 def get_logo():
-    return """
-██╗      ██████╗  ██████╗ ███╗   ███╗
-██║     ██╔═══██╗██╔═══██╗████╗ ████║
-██║     ██║   ██║██║   ██║██╔████╔██║
-██║     ██║   ██║██║   ██║██║╚██╔╝██║
-███████╗╚██████╔╝╚██████╔╝██║ ╚═╝ ██║
-╚══════╝ ╚═════╝  ╚═════╝ ╚═╝     ╚═╝
-""".strip()
+    # Pure ASCII art — renders correctly in every terminal and font
+    return (
+        "##        ######    ######   ##    ##\n"
+        "##       ##    ##  ##    ##  ###  ###\n"
+        "##       ##    ##  ##    ##  ## ## ##\n"
+        "##       ##    ##  ##    ##  ##    ##\n"
+        "########  ######    ######   ##    ##"
+    )
 
 
 LOOM_FACES = [
@@ -70,9 +72,9 @@ class LoadingRenderable:
         self.thought = thought
         self.info = info
         self.elapsed = elapsed
-        self.face = LoomFace()
+        self.face = Spinner("dots", style="accent")
 
-    def __rich_console__(self, console, options):
+    def __rich_console__(self, console, _options):
         bg = get_theme_bg()
         panel_style = f"on {bg}"
         if self.info:
@@ -86,13 +88,13 @@ class LoadingRenderable:
             yield Panel(self.markdown, border_style="dim", style=panel_style)
         elif self.thought:
             yield Panel(
-                Text(f" {self.face}  {self.thought}", style="thought"),
+                Columns([self.face, Text(f" {self.thought}", style="thought")]),
                 border_style="dim",
                 padding=(0, 1),
                 style=panel_style,
             )
         else:
-            content = Group(Text(f" {self.face}\n", style="accent"), self.progress)
+            content = Group(self.face, self.progress)
             yield Panel(
                 content, border_style=f"on {bg}", style=panel_style, padding=(0, 1)
             )
@@ -101,7 +103,7 @@ class LoadingRenderable:
 def refresh_screen(ctx):
     import sys
     import getpass
-    from ..utils import parse_hex_color
+    from ..utils.helpers import parse_hex_color
 
     bg = get_theme_bg()
     r, g, b = parse_hex_color(bg)
@@ -130,26 +132,53 @@ def print_welcome_screen(
 ):
     c = target_console or console
     logo = get_logo()
-    content = Text()
-    content.append(Text.from_markup(f"[accent]{logo}[/accent]"))
-    content.append("\n\n")
-    welcome = Text.from_markup(
-        f"[dim]Welcome, [/dim][white]{user_name}[/white]\n\n[accent]Build[/accent] · [white]{model}[/white] [dim]{provider}[/dim]"
+    from rich.box import ROUNDED
+
+    # ── Logo block ──────────────────────────────────────────────────────────
+    logo_text = Text()
+    logo_text.append("\n")
+    logo_text.append(Text.from_markup(f"[accent]{logo}[/accent]"))
+    logo_text.append("\n")
+    c.print(Align.center(logo_text))
+
+    # ── Identity / model line ────────────────────────────────────────────────
+    identity = Text.from_markup(
+        f"[dim]Welcome back,[/dim] [bold white]{user_name}[/bold white]"
     )
-    content.append(welcome)
-    content.append("\n\n")
-    shortcuts = Table.grid(padding=(0, 2))
-    shortcuts.add_column()
-    shortcuts.add_column()
-    shortcuts.add_row("[dim]/help[/dim]", "[dim]Show commands[/dim]")
-    shortcuts.add_row("[dim]/tools[/dim]", "[dim]List tools[/dim]")
-    shortcuts.add_row("[dim]/provider[/dim]", "[dim]Switch provider[/dim]")
-    shortcuts.add_row("[dim]/tasks[/dim]", "[dim]View tasks[/dim]")
+    build_line = Text.from_markup(
+        f"[accent]Build[/accent]  [dim]·[/dim]  [bold white]{model}[/bold white]  [dim]({provider})[/dim]"
+    )
+    c.print(Align.center(identity))
+    c.print(Align.center(build_line))
+    c.print()
+
+    # ── Quick-start panel ────────────────────────────────────────────────────
+    shortcuts = Table.grid(padding=(0, 3))
+    shortcuts.add_column(justify="right", min_width=10)
+    shortcuts.add_column(justify="left")
+    shortcuts.add_row(
+        "[accent bold]/help[/accent bold]", "[dim]List all commands[/dim]"
+    )
+    shortcuts.add_row(
+        "[accent bold]/tools[/accent bold]", "[dim]Manage available tools[/dim]"
+    )
+    shortcuts.add_row(
+        "[accent bold]/provider[/accent bold]", "[dim]Switch AI provider[/dim]"
+    )
+    shortcuts.add_row(
+        "[accent bold]/tasks[/accent bold]", "[dim]Track background tasks[/dim]"
+    )
+
     tip_box = Panel(
-        shortcuts, title="[dim]Quick Start[/dim]", border_style="dim", padding=(1, 2)
+        Align.center(shortcuts),
+        title="[dim]  Quick Start  [/dim]",
+        border_style="bright_black",
+        padding=(0, 4),
+        expand=False,
+        box=ROUNDED,
     )
-    c.print(Align.center(content))
-    c.print(tip_box)
+    c.print(Align.center(tip_box))
+    c.print()
 
 
 def print_thought_elapsed(elapsed: float):
@@ -188,12 +217,36 @@ def get_tool_label(name: str, arguments: dict) -> str:
     return label
 
 
+def format_duration(seconds: float) -> str:
+    if seconds < 1:
+        return f"{seconds:.1f}s"
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    m = seconds // 60
+    s = seconds % 60
+    return f"{m}m {s}s"
+
+
+def print_user_message(text: str, target_console: Optional[Console] = None):
+    c = target_console or console
+    from rich.padding import Padding
+    
+    c.print("\n [accent]●[/accent] [bold white]You[/bold white]")
+    
+    msg_text = Text(text, style="white")
+    padded = Padding(msg_text, (0, 0, 0, 3))
+    c.print(padded)
+    c.print()
+
+
 def print_tool_call(name: str, arguments: dict):
     label = get_tool_label(name, arguments)
     console.print(f" [accent]>[/] [accent]{label}[/]")
 
 
-def print_tool_result(result: Any, duration: float = 0.0, tool_name: str = ""):
+def print_tool_result(result: Any, duration: float = 0.0, _tool_name: str = ""):
+    time_str = f" [dim](Worked for {format_duration(duration)})[/dim]" if duration > 0.0 else ""
     if isinstance(result, dict) and result.get("success"):
         msg = result.get("message", "Success")
         stats_str = ""
@@ -203,17 +256,16 @@ def print_tool_result(result: Any, duration: float = 0.0, tool_name: str = ""):
             removed = stats.get("removed", 0)
             if added > 0 or removed > 0:
                 stats_str = f" [green]+{added}[/green] [red]-{removed}[/red]"
-        time_str = f" [dim]({duration:.1f}s)[/dim]" if duration >= 0.5 else ""
         console.print(f"   [success]✔[/success] [dim]{msg}{stats_str}{time_str}[/]")
     elif isinstance(result, dict) and "error" in result:
-        console.print(f"   [error]✘[/error] [error]{result['error']}[/error]")
+        console.print(f"   [error]✘[/error] [error]{result['error']}[/error]{time_str}")
     else:
         res_str = (
             str(result)[:200] + "... [truncated]"
             if len(str(result)) > 200
             else str(result)
         )
-        console.print(f"   [dim]Result: {res_str}[/]")
+        console.print(f"   [dim]Result: {res_str}{time_str}[/]")
 
 
 def print_session_stats(state):

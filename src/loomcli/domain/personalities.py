@@ -1,8 +1,8 @@
 import time
 from pathlib import Path
 from typing import Optional
-from .config import CONFIG_DIR
-from .utils import parse_frontmatter
+from ..config import CONFIG_DIR
+from ..utils.helpers import parse_frontmatter
 
 
 PERSONALITY_DIRS = [
