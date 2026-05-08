@@ -5,9 +5,15 @@ from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.mouse_events import MouseEventType
 from prompt_toolkit.widgets import Frame
 from prompt_toolkit.filters import Condition
+from .styles import SimpleAnsiLexer
+from ..theme import THEME_ACCENTS, _current_theme_name
+from ..renderables import format_duration
+from ... import __version__
+
 
 class ModalAwareBufferControl(BufferControl):
     """BufferControl that blocks mouse interaction when a modal is open."""
+
     def __init__(self, *args, repl_ref=None, **kwargs):
         self._repl_ref = repl_ref
         super().__init__(*args, **kwargs)
@@ -17,10 +23,13 @@ class ModalAwareBufferControl(BufferControl):
             return None
         return super().mouse_handler(mouse_event)
 
+
 class ScrollableBufferControl(ModalAwareBufferControl):
     def __init__(self, *args, layout=None, **kwargs):
         self.layout = layout
-        super().__init__(*args, repl_ref=getattr(layout, "repl", None) if layout else None, **kwargs)
+        super().__init__(
+            *args, repl_ref=getattr(layout, "repl", None) if layout else None, **kwargs
+        )
 
     def mouse_handler(self, mouse_event):
         if super().mouse_handler(mouse_event) is None:
@@ -52,8 +61,6 @@ class ScrollableBufferControl(ModalAwareBufferControl):
 
         return super().mouse_handler(mouse_event)
 
-from .styles import SimpleAnsiLexer
-from ..theme import THEME_ACCENTS, _current_theme_name
 
 _LOGO_LINES = [
     "##        ######    ######   ##    ##",
@@ -133,7 +140,6 @@ class LoomLayout:
     def build_session_layout(self):
         """Split-pane layout: history+input on the left, sidebar on the right."""
         # History area
-        from prompt_toolkit.filters import Condition
         is_not_modal = Condition(lambda: not getattr(self.repl, "is_modal_open", False))
 
         self.history_main = Window(
@@ -163,7 +169,7 @@ class LoomLayout:
             content=ModalAwareBufferControl(
                 buffer=self.repl.input_buffer,
                 focusable=is_not_modal,
-                repl_ref=self.repl
+                repl_ref=self.repl,
             ),
             height=Dimension(min=1, max=3),
             wrap_lines=True,
@@ -271,8 +277,6 @@ class LoomLayout:
             ("fg:#555566", " to see all available commands"),
         ]
 
-
-
     def _get_input_model_line(self):
         accent = THEME_ACCENTS.get(_current_theme_name, "#ffaf00")
         return [
@@ -296,7 +300,6 @@ class LoomLayout:
             frame_idx = int(time.time() * 10) % len(frames)
             spinner = frames[frame_idx]
 
-            from ..renderables import format_duration
             dur_str = format_duration(duration)
             accent = THEME_ACCENTS.get(_current_theme_name, "#ffaf00")
             res.extend(
@@ -311,18 +314,24 @@ class LoomLayout:
     def _get_session_footer_right(self):
         accent = THEME_ACCENTS.get(_current_theme_name, "#ffaf00")
         cwd = os.path.basename(os.getcwd()) or "~"
-        from ... import __version__
 
         base = []
         if getattr(self.repl, "toast_message", None):
-            base.extend([("bg:#ff4444 fg:#ffffff bold", f" {self.repl.toast_message} "), ("fg:#555566", "   ")])
+            base.extend(
+                [
+                    ("bg:#ff4444 fg:#ffffff bold", f" {self.repl.toast_message} "),
+                    ("fg:#555566", "   "),
+                ]
+            )
 
-        base.extend([
-            ("fg:#888899 bold", "esc "),
-            ("fg:#555566", "interrupt   "),
-            ("class:sidebar-value", f"/{cwd}  "),
-            (f"fg:{accent}", "● "),
-            (f"fg:{accent} bold", "Loom"),
-            ("fg:#555566", f" {__version__}"),
-        ])
+        base.extend(
+            [
+                ("fg:#888899 bold", "esc "),
+                ("fg:#555566", "interrupt   "),
+                ("class:sidebar-value", f"/{cwd}  "),
+                (f"fg:{accent}", "● "),
+                (f"fg:{accent} bold", "Loom"),
+                ("fg:#555566", f" {__version__}"),
+            ]
+        )
         return base

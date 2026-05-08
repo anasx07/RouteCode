@@ -12,7 +12,6 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 from rich.markdown import Markdown, CodeBlock, TableElement
-from rich.table import Table
 from rich import box
 from rich.syntax import Syntax
 from rich.spinner import Spinner
@@ -24,20 +23,55 @@ from .theme import get_theme_bg, get_theme_accent
 class EnhancedTableElement(TableElement):
     """A table element with borders and better spacing."""
 
+    def add_row(self, row: Any) -> None:
+        # Pre-process cells to fix bullets BEFORE they are added to the table
+        # This prevents breaking the Markdown syntax while still getting vertical lists
+        import re
+
+        processed_row = []
+        for cell in row:
+            if isinstance(cell, str):
+                # Fix bullets that are concatenated on a single line within a cell
+                # We handle both standard hyphens "-" and Unicode bullets "•"
+                # This version also catches bullets that are smashed against text (e.g., "text•bullet")
+                cell = re.sub(r"([^|\s])\s*[-•]\s*", r"\1\n- ", cell)
+            processed_row.append(cell)
+        super().add_row(processed_row)
+
     def __rich_console__(self, console, options):
         # Let the original TableElement build the table
         gen = super().__rich_console__(console, options)
         accent = get_theme_accent()
+
+        # Adaptive styling based on available width
+        is_narrow = options.max_width < 110
+
         for table in gen:
             if isinstance(table, Table):
                 table.show_lines = True
                 table.show_edge = True
-                table.box = box.ROUNDED
-                table.border_style = accent
-                table.header_style = f"bold black on {accent}"
-                table.row_styles = ["none", f"on {get_theme_bg()}"]
-                table.expand = False # Don't force full width
-                table.padding = (0, 1)
+                # Use a more compact box for narrow terminals to save vertical space
+                table.box = box.SIMPLE if is_narrow else box.HEAVY_EDGE
+                table.border_style = "dim"
+                table.header_style = f"bold {accent}"
+
+                table.row_styles = ["none"]
+                table.width = options.max_width
+                table.expand = True
+                table.padding = (0, 1) if is_narrow else (0, 2)
+
+                # Enhance column properties
+                if table.columns:
+                    table.columns[0].style = f"bold {accent}"
+                    if len(table.columns) > 2:
+                        # Adaptive label column width
+                        table.columns[0].min_width = 15 if is_narrow else 25
+                        table.columns[0].no_wrap = True
+
+                for col in table.columns:
+                    col.vertical_align = "top"
+                    col.overflow = "fold"
+
                 yield table
             else:
                 yield table
@@ -56,14 +90,14 @@ class EnhancedCodeBlock(CodeBlock):
             word_wrap=True,
             background_color="default",
         )
-        
+
         # Determine language display name
         lang = self.lexer_name.upper() if self.lexer_name else "CODE"
-        
+
         # Create a header with the language name
         accent = get_theme_accent()
         header = Text(f" {lang} ", style=f"bold black on {accent}")
-        
+
         # Wrap in a panel for premium feel
         yield Panel(
             syntax,
@@ -71,17 +105,20 @@ class EnhancedCodeBlock(CodeBlock):
             title_align="left",
             border_style="dim",
             padding=(0, 1),
-            expand=False
+            expand=False,
         )
 
 
 class EnhancedMarkdown(Markdown):
     """Markdown with enhanced components."""
+
     elements = Markdown.elements.copy()
     elements["code_block"] = EnhancedCodeBlock
     elements["fence"] = EnhancedCodeBlock
     elements["table_open"] = EnhancedTableElement
 
+    def __init__(self, markup: str, *args, **kwargs):
+        super().__init__(markup, *args, **kwargs)
 
 
 def get_logo():
@@ -153,8 +190,14 @@ class LoadingRenderable:
         elif self.markdown and self.markdown.markup:
             yield Panel(self.markdown, border_style="dim", style=panel_style)
         elif self.thought:
+            # Ensure there's a blank line before the thought content so Markdown elements
+            # (like tables) are parsed correctly even if the AI starts them immediately.
+            thought_md = EnhancedMarkdown("\n" + self.thought)
+            content = Group(
+                Columns([self.face, Text(" Thinking...", style="thought")]), thought_md
+            )
             yield Panel(
-                Columns([self.face, Text(f" {self.thought}", style="thought")]),
+                content,
                 border_style="dim",
                 padding=(0, 1),
                 style=panel_style,
@@ -297,9 +340,9 @@ def format_duration(seconds: float) -> str:
 def print_user_message(text: str, target_console: Optional[Console] = None):
     c = target_console or console
     from rich.padding import Padding
-    
+
     c.print("\n [accent]●[/accent] [bold white]You[/bold white]")
-    
+
     msg_text = Text(text, style="white")
     padded = Padding(msg_text, (0, 0, 0, 3))
     c.print(padded)
@@ -312,7 +355,11 @@ def print_tool_call(name: str, arguments: dict):
 
 
 def print_tool_result(result: Any, duration: float = 0.0, _tool_name: str = ""):
-    time_str = f" [dim](Worked for {format_duration(duration)})[/dim]" if duration > 0.0 else ""
+    time_str = (
+        f" [dim](Worked for {format_duration(duration)})[/dim]"
+        if duration > 0.0
+        else ""
+    )
     if isinstance(result, dict) and result.get("success"):
         msg = result.get("message", "Success")
         stats_str = ""

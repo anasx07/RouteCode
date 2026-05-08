@@ -18,24 +18,28 @@ When responding, start with a <thought> block for your internal reasoning and pl
 
 def _build_workspace_section() -> str:
     import platform
+
     cwd = os.getcwd()
     os_name = platform.system()
     os_release = platform.release()
     project_structure = ""
     try:
         import subprocess
+
         # Try to get git tree first
         res = subprocess.run(
             ["git", "ls-tree", "-r", "--name-only", "HEAD"],
             capture_output=True,
             text=True,
             check=False,
-            shell=True if os.name == 'nt' else False
+            shell=True if os.name == "nt" else False,
         )
         if res.returncode == 0:
             lines = res.stdout.strip().splitlines()
             if len(lines) > 60:
-                project_structure = "\n".join(lines[:60]) + f"\n... ({len(lines)-60} more files)"
+                project_structure = (
+                    "\n".join(lines[:60]) + f"\n... ({len(lines) - 60} more files)"
+                )
             else:
                 project_structure = "\n".join(lines)
         else:
@@ -43,7 +47,7 @@ def _build_workspace_section() -> str:
             files = os.listdir(cwd)
             project_structure = "\n".join(files[:40])
             if len(files) > 40:
-                project_structure += f"\n... ({len(files)-40} more items)"
+                project_structure += f"\n... ({len(files) - 40} more items)"
     except Exception:
         project_structure = "Unable to retrieve directory structure."
 

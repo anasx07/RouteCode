@@ -57,7 +57,11 @@ class BaseTool(ABC):
 class ToolMiddleware(ABC):
     @abstractmethod
     async def __call__(
-        self, tool: BaseTool, args: Dict[str, Any], ctx: "LoomContext", next_call: Callable
+        self,
+        tool: BaseTool,
+        args: Dict[str, Any],
+        ctx: "LoomContext",
+        next_call: Callable,
     ) -> Any:
         pass
 
@@ -89,10 +93,13 @@ class ToolRegistry:
 
         pipeline = _final_call
         for middleware in reversed(self._middlewares):
+
             def make_next(mw=middleware, next_fn=pipeline):
                 async def _next(t, a, c):
                     return await mw(t, a, c, next_fn)
+
                 return _next
+
             pipeline = make_next()
 
         try:

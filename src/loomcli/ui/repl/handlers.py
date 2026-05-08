@@ -1,5 +1,4 @@
 import time
-import asyncio
 import re
 from ...core.orchestrator import OrchestratorHooks
 from rich.markup import escape
@@ -22,6 +21,7 @@ def format_duration(seconds: float) -> str:
     s = seconds % 60
     return f"{m}m {s}s"
 
+
 class AppHooks(OrchestratorHooks):
     def __init__(self, repl):
         self.repl = repl
@@ -31,10 +31,11 @@ class AppHooks(OrchestratorHooks):
         self._thought_start_time = 0
         self._last_header_ansi = ""
         self._last_header_ansi = ""
-        
+
         from rich.console import Console
+
         self._dummy_console = Console(force_terminal=True, color_system="truecolor")
-        
+
         self._typing_cursor = " █"
         self._thinking_text = "Thinking..."
         self._is_thinking = False
@@ -74,7 +75,9 @@ class AppHooks(OrchestratorHooks):
             re.escape(self._thinking_text) + r"\s*$", "", text
         )
         if self.repl._is_scrolled_to_bottom():
-            self.repl.history_buffer.cursor_position = len(self.repl.history_buffer.text)
+            self.repl.history_buffer.cursor_position = len(
+                self.repl.history_buffer.text
+            )
         else:
             if old_cursor > len(self.repl.history_buffer.text):
                 old_cursor = len(self.repl.history_buffer.text)
@@ -86,10 +89,10 @@ class AppHooks(OrchestratorHooks):
             return
         self._in_thought = True
         self._thought_start_time = time.time()
-        
+
         header_text = "Thinking:"
         full_markup = f"\n[dim]│[/dim] [italic #ffaf00]{header_text}[/italic #ffaf00] "
-        
+
         self._dummy_console.width = self.repl._rich_console.width
         with self._dummy_console.capture() as capture:
             self._dummy_console.print(full_markup, end="")
@@ -97,18 +100,18 @@ class AppHooks(OrchestratorHooks):
 
         self.repl._rich_console.print(full_markup, end="")
 
-
-
     def _end_thought(self):
         if not self._in_thought:
             return
         self._in_thought = False
-            
+
         duration = time.time() - self._thought_start_time
         dur_str = format_duration(duration)
         self._thought_durations.append(dur_str)
         # We don't use ":" here per user request for final state
-        self.repl._rich_console.print(f"\n[dim]│[/dim] [dim italic]Thought for {dur_str}[/dim italic]\n\n", end="")
+        self.repl._rich_console.print(
+            f"\n[dim]│[/dim] [dim italic]Thought for {dur_str}[/dim italic]\n\n", end=""
+        )
 
     def _add_cursor(self):
         was_at_bottom = self.repl._is_scrolled_to_bottom()
@@ -128,7 +131,9 @@ class AppHooks(OrchestratorHooks):
             await self._start_thought()
             content = chunk["content"]
             formatted = escape(content).replace("\n", "\n[dim]│[/dim] ")
-            self.repl._rich_console.print(f"[dim italic]{formatted}[/dim italic]", end="")
+            self.repl._rich_console.print(
+                f"[dim italic]{formatted}[/dim italic]", end=""
+            )
             self._add_cursor()
             return
 
@@ -153,7 +158,9 @@ class AppHooks(OrchestratorHooks):
                     if "<thought>" in self._stream_buffer:
                         parts = self._stream_buffer.split("<thought>", 1)
                         if parts[0]:
-                            self.repl._rich_console.print(parts[0], end="", markup=False)
+                            self.repl._rich_console.print(
+                                parts[0], end="", markup=False
+                            )
                         await self._start_thought()
                         self._stream_buffer = parts[1]
                         continue
@@ -165,55 +172,86 @@ class AppHooks(OrchestratorHooks):
                                 break
                         if safe_len > 0:
                             self._stream_buffer = self._stream_buffer[safe_len:]
-                            
+
                             # Live Markdown rendering!
                             # We truncate back to the start of the text response and re-render everything
                             if self._text_start_pos is not None:
                                 from ..renderables import EnhancedMarkdown as Markdown
-                                from rich.markdown import Markdown as RichMarkdown
-                                
+
                                 was_at_bottom = self.repl._is_scrolled_to_bottom()
                                 old_cursor = self.repl.history_buffer.cursor_position
-                                
+
                                 # Temporarily remove current text to re-render
-                                self.repl.history_buffer.text = self.repl.history_buffer.text[: self._text_start_pos]
-                                
+                                self.repl.history_buffer.text = (
+                                    self.repl.history_buffer.text[
+                                        : self._text_start_pos
+                                    ]
+                                )
+
                                 # Use a temporary console to get ANSI output
                                 with self._dummy_console.capture() as capture:
                                     # Split by <thought> tags to render parts correctly
-                                    parts = re.split(r"(<thought>.*?</thought>|<thought>.*$)", self.full_response, flags=re.DOTALL)
+                                    parts = re.split(
+                                        r"(<thought>.*?</thought>|<thought>.*$)",
+                                        self.full_response,
+                                        flags=re.DOTALL,
+                                    )
                                     thought_idx = 0
                                     for part in parts:
                                         if part.startswith("<thought>"):
-                                            content = part[len("<thought>"):]
+                                            content = part[len("<thought>") :]
                                             if content.endswith("</thought>"):
-                                                content = content[:-len("</thought>")]
-                                            
-                                            dur_str = self._thought_durations[thought_idx] if thought_idx < len(self._thought_durations) else "..."
+                                                content = content[: -len("</thought>")]
+
+                                            dur_str = (
+                                                self._thought_durations[thought_idx]
+                                                if thought_idx
+                                                < len(self._thought_durations)
+                                                else "..."
+                                            )
                                             thought_idx += 1
-                                            
-                                            self._dummy_console.print(f"\n[dim]│[/dim] [italic #ffaf00]Thought for {dur_str}:[/italic #ffaf00] ")
-                                            formatted = escape(content.strip()).replace("\n", "\n[dim]│[/dim] ")
-                                            self._dummy_console.print(f"[dim italic]│ {formatted}[/dim italic]\n")
+
+                                            self._dummy_console.print(
+                                                f"\n[dim]│[/dim] [italic #ffaf00]Thought for {dur_str}:[/italic #ffaf00] "
+                                            )
+                                            formatted = escape(content.strip()).replace(
+                                                "\n", "\n[dim]│[/dim] "
+                                            )
+                                            self._dummy_console.print(
+                                                f"[dim italic]│ {formatted}[/dim italic]\n"
+                                            )
                                         else:
                                             if part.strip():
-                                                self._dummy_console.print(Markdown(part))
-                                
+                                                self._dummy_console.print(
+                                                    Markdown(part)
+                                                )
+
                                 from rich.text import Text
-                                self.repl._rich_console.print(Text.from_ansi(capture.get()), end="")
-                                
+
+                                self.repl._rich_console.print(
+                                    Text.from_ansi(capture.get()), end=""
+                                )
+
                                 if was_at_bottom:
-                                    self.repl.history_buffer.cursor_position = len(self.repl.history_buffer.text)
+                                    self.repl.history_buffer.cursor_position = len(
+                                        self.repl.history_buffer.text
+                                    )
                                 elif old_cursor > len(self.repl.history_buffer.text):
-                                    self.repl.history_buffer.cursor_position = len(self.repl.history_buffer.text)
+                                    self.repl.history_buffer.cursor_position = len(
+                                        self.repl.history_buffer.text
+                                    )
                                 else:
-                                    self.repl.history_buffer.cursor_position = old_cursor
+                                    self.repl.history_buffer.cursor_position = (
+                                        old_cursor
+                                    )
                         break
                 else:
                     if "</thought>" in self._stream_buffer:
                         parts = self._stream_buffer.split("</thought>", 1)
                         if parts[0]:
-                            formatted = escape(parts[0]).replace("\n", "\n[dim]│[/dim] ")
+                            formatted = escape(parts[0]).replace(
+                                "\n", "\n[dim]│[/dim] "
+                            )
                             self.repl._rich_console.print(
                                 f"[dim italic]{formatted}[/dim italic]", end=""
                             )
@@ -230,7 +268,9 @@ class AppHooks(OrchestratorHooks):
                             formatted = escape(self._stream_buffer[:safe_len]).replace(
                                 "\n", "\n[dim]│[/dim] "
                             )
-                            self.repl._rich_console.print(f"[dim italic]{formatted}[/dim italic]", end="")
+                            self.repl._rich_console.print(
+                                f"[dim italic]{formatted}[/dim italic]", end=""
+                            )
                             self._stream_buffer = self._stream_buffer[safe_len:]
                         break
 
@@ -243,11 +283,15 @@ class AppHooks(OrchestratorHooks):
         if self._in_thought:
             if self._stream_buffer:
                 formatted = escape(self._stream_buffer).replace("\n", "\n[dim]│[/dim] ")
-                self.repl._rich_console.print(f"[dim italic]{formatted}[/dim italic]", end="")
+                self.repl._rich_console.print(
+                    f"[dim italic]{formatted}[/dim italic]", end=""
+                )
             self._end_thought()
         else:
             if self._stream_buffer:
-                self.repl._rich_console.print(escape(self._stream_buffer), end="", markup=False)
+                self.repl._rich_console.print(
+                    escape(self._stream_buffer), end="", markup=False
+                )
 
         self._stream_buffer = ""
 
@@ -255,29 +299,44 @@ class AppHooks(OrchestratorHooks):
         if self._text_start_pos is not None and self.full_response.strip():
             was_at_bottom = self.repl._is_scrolled_to_bottom()
             old_cursor = self.repl.history_buffer.cursor_position
-            self.repl.history_buffer.text = self.repl.history_buffer.text[: self._text_start_pos]
+            self.repl.history_buffer.text = self.repl.history_buffer.text[
+                : self._text_start_pos
+            ]
             if was_at_bottom:
-                self.repl.history_buffer.cursor_position = len(self.repl.history_buffer.text)
+                self.repl.history_buffer.cursor_position = len(
+                    self.repl.history_buffer.text
+                )
             elif old_cursor > len(self.repl.history_buffer.text):
-                self.repl.history_buffer.cursor_position = len(self.repl.history_buffer.text)
+                self.repl.history_buffer.cursor_position = len(
+                    self.repl.history_buffer.text
+                )
             else:
                 self.repl.history_buffer.cursor_position = old_cursor
 
             from ..renderables import EnhancedMarkdown as Markdown
-            from rich.markdown import Markdown as RichMarkdown
 
             # Split by <thought> tags
-            parts = re.split(r"(<thought>.*?</thought>)", self.full_response, flags=re.DOTALL)
+            parts = re.split(
+                r"(<thought>.*?</thought>)", self.full_response, flags=re.DOTALL
+            )
             thought_idx = 0
             for part in parts:
                 if part.startswith("<thought>") and part.endswith("</thought>"):
                     content = part[len("<thought>") : -len("</thought>")]
-                    dur_str = self._thought_durations[thought_idx] if thought_idx < len(self._thought_durations) else "..."
+                    dur_str = (
+                        self._thought_durations[thought_idx]
+                        if thought_idx < len(self._thought_durations)
+                        else "..."
+                    )
                     thought_idx += 1
-                    
-                    self.repl._rich_console.print(f"\n[dim]│[/dim] [italic #ffaf00]Thought for {dur_str}:[/italic #ffaf00] ")
+
+                    self.repl._rich_console.print(
+                        f"\n[dim]│[/dim] [italic #ffaf00]Thought for {dur_str}:[/italic #ffaf00] "
+                    )
                     formatted = escape(content.strip()).replace("\n", "\n[dim]│[/dim] ")
-                    self.repl._rich_console.print(f"[dim italic]│ {formatted}[/dim italic]\n")
+                    self.repl._rich_console.print(
+                        f"[dim italic]│ {formatted}[/dim italic]\n"
+                    )
                 else:
                     if part.strip():
                         self.repl._rich_console.print(Markdown(part))

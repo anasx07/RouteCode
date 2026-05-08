@@ -12,16 +12,18 @@ def _get_active_bg(is_dimmed: bool = False) -> str:
     if is_dimmed:
         try:
             r, g, b = parse_hex_color(bg)
-            return f"#{int(r*0.4):02x}{int(g*0.4):02x}{int(b*0.4):02x}"
+            return f"#{int(r * 0.4):02x}{int(g * 0.4):02x}{int(b * 0.4):02x}"
         except Exception:
             pass
     return bg
+
 
 class LoomVt100Output(Vt100_Output):
     """
     Custom VT100 output that ensures the theme background color is preserved
     during screen clearing and attribute resets.
     """
+
     def __init__(self, stdout, get_size, state_provider=None, **kwargs):
         super().__init__(stdout, get_size, **kwargs)
         self.state_provider = state_provider or (lambda: False)
@@ -51,11 +53,11 @@ class SimpleAnsiLexer(Lexer):
 
     def lex_document(self, document):
         is_dimmed = self.state_provider()
-        
+
         def get_line(i):
             line = document.lines[i]
             ft = ANSI(line).__pt_formatted_text__()
-            
+
             if is_dimmed:
                 # Dynamically remap the parsed ANSI tuples to dimmed styles
                 dimmed_ft = []
@@ -64,7 +66,7 @@ class SimpleAnsiLexer(Lexer):
                     # We preserve non-color attributes like bold/italic if desired, or just force a dim class
                     dimmed_ft.append(("class:text-dimmed", text))
                 return dimmed_ft
-                
+
             return ft
 
         return get_line
@@ -74,8 +76,9 @@ def _is_modal_open() -> bool:
     try:
         from prompt_toolkit.application.current import get_app
         from prompt_toolkit.widgets import Shadow
+
         app = get_app()
-        if app and app.is_running and hasattr(app.layout.container, 'floats'):
+        if app and app.is_running and hasattr(app.layout.container, "floats"):
             for f in app.layout.container.floats:
                 if isinstance(f.content, Shadow):
                     return True
@@ -88,7 +91,7 @@ def build_repl_style(is_dimmed: bool = False):
     bg = get_theme_bg()
     active_bg = _get_active_bg(is_dimmed)
     accent = THEME_ACCENTS.get(_current_theme_name, "#ffaf00")
-    
+
     if is_dimmed:
         sidebar_bg = "#08080a"
         text_fg = "#555566"

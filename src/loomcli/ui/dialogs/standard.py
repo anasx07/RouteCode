@@ -4,24 +4,17 @@ from prompt_toolkit.layout.containers import (
     Window,
     HSplit,
     VSplit,
-    FloatContainer,
-    Float,
     WindowAlign,
 )
 from prompt_toolkit.layout.controls import FormattedTextControl
-from prompt_toolkit.layout.layout import Layout as PTLayout
-from prompt_toolkit.application import Application
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.formatted_text import ANSI
 from prompt_toolkit.layout.dimension import D
-from prompt_toolkit.styles import DynamicStyle
 
 from rich.console import Console
 from io import StringIO
-from .base import _get_backdrop_ansi, BaseModalLayer
+from .base import BaseModalLayer
 from .widgets import HoverRadioList, FlatButton
-from ..terminal import TerminalManager
-from ..theme import get_dialog_style
 
 
 class LoomDialog(BaseModalLayer):
@@ -68,8 +61,10 @@ class LoomDialog(BaseModalLayer):
         # Focus trapping logic: Keep focus within the dialog's widgets
         def get_focusable():
             res = []
-            if hasattr(self, "radio_list"): res.append(self.radio_list)
-            if hasattr(self, "text_area"): res.append(self.text_area)
+            if hasattr(self, "radio_list"):
+                res.append(self.radio_list)
+            if hasattr(self, "text_area"):
+                res.append(self.text_area)
             res.extend(buttons)
             return res
 
@@ -82,7 +77,7 @@ class LoomDialog(BaseModalLayer):
                 if event.app.layout.has_focus(w):
                     curr_idx = i
                     break
-            
+
             next_idx = (curr_idx + 1) % len(widgets)
             event.app.layout.focus(widgets[next_idx])
 
@@ -96,7 +91,7 @@ class LoomDialog(BaseModalLayer):
                 if event.app.layout.has_focus(w):
                     curr_idx = i
                     break
-            
+
             next_idx = (curr_idx - 1) % len(widgets)
             event.app.layout.focus(widgets[next_idx])
 
@@ -108,12 +103,16 @@ class LoomDialog(BaseModalLayer):
                     b.handler()
                     return
             # If no button focused, check if input or radio has focus
-            if self.dialog_type == "input" and event.app.layout.has_focus(self.text_area):
+            if self.dialog_type == "input" and event.app.layout.has_focus(
+                self.text_area
+            ):
                 self.result = "ok"
                 res = self._handle_result()
                 if not self.future.done():
                     self.future.set_result(res)
-            elif self.dialog_type == "radio" and event.app.layout.has_focus(self.radio_list.control):
+            elif self.dialog_type == "radio" and event.app.layout.has_focus(
+                self.radio_list.control
+            ):
                 self.result = "ok"
                 res = self._handle_result()
                 if not self.future.done():
@@ -154,13 +153,17 @@ class LoomDialog(BaseModalLayer):
                     self.future.set_result(res)
 
             self.radio_list._on_enter = _on_radio_enter
-            content = HSplit([Label(self._get_formatted_text(self.text)), self.radio_list])
+            content = HSplit(
+                [Label(self._get_formatted_text(self.text)), self.radio_list]
+            )
         elif self.dialog_type == "input":
             self.text_area = TextArea(
                 text=self.default, password=self.password, multiline=False
             )
             self._focus_target = self.text_area
-            content = HSplit([Label(self._get_formatted_text(self.text)), self.text_area])
+            content = HSplit(
+                [Label(self._get_formatted_text(self.text)), self.text_area]
+            )
 
             @kb.add("enter")
             def _(event):
@@ -174,9 +177,11 @@ class LoomDialog(BaseModalLayer):
                 self._focus_target = buttons[0]
         elif self.dialog_type == "message":
             content = Label(self._get_formatted_text(self.text))
+
             def _ok_handler():
                 if not self.future.done():
                     self.future.set_result(None)
+
             buttons = [FlatButton("OK", handler=_ok_handler)]
             self._focus_target = buttons[0]
 
@@ -215,10 +220,7 @@ class LoomDialog(BaseModalLayer):
             dialog_height += 2
 
         inner_split = HSplit(
-            items,
-            width=D(preferred=60, max=70),
-            height=dialog_height,
-            key_bindings=kb
+            items, width=D(preferred=60, max=70), height=dialog_height, key_bindings=kb
         )
 
         dialog_box = Box(body=inner_split, padding=1, style="class:container")

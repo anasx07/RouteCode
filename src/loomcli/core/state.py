@@ -31,6 +31,7 @@ class SessionState:
     def bind_tokenizer(self, tokenizer):
         self._tokenizer = tokenizer
         from .events import bus
+
         bus.on("tokenizer.usage_updated", self._on_usage_updated)
 
     def _on_usage_updated(self, tokens: int, cost: float, **kwargs):
@@ -39,10 +40,11 @@ class SessionState:
 
     def get_context_usage(self, model: str) -> float:
         """Returns the current context usage percentage."""
-        if hasattr(self, '_tokenizer') and self._tokenizer:
+        if hasattr(self, "_tokenizer") and self._tokenizer:
             return self._tokenizer.get_context_usage_percent(model)
-        
+
         from ..utils.costs import cost_estimator
+
         _, ctx_limit, _ = cost_estimator.calculate_cost(0, 0, model)
         if ctx_limit <= 0:
             return 0.0

@@ -4,22 +4,15 @@ from prompt_toolkit.layout.containers import (
     Window,
     HSplit,
     VSplit,
-    FloatContainer,
-    Float,
     WindowAlign,
 )
 from prompt_toolkit.layout.controls import FormattedTextControl
-from prompt_toolkit.layout.layout import Layout as PTLayout
-from prompt_toolkit.application import Application, get_app
+from prompt_toolkit.application import get_app
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.formatted_text import ANSI
 from prompt_toolkit.layout.dimension import D
-from prompt_toolkit.styles import DynamicStyle
 
-from .base import _get_backdrop_ansi, BaseModalLayer
+from .base import BaseModalLayer
 from .widgets import MenuRadioList, CategoryRadioList
-from ..terminal import TerminalManager
-from ..theme import THEMES, THEME_ACCENTS, _current_theme_name, get_theme_bg
 
 
 class PaletteMenu(BaseModalLayer):
@@ -42,7 +35,6 @@ class PaletteMenu(BaseModalLayer):
         return self._search_field
 
     def _build_container(self):
-        backdrop_ansi = _get_backdrop_ansi()
         kb = KeyBindings()
 
         @kb.add("c-c")
@@ -70,7 +62,9 @@ class PaletteMenu(BaseModalLayer):
             menu_list._selected_index += 1
             event.app.invalidate()
 
-        self._search_field = TextArea(multiline=False, prompt="search ", style="class:search")
+        self._search_field = TextArea(
+            multiline=False, prompt="search ", style="class:search"
+        )
         self._search_field.control.key_bindings = kb
 
         def on_text_changed(buf):
@@ -129,10 +123,6 @@ class PaletteMenu(BaseModalLayer):
         return Shadow(body=menu_box)
 
 
-
-
-
-
 class ModelPaletteMenu(PaletteMenu):
     def __init__(
         self, title: str, values: List[tuple], active_value: Optional[str] = None
@@ -142,7 +132,6 @@ class ModelPaletteMenu(PaletteMenu):
         self.on_favorite = None
 
     def _build_container(self):
-        backdrop_ansi = _get_backdrop_ansi()
         kb = KeyBindings()
 
         @kb.add("c-c")
@@ -161,7 +150,9 @@ class ModelPaletteMenu(PaletteMenu):
 
         menu_list._on_enter = _on_click_enter
 
-        self._search_field = TextArea(multiline=False, prompt="/ ", style="class:search")
+        self._search_field = TextArea(
+            multiline=False, prompt="/ ", style="class:search"
+        )
         self._search_field.control.key_bindings = kb
 
         def on_text_changed(buf):
@@ -321,5 +312,3 @@ class ModelPaletteMenu(PaletteMenu):
 
         menu_box = Box(body=inner_split, padding=1, style="class:container")
         return Shadow(body=menu_box)
-
-

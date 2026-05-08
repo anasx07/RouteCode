@@ -110,7 +110,9 @@ class LoomREPL:
         from ...core.audit import audit_hook
 
         registry.add_post_hook(audit_hook)
-        registry.add_middleware(AuthorizationMiddleware(confirm_callback=self._confirm_destructive))
+        registry.add_middleware(
+            AuthorizationMiddleware(confirm_callback=self._confirm_destructive)
+        )
 
         self._setup_event_handlers()
         self._kb = KeyBindings()
@@ -160,6 +162,7 @@ class LoomREPL:
 
     def update_style(self):
         from . import styles
+
         self.style = styles.build_repl_style(is_dimmed=self.is_modal_open)
         self.request_invalidate()
 
@@ -181,7 +184,10 @@ class LoomREPL:
                 self.request_invalidate()
 
                 def clear_toast():
-                    if self.toast_message and time.time() - self._ctrl_c_press_time >= 2.9:
+                    if (
+                        self.toast_message
+                        and time.time() - self._ctrl_c_press_time >= 2.9
+                    ):
                         self.toast_message = None
                         self.request_invalidate()
 
@@ -210,7 +216,11 @@ class LoomREPL:
             self.history_buffer.cursor_down(count=3)
             win = self.layout_manager.history_main
             if win and win.render_info:
-                max_scroll = max(0, win.render_info.ui_content.line_count - win.render_info.window_height)
+                max_scroll = max(
+                    0,
+                    win.render_info.ui_content.line_count
+                    - win.render_info.window_height,
+                )
                 win.vertical_scroll = min(max_scroll, win.vertical_scroll + 3)
             elif win:
                 win.vertical_scroll += 3
@@ -229,13 +239,23 @@ class LoomREPL:
             self.history_buffer.cursor_down(count=15)
             win = self.layout_manager.history_main
             if win and win.render_info:
-                max_scroll = max(0, win.render_info.ui_content.line_count - win.render_info.window_height)
+                max_scroll = max(
+                    0,
+                    win.render_info.ui_content.line_count
+                    - win.render_info.window_height,
+                )
                 win.vertical_scroll = min(max_scroll, win.vertical_scroll + 15)
             elif win:
                 win.vertical_scroll += 15
             event.app.invalidate()
 
     def _intercepted_print(self, *args, **kwargs):
+        # Dynamically update console width to match current terminal window
+        try:
+            self._rich_console.width = shutil.get_terminal_size().columns
+        except Exception:
+            pass
+
         with self._rich_console.capture() as capture:
             self._original_print(*args, **kwargs)
         captured = capture.get()
@@ -270,7 +290,9 @@ class LoomREPL:
     async def _periodic_refresh_loop(self):
         """Background task to keep the UI alive and spinning while working."""
         while True:
-            if getattr(self, "is_working", False) or getattr(self, "toast_message", None):
+            if getattr(self, "is_working", False) or getattr(
+                self, "toast_message", None
+            ):
                 self.request_invalidate()
             await asyncio.sleep(0.1)
 
@@ -323,14 +345,14 @@ class LoomREPL:
                     rows=shutil.get_terminal_size().lines,
                     columns=shutil.get_terminal_size().columns,
                 ),
-                state_provider=lambda: getattr(self, 'is_modal_open', False)
+                state_provider=lambda: getattr(self, "is_modal_open", False),
             ),
         )
-        
+
         self.app.loom_repl = self
 
         self.app.loom_repl = self
-        
+
         # Start periodic refresh loop for animations
         asyncio.create_task(self._periodic_refresh_loop())
 
@@ -366,6 +388,7 @@ class LoomREPL:
         await compute_system_prompt(self.ctx)
         self.ctx.state.session_messages.append({"role": "user", "content": user_input})
         from ..renderables import print_user_message
+
         print_user_message(user_input, target_console=self._rich_console)
 
         hooks = AppHooks(self)
@@ -420,7 +443,7 @@ class LoomREPL:
             ("Always Allow", "always_allow"),
             ("Deny", "deny"),
         ]
-        
+
         # Security: Remove "Always Allow" for extremely high-risk tools like bash
         if tool.name == "bash":
             buttons = [b for b in buttons if b[1] != "always_allow"]

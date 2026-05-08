@@ -42,13 +42,16 @@ class BashTool(BaseTool):
         **kwargs,
     ) -> Dict[str, Any]:
         timeout = min(timeout, 120)
-        
+
         # PathGuard Integration
         if ctx and ctx.path_guard:
             # Very basic check for absolute paths in the command
             import re
+
             # Match strings that look like absolute paths (Unix and Windows)
-            paths = re.findall(r'(/[a-zA-Z0-9._/-]+|[a-zA-Z]:\\[a-zA-Z0-9._\\-]+)', command)
+            paths = re.findall(
+                r"(/[a-zA-Z0-9._/-]+|[a-zA-Z]:\\[a-zA-Z0-9._\\-]+)", command
+            )
             for p in paths:
                 _, error = ctx.path_guard.resolve(p)
                 if error:
