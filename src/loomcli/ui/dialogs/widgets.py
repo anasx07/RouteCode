@@ -192,6 +192,8 @@ class FlatButton:
             if mouse_event.event_type == MouseEventType.MOUSE_UP:
                 if self.handler:
                     self.handler()
+            elif mouse_event.event_type == MouseEventType.MOUSE_MOVE:
+                get_app().layout.focus(self.control)
 
         if is_focused:
             return [("[SetCursorPosition]", ""), ("", f"> {self.text} ", mouse_handler)]

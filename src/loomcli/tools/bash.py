@@ -42,6 +42,22 @@ class BashTool(BaseTool):
         **kwargs,
     ) -> Dict[str, Any]:
         timeout = min(timeout, 120)
+        
+        # PathGuard Integration
+        if ctx and ctx.path_guard:
+            # Very basic check for absolute paths in the command
+            import re
+            # Match strings that look like absolute paths (Unix and Windows)
+            paths = re.findall(r'(/[a-zA-Z0-9._/-]+|[a-zA-Z]:\\[a-zA-Z0-9._\\-]+)', command)
+            for p in paths:
+                _, error = ctx.path_guard.resolve(p)
+                if error:
+                    return {
+                        "exit_code": -1,
+                        "stdout": "",
+                        "stderr": f"Security Error: Command contains a path that escapes the workspace: {p}",
+                    }
+
         try:
             result = subprocess.run(
                 command, shell=True, capture_output=True, text=True, timeout=timeout

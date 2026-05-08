@@ -16,6 +16,8 @@ from prompt_toolkit.formatted_text import ANSI
 from prompt_toolkit.layout.dimension import D
 from prompt_toolkit.styles import DynamicStyle
 
+from rich.console import Console
+from io import StringIO
 from .base import _get_backdrop_ansi, BaseModalLayer
 from .widgets import HoverRadioList, FlatButton
 from ..terminal import TerminalManager
@@ -27,7 +29,7 @@ class LoomDialog(BaseModalLayer):
         self,
         title: str,
         text: str,
-        dialog_type: str = "radio",
+        dialog_type: str = "button",
         values: Optional[List[tuple]] = None,
         buttons: Optional[List[tuple]] = None,
         default: str = "",
@@ -44,6 +46,13 @@ class LoomDialog(BaseModalLayer):
         self.result = None
         self._focus_target = None
 
+    def _get_formatted_text(self, text):
+        """Convert Rich markup to ANSI for prompt_toolkit."""
+        s = StringIO()
+        c = Console(file=s, force_terminal=True, color_system="truecolor", width=70)
+        c.print(text, end="")
+        return ANSI(s.getvalue())
+
     def _get_focus_target(self):
         return self._focus_target
 
@@ -56,24 +65,71 @@ class LoomDialog(BaseModalLayer):
             if not self.future.done():
                 self.future.set_result(None)
 
-        # Add intuitive arrow navigation for buttons
+        # Focus trapping logic: Keep focus within the dialog's widgets
+        def get_focusable():
+            res = []
+            if hasattr(self, "radio_list"): res.append(self.radio_list)
+            if hasattr(self, "text_area"): res.append(self.text_area)
+            res.extend(buttons)
+            return res
+
         @kb.add("right")
-        def _(event):
-            if self.dialog_type != "input":
-                event.app.layout.focus_next()
-
-        @kb.add("left")
-        def _(event):
-            if self.dialog_type != "input":
-                event.app.layout.focus_previous()
-
         @kb.add("down")
         def _(event):
-            event.app.layout.focus_next()
+            widgets = get_focusable()
+            curr_idx = -1
+            for i, w in enumerate(widgets):
+                if event.app.layout.has_focus(w):
+                    curr_idx = i
+                    break
+            
+            next_idx = (curr_idx + 1) % len(widgets)
+            event.app.layout.focus(widgets[next_idx])
 
+        @kb.add("left")
         @kb.add("up")
+        @kb.add("s-tab")
         def _(event):
-            event.app.layout.focus_previous()
+            widgets = get_focusable()
+            curr_idx = -1
+            for i, w in enumerate(widgets):
+                if event.app.layout.has_focus(w):
+                    curr_idx = i
+                    break
+            
+            next_idx = (curr_idx - 1) % len(widgets)
+            event.app.layout.focus(widgets[next_idx])
+
+        @kb.add("enter")
+        def _(event):
+            # Check if any button has focus
+            for b in buttons:
+                if event.app.layout.has_focus(b.control):
+                    b.handler()
+                    return
+            # If no button focused, check if input or radio has focus
+            if self.dialog_type == "input" and event.app.layout.has_focus(self.text_area):
+                self.result = "ok"
+                res = self._handle_result()
+                if not self.future.done():
+                    self.future.set_result(res)
+            elif self.dialog_type == "radio" and event.app.layout.has_focus(self.radio_list.control):
+                self.result = "ok"
+                res = self._handle_result()
+                if not self.future.done():
+                    self.future.set_result(res)
+
+        @kb.add("tab")
+        def _(event):
+            # Explicitly override default tab behavior to stay in modal
+            widgets = get_focusable()
+            curr_idx = -1
+            for i, w in enumerate(widgets):
+                if event.app.layout.has_focus(w):
+                    curr_idx = i
+                    break
+            next_idx = (curr_idx + 1) % len(widgets)
+            event.app.layout.focus(widgets[next_idx])
 
         buttons = []
         for label, value in self.buttons_config:
@@ -98,13 +154,13 @@ class LoomDialog(BaseModalLayer):
                     self.future.set_result(res)
 
             self.radio_list._on_enter = _on_radio_enter
-            content = HSplit([Label(self.text), self.radio_list])
+            content = HSplit([Label(self._get_formatted_text(self.text)), self.radio_list])
         elif self.dialog_type == "input":
             self.text_area = TextArea(
                 text=self.default, password=self.password, multiline=False
             )
             self._focus_target = self.text_area
-            content = HSplit([Label(self.text), self.text_area])
+            content = HSplit([Label(self._get_formatted_text(self.text)), self.text_area])
 
             @kb.add("enter")
             def _(event):
@@ -113,11 +169,11 @@ class LoomDialog(BaseModalLayer):
                 if not self.future.done():
                     self.future.set_result(res)
         elif self.dialog_type == "button":
-            content = Label(self.text)
+            content = Label(self._get_formatted_text(self.text))
             if buttons:
                 self._focus_target = buttons[0]
         elif self.dialog_type == "message":
-            content = Label(self.text)
+            content = Label(self._get_formatted_text(self.text))
             def _ok_handler():
                 if not self.future.done():
                     self.future.set_result(None)
@@ -158,7 +214,12 @@ class LoomDialog(BaseModalLayer):
         if self.dialog_type == "input":
             dialog_height += 2
 
-        inner_split = HSplit(items, width=D(preferred=60, max=70), height=dialog_height)
+        inner_split = HSplit(
+            items,
+            width=D(preferred=60, max=70),
+            height=dialog_height,
+            key_bindings=kb
+        )
 
         dialog_box = Box(body=inner_split, padding=1, style="class:container")
         return Shadow(body=dialog_box)

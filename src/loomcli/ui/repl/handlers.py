@@ -164,10 +164,50 @@ class AppHooks(OrchestratorHooks):
                                 safe_len -= i
                                 break
                         if safe_len > 0:
-                            self.repl._rich_console.print(
-                                self._stream_buffer[:safe_len], end="", markup=False
-                            )
                             self._stream_buffer = self._stream_buffer[safe_len:]
+                            
+                            # Live Markdown rendering!
+                            # We truncate back to the start of the text response and re-render everything
+                            if self._text_start_pos is not None:
+                                from ..renderables import EnhancedMarkdown as Markdown
+                                from rich.markdown import Markdown as RichMarkdown
+                                
+                                was_at_bottom = self.repl._is_scrolled_to_bottom()
+                                old_cursor = self.repl.history_buffer.cursor_position
+                                
+                                # Temporarily remove current text to re-render
+                                self.repl.history_buffer.text = self.repl.history_buffer.text[: self._text_start_pos]
+                                
+                                # Use a temporary console to get ANSI output
+                                with self._dummy_console.capture() as capture:
+                                    # Split by <thought> tags to render parts correctly
+                                    parts = re.split(r"(<thought>.*?</thought>|<thought>.*$)", self.full_response, flags=re.DOTALL)
+                                    thought_idx = 0
+                                    for part in parts:
+                                        if part.startswith("<thought>"):
+                                            content = part[len("<thought>"):]
+                                            if content.endswith("</thought>"):
+                                                content = content[:-len("</thought>")]
+                                            
+                                            dur_str = self._thought_durations[thought_idx] if thought_idx < len(self._thought_durations) else "..."
+                                            thought_idx += 1
+                                            
+                                            self._dummy_console.print(f"\n[dim]│[/dim] [italic #ffaf00]Thought for {dur_str}:[/italic #ffaf00] ")
+                                            formatted = escape(content.strip()).replace("\n", "\n[dim]│[/dim] ")
+                                            self._dummy_console.print(f"[dim italic]│ {formatted}[/dim italic]\n")
+                                        else:
+                                            if part.strip():
+                                                self._dummy_console.print(Markdown(part))
+                                
+                                from rich.text import Text
+                                self.repl._rich_console.print(Text.from_ansi(capture.get()), end="")
+                                
+                                if was_at_bottom:
+                                    self.repl.history_buffer.cursor_position = len(self.repl.history_buffer.text)
+                                elif old_cursor > len(self.repl.history_buffer.text):
+                                    self.repl.history_buffer.cursor_position = len(self.repl.history_buffer.text)
+                                else:
+                                    self.repl.history_buffer.cursor_position = old_cursor
                         break
                 else:
                     if "</thought>" in self._stream_buffer:
@@ -223,7 +263,8 @@ class AppHooks(OrchestratorHooks):
             else:
                 self.repl.history_buffer.cursor_position = old_cursor
 
-            from rich.markdown import Markdown
+            from ..renderables import EnhancedMarkdown as Markdown
+            from rich.markdown import Markdown as RichMarkdown
 
             # Split by <thought> tags
             parts = re.split(r"(<thought>.*?</thought>)", self.full_response, flags=re.DOTALL)

@@ -16,6 +16,47 @@ You have access to local file system tools and a shell environment.
 When responding, start with a <thought> block for your internal reasoning and plan, then provide your response."""
 
 
+def _build_workspace_section() -> str:
+    import platform
+    cwd = os.getcwd()
+    os_name = platform.system()
+    os_release = platform.release()
+    project_structure = ""
+    try:
+        import subprocess
+        # Try to get git tree first
+        res = subprocess.run(
+            ["git", "ls-tree", "-r", "--name-only", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+            shell=True if os.name == 'nt' else False
+        )
+        if res.returncode == 0:
+            lines = res.stdout.strip().splitlines()
+            if len(lines) > 60:
+                project_structure = "\n".join(lines[:60]) + f"\n... ({len(lines)-60} more files)"
+            else:
+                project_structure = "\n".join(lines)
+        else:
+            # Fallback to listing current directory
+            files = os.listdir(cwd)
+            project_structure = "\n".join(files[:40])
+            if len(files) > 40:
+                project_structure += f"\n... ({len(files)-40} more items)"
+    except Exception:
+        project_structure = "Unable to retrieve directory structure."
+
+    return f"""## Workspace Context
+- **Operating System**: {os_name} ({os_release})
+- **Current Directory**: `{cwd}`
+- **Project Structure**:
+```
+{project_structure}
+```
+"""
+
+
 def _build_tools_section() -> str:
     tool_prompts = []
     for name, tool in registry.list_tools_with_prompts().items():
@@ -28,6 +69,7 @@ def _build_tools_section() -> str:
 def _build_behavior_section() -> str:
     return """## Behavior
 - Be concise. Use tools when needed, not for every response.
+- **CRITICAL: When creating or modifying code, ALWAYS use `file_write` or `file_edit` tools to apply the changes directly to the filesystem. Avoid sending raw code blocks in chat unless the user specifically asks for a snippet without applying it.**
 - Prefer `file_read` over `bash cat` for reading files. file_read returns results in cat -n format with line numbers.
 - Use `glob` and `grep` for codebase exploration before editing.
 - When editing, use `file_edit` for surgical changes, `file_write` for new files.
@@ -150,6 +192,7 @@ async def compute_system_prompt(ctx: "LoomContext") -> str:
     loom_sect, git_sect, context_sect = dynamic_results
 
     sections += [
+        _build_workspace_section(),
         _build_tools_section(),
         _build_skill_section(),
         _build_env_section(),

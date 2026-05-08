@@ -11,11 +11,77 @@ from rich.progress import (
     TextColumn,
     TimeElapsedColumn,
 )
-from rich.markdown import Markdown
+from rich.markdown import Markdown, CodeBlock, TableElement
+from rich.table import Table
+from rich import box
+from rich.syntax import Syntax
 from rich.spinner import Spinner
 from rich.columns import Columns
 from .console import console
-from .theme import get_theme_bg
+from .theme import get_theme_bg, get_theme_accent
+
+
+class EnhancedTableElement(TableElement):
+    """A table element with borders and better spacing."""
+
+    def __rich_console__(self, console, options):
+        # Let the original TableElement build the table
+        gen = super().__rich_console__(console, options)
+        accent = get_theme_accent()
+        for table in gen:
+            if isinstance(table, Table):
+                table.show_lines = True
+                table.show_edge = True
+                table.box = box.ROUNDED
+                table.border_style = accent
+                table.header_style = f"bold black on {accent}"
+                table.row_styles = ["none", f"on {get_theme_bg()}"]
+                table.expand = False # Don't force full width
+                table.padding = (0, 1)
+                yield table
+            else:
+                yield table
+
+
+class EnhancedCodeBlock(CodeBlock):
+    """A code block with a header and better styling."""
+
+    def __rich_console__(self, console, options):
+        code = str(self.text).rstrip()
+        syntax = Syntax(
+            code,
+            self.lexer_name,
+            theme="monokai",
+            line_numbers=True,
+            word_wrap=True,
+            background_color="default",
+        )
+        
+        # Determine language display name
+        lang = self.lexer_name.upper() if self.lexer_name else "CODE"
+        
+        # Create a header with the language name
+        accent = get_theme_accent()
+        header = Text(f" {lang} ", style=f"bold black on {accent}")
+        
+        # Wrap in a panel for premium feel
+        yield Panel(
+            syntax,
+            title=header,
+            title_align="left",
+            border_style="dim",
+            padding=(0, 1),
+            expand=False
+        )
+
+
+class EnhancedMarkdown(Markdown):
+    """Markdown with enhanced components."""
+    elements = Markdown.elements.copy()
+    elements["code_block"] = EnhancedCodeBlock
+    elements["fence"] = EnhancedCodeBlock
+    elements["table_open"] = EnhancedTableElement
+
 
 
 def get_logo():

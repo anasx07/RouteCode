@@ -69,6 +69,11 @@ def get_theme_bg(name=None):
     return THEME_BACKGROUNDS.get(name or _current_theme_name, "#1a1a2e")
 
 
+def get_theme_accent(name=None):
+    """Return the hex accent color for the given (or current) theme."""
+    return THEME_ACCENTS.get(name or _current_theme_name, "#ff0000")
+
+
 def apply_theme(name: str = "lava"):
     global _current_theme_name
     _current_theme_name = name

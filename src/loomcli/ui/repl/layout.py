@@ -4,13 +4,28 @@ from prompt_toolkit.layout import HSplit, VSplit, Window, WindowAlign, Dimension
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.mouse_events import MouseEventType
 from prompt_toolkit.widgets import Frame
+from prompt_toolkit.filters import Condition
 
-class ScrollableBufferControl(BufferControl):
-    def __init__(self, *args, **kwargs):
-        self.layout = kwargs.pop("layout", None)
+class ModalAwareBufferControl(BufferControl):
+    """BufferControl that blocks mouse interaction when a modal is open."""
+    def __init__(self, *args, repl_ref=None, **kwargs):
+        self._repl_ref = repl_ref
         super().__init__(*args, **kwargs)
 
     def mouse_handler(self, mouse_event):
+        if self._repl_ref and getattr(self._repl_ref, "is_modal_open", False):
+            return None
+        return super().mouse_handler(mouse_event)
+
+class ScrollableBufferControl(ModalAwareBufferControl):
+    def __init__(self, *args, layout=None, **kwargs):
+        self.layout = layout
+        super().__init__(*args, repl_ref=getattr(layout, "repl", None) if layout else None, **kwargs)
+
+    def mouse_handler(self, mouse_event):
+        if super().mouse_handler(mouse_event) is None:
+            return None
+
         win = getattr(self.layout, "history_main", None)
         repl = self.layout.repl if self.layout else None
 
@@ -118,6 +133,9 @@ class LoomLayout:
     def build_session_layout(self):
         """Split-pane layout: history+input on the left, sidebar on the right."""
         # History area
+        from prompt_toolkit.filters import Condition
+        is_not_modal = Condition(lambda: not getattr(self.repl, "is_modal_open", False))
+
         self.history_main = Window(
             content=ScrollableBufferControl(
                 buffer=self.repl.history_buffer,
@@ -125,6 +143,7 @@ class LoomLayout:
                     state_provider=lambda: getattr(self.repl, "is_modal_open", False)
                 ),
                 layout=self,
+                focusable=is_not_modal,
             ),
             wrap_lines=True,
             always_hide_cursor=True,
@@ -141,7 +160,11 @@ class LoomLayout:
 
         # Session input area
         self.session_input_window = Window(
-            content=BufferControl(buffer=self.repl.input_buffer),
+            content=ModalAwareBufferControl(
+                buffer=self.repl.input_buffer,
+                focusable=is_not_modal,
+                repl_ref=self.repl
+            ),
             height=Dimension(min=1, max=3),
             wrap_lines=True,
         )
@@ -268,13 +291,19 @@ class LoomLayout:
         ]
         if self.repl.is_working:
             duration = time.time() - self.repl.work_start_time
-            from ..renderables import format_duration
+            # Industry Standard: Dynamic spinner frames for high-end feel
+            frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+            frame_idx = int(time.time() * 10) % len(frames)
+            spinner = frames[frame_idx]
 
+            from ..renderables import format_duration
             dur_str = format_duration(duration)
+            accent = THEME_ACCENTS.get(_current_theme_name, "#ffaf00")
             res.extend(
                 [
                     ("fg:#555566", " · "),
-                    ("class:sidebar-header", f" Thinking {dur_str} "),
+                    (f"fg:{accent} bold", f"{spinner} "),
+                    ("class:sidebar-header", f"Working {dur_str} "),
                 ]
             )
         return res

@@ -22,8 +22,22 @@ class AuthorizationMiddleware(ToolMiddleware):
         if not tool.isDestructive:
             return await next_call(tool, args, ctx)
 
-        # Check Allowlist
+        # Security: Auto-allow "safe" read-only bash commands
+        if tool.name == "bash":
+            cmd = args.get("command", "").strip().lower()
+            safe_prefixes = ["ls", "cat", "pwd", "dir", "echo", "git status", "git diff", "type"]
+            # Check if command starts with a safe prefix or is just the safe command
+            if any(cmd == p or cmd.startswith(p + " ") for p in safe_prefixes):
+                # Also ensure no pipe or redirection to a file (to be safe)
+                if ">" not in cmd and "|" not in cmd:
+                    return await next_call(tool, args, ctx)
+
+        # Check Persistent Allowlist
         if self._check_permission(tool.name, ctx.config.allowlist):
+            return await next_call(tool, args, ctx)
+
+        # Check Session Allowlist
+        if self._check_permission(tool.name, ctx.state.session_allowlist):
             return await next_call(tool, args, ctx)
 
         # Check Denylist

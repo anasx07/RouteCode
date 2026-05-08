@@ -267,6 +267,13 @@ class LoomREPL:
         bus.on("session.reset", self._on_session_reset)
         bus.on("ui.theme_changed", lambda **kwargs: self._on_theme_changed())
 
+    async def _periodic_refresh_loop(self):
+        """Background task to keep the UI alive and spinning while working."""
+        while True:
+            if getattr(self, "is_working", False) or getattr(self, "toast_message", None):
+                self.request_invalidate()
+            await asyncio.sleep(0.1)
+
     def _on_session_reset(self, **kwargs):
         self.history_buffer.text = ""
         self._welcome_mode = True
@@ -321,6 +328,11 @@ class LoomREPL:
         )
         
         self.app.loom_repl = self
+
+        self.app.loom_repl = self
+        
+        # Start periodic refresh loop for animations
+        asyncio.create_task(self._periodic_refresh_loop())
 
         await self.app.run_async()
 
@@ -402,17 +414,30 @@ class LoomREPL:
                 )
                 print_diff("".join(diff_lines))
 
+        buttons = [
+            ("Allow this time", "allow"),
+            ("Allow this session", "session_allow"),
+            ("Always Allow", "always_allow"),
+            ("Deny", "deny"),
+        ]
+        
+        # Security: Remove "Always Allow" for extremely high-risk tools like bash
+        if tool.name == "bash":
+            buttons = [b for b in buttons if b[1] != "always_allow"]
+
         dialog = LoomDialog(
-            title="Destructive Tool",
-            text=f"Allow {label}?",
-            buttons=[
-                ("Allow", "allow"),
-                ("Deny", "deny"),
-                ("Always Allow", "always_allow"),
-            ],
+            title="Security Confirmation",
+            text=f"The agent wants to run a destructive tool: [bold yellow]{label}[/bold yellow].\nAllow this operation?",
+            buttons=buttons,
         )
         result = await dialog.run_async()
         if result == "allow":
+            return True
+        if result == "session_allow":
+            allowlist = self.ctx.state.session_allowlist
+            pattern = f"{tool.name}(*)"
+            if pattern not in allowlist:
+                allowlist.append(pattern)
             return True
         if result == "always_allow":
             allowlist = self.ctx.config.allowlist or []
@@ -421,10 +446,5 @@ class LoomREPL:
                 allowlist.append(pattern)
                 self.ctx.config.allowlist = allowlist
                 await self.ctx.config.save_async()
-                self._rich_console.print(
-                    f" [success]✔[/success] [dim]Added {pattern} to allowlist.[/dim]"
-                )
             return True
         return False
-
-

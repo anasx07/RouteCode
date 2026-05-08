@@ -22,6 +22,7 @@ class SessionState:
     tools_called: int = 0
     start_time: float = 0.0
     session_messages: ConversationHistory = field(default_factory=ConversationHistory)
+    session_allowlist: list = field(default_factory=list)
     context_warned: bool = False
 
     provider: Optional[str] = None
@@ -60,6 +61,7 @@ class SessionState:
             "provider": self.provider,
             "model": self.model,
             "messages": self.session_messages.to_list(),
+            "session_allowlist": self.session_allowlist,
         }
 
     @classmethod
@@ -72,6 +74,7 @@ class SessionState:
             provider=data.get("provider"),
             model=data.get("model"),
             session_messages=ConversationHistory(data.get("messages", [])),
+            session_allowlist=data.get("session_allowlist", []),
         )
 
     def merge(self, other: "SessionState"):
