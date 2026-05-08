@@ -237,7 +237,6 @@ def preflight(n_steps: int):
     else:
         ok(f"Branch: [bold]{branch}[/bold]")
 
-
     # Upstream exists
     if not has_upstream():
         warn(
@@ -316,24 +315,32 @@ def update_version_file(new_ver: Version, n_steps: int):
     else:
         content = path.read_text()
         pattern = r'(__version__\s*=\s*")([^"]+)(")'
-        new_content = re.sub(pattern, rf'\g<1>{new_ver}\g<3>', content)
+        new_content = re.sub(pattern, rf"\g<1>{new_ver}\g<3>", content)
         if new_content == content:
             warn("No version string found to update in __init__.py")
         else:
             path.write_text(new_content)
-            ok(f"Updated version to [bold cyan]{new_ver}[/bold cyan] in {path.relative_to(REPO_ROOT)}")
+            ok(
+                f"Updated version to [bold cyan]{new_ver}[/bold cyan] in {path.relative_to(REPO_ROOT)}"
+            )
 
     console.print()
     console.print("  [bold yellow]ACTION REQUIRED:[/bold yellow]")
-    console.print("  Please commit the version update (and any other pending changes) to proceed.")
+    console.print(
+        "  Please commit the version update (and any other pending changes) to proceed."
+    )
     console.print(f"  [dim]git add {path.relative_to(REPO_ROOT)}[/dim]")
-    console.print(f"  [dim]git commit -m \"chore: bump version to {new_ver}\"[/dim]")
+    console.print(f'  [dim]git commit -m "chore: bump version to {new_ver}"[/dim]')
     console.print()
 
     while is_dirty():
-        Prompt.ask("  [bold white]Press Enter once you have committed all changes to continue[/bold white]")
+        Prompt.ask(
+            "  [bold white]Press Enter once you have committed all changes to continue[/bold white]"
+        )
         if is_dirty():
-            warn("Working tree is still dirty. Please ensure all changes are committed.")
+            warn(
+                "Working tree is still dirty. Please ensure all changes are committed."
+            )
 
     ok("Changes committed. Proceeding with release pipeline.")
     console.print()
