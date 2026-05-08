@@ -237,10 +237,6 @@ def preflight(n_steps: int):
     else:
         ok(f"Branch: [bold]{branch}[/bold]")
 
-    # Working tree clean
-    if is_dirty():
-        fail("Working tree has uncommitted changes. Commit or stash them first.")
-    ok("Working tree is clean")
 
     # Upstream exists
     if not has_upstream():
@@ -311,13 +307,45 @@ def pick_version(n_steps: int) -> tuple[Version, str]:
     return new_ver, tag
 
 
+def update_version_file(new_ver: Version, n_steps: int):
+    step(3, n_steps, "Update version fallback & commit")
+
+    path = REPO_ROOT / "src" / "loomcli" / "__init__.py"
+    if not path.exists():
+        warn(f"Version file not found at {path}. Skipping.")
+    else:
+        content = path.read_text()
+        pattern = r'(__version__\s*=\s*")([^"]+)(")'
+        new_content = re.sub(pattern, rf'\g<1>{new_ver}\g<3>', content)
+        if new_content == content:
+            warn("No version string found to update in __init__.py")
+        else:
+            path.write_text(new_content)
+            ok(f"Updated version to [bold cyan]{new_ver}[/bold cyan] in {path.relative_to(REPO_ROOT)}")
+
+    console.print()
+    console.print("  [bold yellow]ACTION REQUIRED:[/bold yellow]")
+    console.print("  Please commit the version update (and any other pending changes) to proceed.")
+    console.print(f"  [dim]git add {path.relative_to(REPO_ROOT)}[/dim]")
+    console.print(f"  [dim]git commit -m \"chore: bump version to {new_ver}\"[/dim]")
+    console.print()
+
+    while is_dirty():
+        Prompt.ask("  [bold white]Press Enter once you have committed all changes to continue[/bold white]")
+        if is_dirty():
+            warn("Working tree is still dirty. Please ensure all changes are committed.")
+
+    ok("Changes committed. Proceeding with release pipeline.")
+    console.print()
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Changelog preview
 # ═══════════════════════════════════════════════════════════════════════════
 
 
 def show_changelog(new_ver: Version, last_tag: Optional[str], n_steps: int):
-    step(3, n_steps, "Changelog preview")
+    step(4, n_steps, "Changelog preview")
 
     commits = commits_since(last_tag)
     if not commits:
@@ -585,14 +613,15 @@ def summary(new_ver: Version, actions_url: str):
 def main():
     os.chdir(REPO_ROOT)
 
-    N_STEPS = 7  # preflight, version, changelog, lint, format, tests, tag+push
+    N_STEPS = 8  # preflight, version, update, changelog, lint, format, tests, tag+push
 
     header()
 
     preflight(N_STEPS)
     new_ver, last_tag = pick_version(N_STEPS)
+    update_version_file(new_ver, N_STEPS)
     show_changelog(new_ver, last_tag, N_STEPS)
-    cur = maybe_run_lint(N_STEPS, 4)
+    cur = maybe_run_lint(N_STEPS, 5)
     cur = maybe_run_format(N_STEPS, cur)
     cur = maybe_run_tests(N_STEPS, cur)
     actions_url = tag_and_push(new_ver, N_STEPS, cur)

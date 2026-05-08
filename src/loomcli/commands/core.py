@@ -71,7 +71,9 @@ def handle_attach(args: List[str], ctx: LoomContext):
 
 
 def handle_version(args: List[str], ctx: LoomContext):
-    ctx.console.print("[accent]LoomCLI[/accent] [white]0.1.0[/white]")
+    from .. import __version__
+
+    ctx.console.print(f"[accent]LoomCLI[/accent] [white]{__version__}[/white]")
     from . import COMMANDS
 
     ctx.console.print(f"[dim]Python based, {len(COMMANDS)} commands[/dim]")

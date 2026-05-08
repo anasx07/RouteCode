@@ -1,6 +1,9 @@
 try:
-    from importlib.metadata import version
+    try:
+        from ._version import __version__
+    except ImportError:
+        from importlib.metadata import version
 
-    __version__ = version("loomcli")
+        __version__ = version("loomcli")
 except Exception:
-    __version__ = "0.1.0-dev"
+    __version__ = "1.0.3"
