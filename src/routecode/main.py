@@ -5,7 +5,9 @@ from .ui.repl import RouteCodeREPL
 from . import ui as _ui
 from .config import config
 
-app = typer.Typer(help="routecode: An AI assistant for your terminal.", name="routecode")
+app = typer.Typer(
+    help="routecode: An AI assistant for your terminal.", name="routecode"
+)
 
 
 @app.callback(invoke_without_command=True)

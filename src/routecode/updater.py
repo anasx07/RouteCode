@@ -247,7 +247,9 @@ def _binary_update(update_info: UpdateInfo, console=None) -> bool:
 
 
 def _replace_and_relaunch_windows(new_exe: str, current_exe: str, console=None) -> bool:
-    script_fd, script_path = tempfile.mkstemp(suffix=".bat", prefix="routecode_install_")
+    script_fd, script_path = tempfile.mkstemp(
+        suffix=".bat", prefix="routecode_install_"
+    )
     os.close(script_fd)
 
     with open(script_path, "w") as f:

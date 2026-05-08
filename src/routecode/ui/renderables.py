@@ -118,7 +118,7 @@ class EnhancedMarkdown(Markdown):
     elements["table_open"] = EnhancedTableElement
 
     def __init__(self, markup: str, *args, **kwargs):
-        super().__init__(markup, *args, **kwargs)   
+        super().__init__(markup, *args, **kwargs)
 
 
 def get_logo():

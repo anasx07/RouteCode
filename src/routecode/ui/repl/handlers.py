@@ -344,7 +344,9 @@ class AppHooks(OrchestratorHooks):
         if not tool_calls:
             elapsed = time.time() - self.start_time
             self.repl._rich_console.print("\n")
-            print_status_line(self.repl.ctx.config.model, self.repl.ctx.config.provider, elapsed)
+            print_status_line(
+                self.repl.ctx.config.model, self.repl.ctx.config.provider, elapsed
+            )
             print_session_stats(self.repl.ctx.state)
 
     async def on_tool_call(self, name, args):

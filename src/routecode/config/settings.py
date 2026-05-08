@@ -11,7 +11,9 @@ class Config:
         from ..utils.storage import AtomicJsonStore
 
         self._provider: str = os.environ.get("ROUTECODE_PROVIDER", "openrouter")
-        self._model: str = os.environ.get("ROUTECODE_MODEL", "anthropic/claude-3.5-sonnet")
+        self._model: str = os.environ.get(
+            "ROUTECODE_MODEL", "anthropic/claude-3.5-sonnet"
+        )
         self.personality: str = os.environ.get("ROUTECODE_PERSONALITY", "default")
         self.theme: str = os.environ.get("ROUTECODE_THEME", "lava")
         self.allowlist: list = []
