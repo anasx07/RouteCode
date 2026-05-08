@@ -11,9 +11,9 @@ PROVIDER_LIST = list(PROVIDER_MAP.keys())
 async def handle_provider(args: List[str], ctx: RouteCodeContext):
     # Load models database to get provider names
     import json
-    from pathlib import Path
+    from ..utils.paths import get_resource_path
 
-    models_db_path = Path(__file__).parent.parent / "models_api.json"
+    models_db_path = get_resource_path("models_api.json")
     try:
         with open(models_db_path, "r", encoding="utf-8") as f:
             models_db = json.load(f)
@@ -153,9 +153,9 @@ async def handle_model(args: List[str], ctx: RouteCodeContext):
 
     # Load models database
     import json
-    from pathlib import Path
+    from ..utils.paths import get_resource_path
 
-    models_db_path = Path(__file__).parent.parent / "models_api.json"
+    models_db_path = get_resource_path("models_api.json")
     try:
         with open(models_db_path, "r", encoding="utf-8") as f:
             models_db = json.load(f)

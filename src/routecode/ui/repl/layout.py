@@ -77,7 +77,7 @@ class RouteCodeLayout:
         """Centered logo + bordered input box (OpenCode-style home screen)."""
         logo_window = Window(
             content=FormattedTextControl(self._get_logo_formatted),
-            height=3,
+            height=5,
             align=WindowAlign.CENTER,
             style="class:welcome-logo",
         )
@@ -256,6 +256,11 @@ class RouteCodeLayout:
             result.append((f"fg:{dim_color} bold", _LOGO_ROUTE[i]))
             result.append(("", gap))
             result.append((f"fg:{accent} bold", _LOGO_CODE[i]))
+
+        # Add version below with a subtle offset for balance
+        short_version = __version__.split("+")[0].split(".dev")[0]
+        result.append(("", "\n\n"))
+        result.append(("fg:#444455", f"v{short_version}"))
         return result
 
     def _get_welcome_model_line(self):
@@ -332,7 +337,7 @@ class RouteCodeLayout:
                 ("class:sidebar-value", f"/{cwd}  "),
                 (f"fg:{accent}", "● "),
                 (f"fg:{accent} bold", "RouteCode"),
-                ("fg:#555566", f" {__version__}"),
+                ("fg:#555566", f" v{__version__.split('+')[0].split('.dev')[0]}"),
             ]
         )
         return base

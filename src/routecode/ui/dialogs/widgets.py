@@ -1,57 +1,64 @@
 from prompt_toolkit.widgets import RadioList
 from prompt_toolkit.layout.containers import Window
 from prompt_toolkit.layout.controls import FormattedTextControl
-from prompt_toolkit.layout.menus import CompletionsMenu, CompletionsMenuControl
-from prompt_toolkit.layout import ScrollOffsets
+from prompt_toolkit.layout.menus import CompletionsMenuControl
 from prompt_toolkit.application import get_app
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
 
 
+from prompt_toolkit.layout.margins import ScrollbarMargin, ConditionalMargin
+from prompt_toolkit.layout.containers import ConditionalContainer
+from prompt_toolkit.filters import to_filter, has_completions, is_done
+from prompt_toolkit.layout.scrollable_pane import ScrollOffsets
+from prompt_toolkit.layout.dimension import Dimension
+
+
 class HoverCompletionsMenuControl(CompletionsMenuControl):
-    """CompletionsMenuControl with MOUSE_MOVE hover support."""
+    """CompletionsMenuControl that highlights items on mouse hover."""
 
-    def mouse_handler(self, mouse_event: MouseEvent):
-        b = get_app().current_buffer
+    def mouse_handler(self, mouse_event):
+        buff = get_app().current_buffer
         if mouse_event.event_type == MouseEventType.MOUSE_MOVE:
-            b.go_to_completion(mouse_event.position.y)
+            if buff and buff.complete_state:
+                index = mouse_event.position.y
+                if 0 <= index < len(buff.complete_state.completions):
+                    buff.complete_state.complete_index = index
+                    get_app().invalidate()
+            return None
         elif mouse_event.event_type == MouseEventType.MOUSE_UP:
-            b.go_to_completion(mouse_event.position.y)
-            b.complete_state = None
-        elif mouse_event.event_type == MouseEventType.SCROLL_DOWN:
-            b.complete_next(count=3, disable_wrap_around=True)
-        elif mouse_event.event_type == MouseEventType.SCROLL_UP:
-            b.complete_previous(count=3, disable_wrap_around=True)
-        return None
+            if buff and buff.complete_state:
+                index = mouse_event.position.y
+                if 0 <= index < len(buff.complete_state.completions):
+                    buff.go_to_completion(index)
+            return None
+        return super().mouse_handler(mouse_event)
 
 
-class HoverCompletionsMenu(CompletionsMenu):
+class HoverCompletionsMenu(ConditionalContainer):
+    """CompletionsMenu with mouse-hover highlighting support."""
+
     def __init__(
-        self,
-        max_height=None,
-        scroll_offset=0,
-        extra_filter=True,
-        display_arrows=False,
-        z_index=10**8,
+        self, max_height=None, scroll_offset=0, extra_filter=None, z_index=10**8
     ):
-        from prompt_toolkit.filters import to_filter, has_completions, is_done
-        from prompt_toolkit.layout.dimension import Dimension
-        from prompt_toolkit.layout.margins import ScrollbarMargin
+        extra_filter = to_filter(extra_filter if extra_filter is not None else True)
 
-        extra_filter = to_filter(extra_filter)
-        display_arrows = to_filter(display_arrows)
-
-        super(CompletionsMenu, self).__init__(
-            content=Window(
-                content=HoverCompletionsMenuControl(),
-                width=Dimension(min=8),
-                height=Dimension(min=1, max=max_height),
-                scroll_offsets=ScrollOffsets(top=scroll_offset, bottom=scroll_offset),
-                right_margins=[ScrollbarMargin(display_arrows=display_arrows)],
-                dont_extend_width=True,
-                style="class:completion-menu",
-                z_index=z_index,
-            ),
+        window = Window(
+            content=HoverCompletionsMenuControl(),
+            width=Dimension(min=8),
+            height=Dimension(min=1, max=max_height),
+            scroll_offsets=ScrollOffsets(top=scroll_offset, bottom=scroll_offset),
+            right_margins=[
+                ConditionalMargin(
+                    ScrollbarMargin(display_arrows=False),
+                    has_completions & extra_filter,
+                )
+            ],
+            dont_extend_width=True,
+            style="class:completion-menu",
+        )
+        super().__init__(
+            content=window,
             filter=extra_filter & has_completions & ~is_done,
         )
 
@@ -235,12 +242,21 @@ class MenuRadioList(RadioList):
     def _get_text_fragments(self):
         from prompt_toolkit.formatted_text import to_formatted_text
 
+        y_to_idx = {}
+        current_y = 0
+
         def mouse_handler(mouse_event: MouseEvent) -> None:
+            y = mouse_event.position.y
+
             if mouse_event.event_type == MouseEventType.MOUSE_MOVE:
-                self._selected_index = mouse_event.position.y
+                idx = y_to_idx.get(y)
+                if idx is not None:
+                    self._selected_index = idx
             elif mouse_event.event_type == MouseEventType.MOUSE_UP:
-                self._selected_index = mouse_event.position.y
-                self._handle_enter()
+                idx = y_to_idx.get(y)
+                if idx is not None:
+                    self._selected_index = idx
+                    self._handle_enter()
             elif mouse_event.event_type == MouseEventType.SCROLL_UP:
                 self._selected_index -= 1
                 get_app().invalidate()
@@ -252,6 +268,9 @@ class MenuRadioList(RadioList):
         menu_width = 40
 
         for i, value in enumerate(self.values):
+            y_to_idx[current_y] = i
+            current_y += 1
+
             is_active = value[0] == self.active_value
             selected = i == self._selected_index
 
@@ -296,7 +315,7 @@ class CategoryRadioList:
         self.active_value = active_value
         self._current_index = 0
 
-        self.control = FormattedTextControl(self._get_text_fragments, focusable=False)
+        self.control = FormattedTextControl(self._get_text_fragments, focusable=True)
         self.window = Window(
             content=self.control,
             scroll_offsets=ScrollOffsets(top=3, bottom=3),
@@ -350,12 +369,19 @@ class CategoryRadioList:
         self._current_index = old_val
 
     def _get_text_fragments(self):
+        y_to_idx = {}
+        current_y = 0
+
         def mouse_handler(mouse_event: MouseEvent) -> None:
+            y = mouse_event.position.y
+
             if mouse_event.event_type == MouseEventType.MOUSE_MOVE:
-                self._selected_index = mouse_event.position.y
+                idx = y_to_idx.get(y)
+                if idx is not None:
+                    self._selected_index = idx
             elif mouse_event.event_type == MouseEventType.MOUSE_UP:
-                idx = mouse_event.position.y
-                if idx < len(self.values) and not self.values[idx][2]:
+                idx = y_to_idx.get(y)
+                if idx is not None and not self.values[idx][2]:
                     self._current_index = idx
                     if hasattr(self, "_on_enter"):
                         self._on_enter()
@@ -369,9 +395,17 @@ class CategoryRadioList:
 
         for i, (value, label, is_header, description, tag) in enumerate(self.values):
             if is_header:
+                # Header takes 3 lines: empty, label, empty
+                y_to_idx[current_y] = i
+                y_to_idx[current_y + 1] = i
+                y_to_idx[current_y + 2] = i
+                current_y += 3
                 result.append(("class:menu-header", f"\n{label}\n", mouse_handler))
                 continue
 
+            # Item takes 1 line
+            y_to_idx[current_y] = i
+            current_y += 1
             selected = i == self._current_index
             is_active = value == self.active_value
 
@@ -386,6 +420,7 @@ class CategoryRadioList:
                 prefix = "  "
 
             has_star = False
+            has_check = False
             if label.startswith("✓ "):
                 check_text = "✓ "
                 label_text = label[2:]
@@ -393,16 +428,13 @@ class CategoryRadioList:
             elif label.startswith("★ "):
                 check_text = "★ "
                 label_text = label[2:]
-                has_check = False
                 has_star = True
             elif label.startswith("  "):
                 check_text = "  "
                 label_text = label[2:]
-                has_check = False
             else:
                 check_text = ""
                 label_text = label
-                has_check = False
 
             main_text_raw = f"{prefix}{check_text}{label_text}"
             desc_text = f" {description}" if description else ""

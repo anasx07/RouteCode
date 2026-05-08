@@ -9,10 +9,12 @@ from .task_manager import task_manager
 from ..utils.helpers import parse_frontmatter
 
 
+from ..utils.paths import get_resource_path
+
 SKILL_DIRS = [
     CONFIG_DIR / "skills",
     Path(".routecode") / "skills",
-    Path(__file__).parent / "bundled_skills",
+    get_resource_path("bundled_skills"),
 ]
 
 

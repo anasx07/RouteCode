@@ -1,9 +1,10 @@
 import json
-from pathlib import Path
 from typing import Dict, Any
 from .litellm_provider import LiteLLMProvider
 
-MODELS_API_PATH = Path(__file__).parent.parent / "models_api.json"
+from ..utils.paths import get_resource_path
+
+MODELS_API_PATH = get_resource_path("models_api.json")
 
 
 def _load_registry() -> Dict[str, Any]:

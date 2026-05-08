@@ -6,7 +6,6 @@ from .core import (
     handle_tools,
     handle_attach,
     handle_version,
-    handle_clear,
     handle_exit,
     handle_update,
 )
@@ -51,7 +50,6 @@ COMMANDS = {
     "/remember": handle_remember,
     "/forget": handle_forget,
     "/memories": handle_memories,
-    "/clear": handle_clear,
     "/exit": handle_exit,
     "/update": handle_update,
 }
@@ -80,7 +78,6 @@ def get_command_metadata() -> Dict[str, str]:
         "/remember <key> <value>": "Save a memory for future sessions",
         "/forget <key>": "Delete a saved memory",
         "/memories": "List all saved memories",
-        "/clear": "Clear the terminal screen",
         "/exit": "Exit the session",
         "/update": "Check for and install RouteCode updates",
     }

@@ -13,7 +13,6 @@ from prompt_toolkit.application import Application
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.layout import Layout, FloatContainer, Float
 from prompt_toolkit.layout.containers import DynamicContainer
-from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.filters import has_focus
@@ -30,6 +29,10 @@ from ...core.orchestrator import AgentOrchestrator
 from .styles import RouteCodeVt100Output, build_repl_style
 from .layout import RouteCodeLayout
 from .handlers import AppHooks
+
+
+from ..dialogs import HoverCompletionsMenu
+
 
 logger = get_logger(__name__)
 
@@ -297,12 +300,22 @@ class RouteCodeREPL:
             await asyncio.sleep(0.1)
 
     async def _check_for_updates(self):
-        """Background task: check for RouteCode updates on startup."""
+        """Background task: check for RouteCode updates on startup (24h throttle)."""
         try:
+            # Only check if 24 hours have passed since last check
+            now = time.time()
+            if now - self.ctx.config.last_update_check < 86400:  # 24 hours
+                return
+
             await asyncio.sleep(3)
             from ...updater import check_for_update
 
             info = check_for_update()
+
+            # Record the check time
+            self.ctx.config.last_update_check = now
+            await self.ctx.config.save_async()
+
             if info.is_available:
                 self.toast_message = f"Update {info.latest_version} available — /update"
                 self.request_invalidate()
@@ -339,7 +352,9 @@ class RouteCodeREPL:
             content=DynamicContainer(self._get_active_layout),
             floats=[
                 Float(
-                    xcursor=True, ycursor=True, content=CompletionsMenu(max_height=16)
+                    xcursor=True,
+                    ycursor=True,
+                    content=HoverCompletionsMenu(max_height=16),
                 )
             ],
         )
@@ -350,7 +365,7 @@ class RouteCodeREPL:
             style=DynamicStyle(lambda: self.style),
             mouse_support=True,
             full_screen=True,
-            cursor=SimpleCursorShapeConfig(CursorShape.BLOCK),
+            cursor=SimpleCursorShapeConfig(CursorShape.BLINKING_BLOCK),
             color_depth=ColorDepth.TRUE_COLOR,
             output=RouteCodeVt100Output(
                 sys.stdout,

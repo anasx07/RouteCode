@@ -58,9 +58,13 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools_scm]
 write_to = "src/routecode/_version.py"
 fallback_version = "0.0.0-dev"
+local_scheme = "no-local-version"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+routecode = ["*.json", "bundled_skills/*.md"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -40,20 +40,24 @@ def main(
     if update:
         from .updater import check_for_update, perform_update
 
-        _ui.console.print("[accent]Checking for updates...[/accent]")
-        info = check_for_update()
+        with _ui.console.status(
+            "[accent]Checking for updates...[/accent]", spinner="dots"
+        ):
+            info = check_for_update()
+
         if info.error:
             _ui.console.print(f"[dim]{info.error}[/dim]")
         elif info.is_available:
             _ui.console.print(
-                f"[accent]Update available:[/accent] "
+                f"[accent]Update available![/accent] "
                 f"[white]{info.current_version}[/white] → [white]{info.latest_version}[/white]"
             )
             perform_update(info, console=_ui.console)
             raise typer.Exit()
         else:
+            short_ver = info.current_version.split("+")[0].split(".dev")[0]
             _ui.console.print(
-                f"[success]Already up to date[/success] [dim]({info.current_version})[/dim]"
+                f"[success]Already up to date[/success] [dim]({short_ver})[/dim]"
             )
             raise typer.Exit()
 

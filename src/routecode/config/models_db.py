@@ -1,10 +1,11 @@
 import json
-from pathlib import Path
 from typing import Dict, Optional
 from functools import lru_cache
 import litellm
 
-_DB_PATH = Path(__file__).parent / "models_api.json"
+from ..utils.paths import get_resource_path
+
+_DB_PATH = get_resource_path("models_api.json")
 _db_cache: Optional[Dict] = None
 
 

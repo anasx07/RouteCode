@@ -79,18 +79,11 @@ def handle_version(args: List[str], ctx: RouteCodeContext):
     ctx.console.print(f"[dim]Python based, {len(COMMANDS)} commands[/dim]")
 
 
-def handle_clear(args: List[str], ctx: RouteCodeContext):
-    ctx.state.session_messages.clear()
-    from ..ui import refresh_screen
-
-    refresh_screen(ctx)
-
-
-def handle_update(args: List[str], ctx: RouteCodeContext):
+async def handle_update(args: List[str], ctx: RouteCodeContext):
     from ..updater import check_for_update, perform_update
 
-    ctx.console.print("[accent]Checking for updates...[/accent]")
-    info = check_for_update()
+    with ctx.console.status("[accent]Checking for updates...[/accent]", spinner="dots"):
+        info = check_for_update()
 
     if info.error:
         ctx.console.print(f"[dim]Could not check for updates: {info.error}[/dim]")
@@ -100,8 +93,9 @@ def handle_update(args: List[str], ctx: RouteCodeContext):
         return
 
     if not info.is_available:
+        short_ver = info.current_version.split("+")[0].split(".dev")[0]
         ctx.console.print(
-            f"[success]RouteCode is up to date[/success] [dim]({info.current_version})[/dim]"
+            f"[success]RouteCode is up to date[/success] [dim]({short_ver})[/dim]"
         )
         return
 
@@ -119,10 +113,3 @@ async def handle_exit(args: List[str], ctx: RouteCodeContext):
 
     await handle_save([], ctx)
     raise EOFError("exit")
-
-
-def _refresh_screen(ctx: RouteCodeContext):
-    """Clears the terminal with the current theme background and repaints the welcome screen."""
-    from ..ui import refresh_screen
-
-    refresh_screen(ctx)

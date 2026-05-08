@@ -21,6 +21,7 @@ class Config:
         self.api_keys: Dict[str, str] = {}
         self.recent_models: list = []  # List of (provider, model) tuples
         self.favorites: list = []  # List of (provider, model) tuples
+        self.last_update_check: float = 0.0
         self.store = AtomicJsonStore(CONFIG_FILE)
         self._load()
         self._load_env_keys()
@@ -66,6 +67,7 @@ class Config:
             self.api_keys = data.get("api_keys", {})
             self.recent_models = data.get("recent_models", [])
             self.favorites = data.get("favorites", [])
+            self.last_update_check = data.get("last_update_check", 0.0)
 
     def _load_env_keys(self):
         from ..agents.registry import PROVIDER_MAP
@@ -93,6 +95,7 @@ class Config:
             "denylist": self.denylist,
             "recent_models": self.recent_models,
             "favorites": self.favorites,
+            "last_update_check": self.last_update_check,
         }
 
     def save(self):

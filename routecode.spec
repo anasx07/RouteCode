@@ -4,7 +4,7 @@ a = Analysis(
     ['run_routecode.py'],
     pathex=[],
     binaries=[],
-    datas=collect_data_files('litellm') + collect_data_files('tiktoken'),
+    datas=collect_data_files('routecode') + collect_data_files('litellm') + collect_data_files('tiktoken'),
     hiddenimports=['tiktoken_ext.openai_public', 'tiktoken_ext'],
     hookspath=[],
     hooksconfig={},
