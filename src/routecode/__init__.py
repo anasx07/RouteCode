@@ -6,4 +6,4 @@ try:
 
         __version__ = version("routecode")
 except Exception:
-    __version__ = "1.1.2"
+    __version__ = "0.0.1"
