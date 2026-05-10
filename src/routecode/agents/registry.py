@@ -1,8 +1,9 @@
 import json
 from typing import Dict, Any
 from .litellm_provider import LiteLLMProvider
-
+from .cloudflare_provider import CloudflareProvider
 from ..utils.paths import get_resource_path
+from .mapping import normalize_provider_name
 
 MODELS_API_PATH = get_resource_path("models_api.json")
 
@@ -20,50 +21,50 @@ def _load_registry() -> Dict[str, Any]:
 REGISTRY_DATA = _load_registry()
 
 
-class DynamicLiteLLMProvider(LiteLLMProvider):
+def get_provider_class(provider_id: str):
     """
-    A LiteLLMProvider that configures itself from models_api.json metadata.
+    Returns a provider class factory that selects the best implementation
+    (Native or LiteLLM) based on metadata.
     """
+    data = REGISTRY_DATA.get(provider_id, {})
+    npm = data.get("npm", "")
+    base_url = data.get("api")
 
-    def __init__(self, api_key: str, provider_id: str):
-        data = REGISTRY_DATA.get(provider_id, {})
-        base_url = data.get("api")
-        npm = data.get("npm", "")
+    pid_lower = provider_id.lower()
+    is_native_cloudflare = ("workers-ai" in pid_lower) or (
+        "cloudflare" in pid_lower and "gateway" not in pid_lower
+    )
+    litellm_p = normalize_provider_name(npm) or provider_id
 
-        # Determine internal LiteLLM provider name from metadata hints
-        litellm_p = provider_id
-        if "openai" in npm:
-            litellm_p = "openai"
-        elif "anthropic" in npm:
-            litellm_p = "anthropic"
-        elif "google" in npm or "gemini" in npm:
-            litellm_p = "google"
-        elif "deepseek" in npm:
-            litellm_p = "deepseek"
-
-        # Populate models list from metadata
-        models_dict = data.get("models", {})
-        models_list = [
-            {"id": mid, "name": m.get("name", mid)} for mid, m in models_dict.items()
-        ]
-
-        super().__init__(api_key, litellm_p, base_url=base_url, models=models_list)
-
-
-def create_provider_factory(pid: str):
-    """Creates a provider class compatible with the existing PROVIDER_MAP interface."""
-
-    class SpecificProvider(DynamicLiteLLMProvider):
+    class DynamicProvider:
         def __init__(self, api_key: str):
-            super().__init__(api_key, pid)
+            models_dict = data.get("models", {})
+            models_list = [
+                {"id": mid, "name": m.get("name", mid)}
+                for mid, m in models_dict.items()
+            ]
 
-    return SpecificProvider
+            if is_native_cloudflare:
+                self.impl = CloudflareProvider(
+                    api_key, base_url=base_url, models=models_list
+                )
+            else:
+                self.impl = LiteLLMProvider(
+                    api_key, litellm_p, base_url=base_url, models=models_list
+                )
+
+        async def ask(self, *args, **kwargs):
+            async for chunk in self.impl.ask(*args, **kwargs):
+                yield chunk
+
+        async def get_models(self):
+            return await self.impl.get_models()
+
+    return DynamicProvider
 
 
-# Build the map dynamically from JSON
-PROVIDER_MAP = {pid: create_provider_factory(pid) for pid in REGISTRY_DATA.keys()}
+PROVIDER_MAP = {pid: get_provider_class(pid) for pid in REGISTRY_DATA.keys()}
 
-# Fallback to standard providers if JSON is missing or empty
 if not PROVIDER_MAP:
 
     class OpenAIProvider(LiteLLMProvider):
@@ -74,18 +75,7 @@ if not PROVIDER_MAP:
         def __init__(self, api_key: str):
             super().__init__(api_key, "anthropic")
 
-    class GoogleProvider(LiteLLMProvider):
-        def __init__(self, api_key: str):
-            super().__init__(api_key, "google")
-
-    class OpenRouterProvider(LiteLLMProvider):
-        def __init__(self, api_key: str):
-            super().__init__(api_key, "openrouter")
-
     PROVIDER_MAP = {
         "openai": OpenAIProvider,
         "anthropic": AnthropicProvider,
-        "google": GoogleProvider,
-        "openrouter": OpenRouterProvider,
-        "deepseek": lambda k: LiteLLMProvider(k, "deepseek"),
     }

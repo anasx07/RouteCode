@@ -11,6 +11,8 @@ class AtomicJsonStore:
     Unified, crash-safe JSON persistence layer.
     Ensures that writes are atomic by writing to a temporary file and
     renaming it to the target path.
+
+    Supports context manager protocol for lifecycle scoping.
     """
 
     def __init__(self, path: Path):
@@ -19,6 +21,22 @@ class AtomicJsonStore:
 
     def _ensure_dir(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    # ── Context manager protocol ─────────────────────────────────────────
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.cleanup_stale_temps()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        self.cleanup_stale_temps()
+
+    # ── Core API ─────────────────────────────────────────────────────────
 
     def load(self, default: Optional[Dict] = None) -> Dict[str, Any]:
         """Loads JSON data from the file. Returns default if file doesn't exist or is invalid."""
@@ -65,7 +83,7 @@ class AtomicJsonStore:
             await asyncio.to_thread(os.replace, tmp_path, self.path)
         except Exception as e:
             if tmp_path.exists():
-                await asyncio.to_thread(tmp_path.unlink, missing_ok=True)
+                await asyncio.to_thread(tmp_path.unlink)
             raise e
 
     def exists(self) -> bool:
@@ -74,3 +92,23 @@ class AtomicJsonStore:
     def delete(self):
         if self.path.exists():
             self.path.unlink()
+
+    # ── Cleanup ──────────────────────────────────────────────────────────
+
+    def cleanup_stale_temps(self, base_path: Optional[Path] = None):
+        """
+        Removes orphaned .tmp files left behind by crashed sessions.
+        Call once at startup to clean up from previous incomplete writes.
+
+        Args:
+            base_path: Directory to scan. Defaults to the parent directory
+                       of this store's path.
+        """
+        search_dir = base_path or self.path.parent
+        if not search_dir.exists():
+            return
+        for tmp_file in search_dir.glob("*.tmp"):
+            try:
+                tmp_file.unlink()
+            except Exception:
+                pass

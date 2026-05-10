@@ -89,50 +89,121 @@ async def handle_provider(args: List[str], ctx: RouteCodeContext):
                         break
 
         if not is_connected:
-            new_key = await RouteCodeDialog(
-                title=f"Setup {result.capitalize()}",
-                text=_ui.get_dialog_text(
-                    f"Paste your {result} API key here and press Enter:", "input"
-                ),
-                password=True,
-                dialog_type="input",
-            ).run_async()
-            if new_key:
-                ctx.config.set_api_key(result, new_key)
-                await ctx.config.save_async()
-                print_success(
-                    f"API key for {result} has been saved! You can now select its models in the model menu."
-                )
-                break
-            else:
-                continue
-        else:
-            action = await RouteCodeDialog(
-                title=f"Update {result.capitalize()}",
-                text=_ui.get_dialog_text(
-                    f"{result} is already connected. Do you want to update the API key?",
-                    "button",
-                ),
-                buttons=[("Update", True), ("Back", False)],
-                dialog_type="button",
-            ).run_async()
+            p_info = models_db.get(result, {})
+            env_vars = p_info.get("env", [])
 
-            if action:
+            if len(env_vars) > 1:
+                # Multiple keys needed
+                collected_keys = {}
+                for ev in env_vars:
+                    label = ev.replace("_", " ").title()
+                    # User requested to see the key when adding it
+                    val = await RouteCodeDialog(
+                        title=f"Setup {result.capitalize()}",
+                        text=_ui.get_dialog_text(f"Enter {label}:", "input"),
+                        password=False,
+                        dialog_type="input",
+                    ).run_async()
+                    if not val:
+                        break
+                    collected_keys[ev] = val
+
+                if len(collected_keys) == len(env_vars):
+                    import json
+
+                    ctx.config.set_api_key(result, json.dumps(collected_keys))
+                    await ctx.config.save_async()
+                    print_success(f"Credentials for {result} have been saved!")
+                    break
+                else:
+                    continue
+            else:
+                # Single key
                 new_key = await RouteCodeDialog(
-                    title=f"Update {result.capitalize()}",
+                    title=f"Setup {result.capitalize()}",
                     text=_ui.get_dialog_text(
-                        f"Paste your new {result} API key:", "input"
+                        f"Paste your {result} API key here and press Enter:", "input"
                     ),
-                    password=True,
+                    password=False,
                     dialog_type="input",
                 ).run_async()
                 if new_key:
                     ctx.config.set_api_key(result, new_key)
                     await ctx.config.save_async()
-                    print_success(f"API key for {result} has been updated.")
+                    print_success(
+                        f"API key for {result} has been saved! You can now select its models in the model menu."
+                    )
                     break
                 else:
                     continue
+        else:
+            action = await RouteCodeDialog(
+                title=f"Update {result.capitalize()}",
+                text=_ui.get_dialog_text(
+                    f"{result} is already connected. What would you like to do?",
+                    "button",
+                ),
+                buttons=[
+                    ("Update", "update"),
+                    ("Disconnect", "disconnect"),
+                    ("Back", "back"),
+                ],
+                dialog_type="button",
+            ).run_async()
+
+            if action == "update":
+                p_info = models_db.get(result, {})
+                env_vars = p_info.get("env", [])
+
+                if len(env_vars) > 1:
+                    collected_keys = {}
+                    for ev in env_vars:
+                        label = ev.replace("_", " ").title()
+                        val = await RouteCodeDialog(
+                            title=f"Update {result.capitalize()}",
+                            text=_ui.get_dialog_text(f"Enter {label}:", "input"),
+                            password=False,
+                            dialog_type="input",
+                        ).run_async()
+                        if not val:
+                            break
+                        collected_keys[ev] = val
+
+                    if len(collected_keys) == len(env_vars):
+                        import json
+
+                        ctx.config.set_api_key(result, json.dumps(collected_keys))
+                        await ctx.config.save_async()
+                        print_success(f"Credentials for {result} have been updated.")
+                        break
+                else:
+                    new_key = await RouteCodeDialog(
+                        title=f"Update {result.capitalize()}",
+                        text=_ui.get_dialog_text(
+                            f"Paste your new {result} API key:", "input"
+                        ),
+                        password=False,
+                        dialog_type="input",
+                    ).run_async()
+                    if new_key:
+                        ctx.config.set_api_key(result, new_key)
+                        await ctx.config.save_async()
+                        print_success(f"API key for {result} has been updated.")
+                        break
+            elif action == "disconnect":
+                confirm = await RouteCodeDialog(
+                    title="Confirm Disconnect",
+                    text=_ui.get_dialog_text(
+                        f"Are you sure you want to disconnect {result}?", "button"
+                    ),
+                    buttons=[("Yes", True), ("No", False)],
+                    dialog_type="button",
+                ).run_async()
+                if confirm:
+                    del ctx.config.api_keys[result]
+                    await ctx.config.save_async()
+                    print_success(f"Disconnected {result}.")
+                    break
             else:
                 continue
 
@@ -279,11 +350,12 @@ async def handle_model(args: List[str], ctx: RouteCodeContext):
         if val and ":" in val:
             p, m = val.split(":", 1)
             ctx.config.toggle_favorite(p, m)
-            return _build_values()
+            return [p, m] in ctx.config.favorites
+        return False
 
     menu.on_favorite = on_favorite
 
-    def on_connect_provider_stub():
+    def on_connect_provider_stub(val):
         pass
 
     menu.on_connect_provider = on_connect_provider_stub
@@ -392,7 +464,7 @@ async def handle_config(args: List[str], ctx: RouteCodeContext):
 
 async def handle_theme(args: List[str], ctx: RouteCodeContext):
     from ..ui import THEMES, apply_theme
-    from .core import _refresh_screen
+    from ..ui.renderables import refresh_screen
 
     if args:
         name = args[0]
@@ -400,7 +472,7 @@ async def handle_theme(args: List[str], ctx: RouteCodeContext):
             apply_theme(name)
             ctx.config.theme = name
             await ctx.config.save_async()
-            _refresh_screen(ctx)
+            refresh_screen(ctx)
             print_success(f"Theme set to: {name}")
         else:
             avail = ", ".join(THEMES.keys())
@@ -425,7 +497,7 @@ async def handle_theme(args: List[str], ctx: RouteCodeContext):
         apply_theme(result)
         ctx.config.theme = result
         await ctx.config.save_async()
-        _refresh_screen(ctx)
+        refresh_screen(ctx)
         print_success(f"Theme set to: {result}")
     else:
         apply_theme(original_theme)

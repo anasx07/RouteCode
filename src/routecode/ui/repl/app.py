@@ -3,6 +3,7 @@ import shutil
 import sys
 import time
 import asyncio
+import traceback
 from io import StringIO
 from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.styles import DynamicStyle
@@ -17,19 +18,17 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.filters import has_focus
 
-from ...core import SessionState, RouteCodeContext, bus, PathGuard
+from ...core import bus
 from ...utils.logger import get_logger
 from .. import console, get_tool_label
 from ...commands import execute_command, get_command_metadata
 from ...tools import registry, AuthorizationMiddleware
 from ...config import config, CONFIG_DIR, compute_system_prompt
-from ...domain.task_manager import task_manager
-from ...core.orchestrator import AgentOrchestrator
 
 from .styles import RouteCodeVt100Output, build_repl_style
 from .layout import RouteCodeLayout
 from .handlers import AppHooks
-
+from .bindings import KeyBindingsMixin
 
 from ..dialogs import HoverCompletionsMenu
 
@@ -37,7 +36,7 @@ from ..dialogs import HoverCompletionsMenu
 logger = get_logger(__name__)
 
 
-class RouteCodeREPL:
+class RouteCodeREPL(KeyBindingsMixin):
     def __init__(self):
         command_metadata = get_command_metadata()
         from ...domain.skills import discover_skills
@@ -58,16 +57,13 @@ class RouteCodeREPL:
             multiline=False, completer=self.completer, complete_while_typing=True
         )
 
-        # ── Flags ─────────────────────────────────────────────────────────────
         self._welcome_mode = True
         self.is_working = False
         self.work_start_time = 0
 
-        # Setup redirection for rich console
         self._output_buffer = StringIO()
-        self._rich_console = console  # The shared console
+        self._rich_console = console
 
-        # Disable litellm's verbose logging
         import litellm
 
         litellm.set_verbose = False
@@ -78,7 +74,6 @@ class RouteCodeREPL:
         logging.getLogger("LiteLLM").setLevel(logging.ERROR)
         logging.getLogger("litellm").setLevel(logging.ERROR)
 
-        # Force colors and reasonable width
         self._rich_console.force_terminal = True
         self._rich_console.color_system = "truecolor"
         try:
@@ -86,40 +81,9 @@ class RouteCodeREPL:
         except Exception:
             self._rich_console.width = 120
 
-        # Output interception
         self._original_print = self._rich_console.print
         self._rich_console.print = self._intercepted_print
         self.history_buffer.text = ""
-
-        self.style = build_repl_style()
-        self._set_terminal_background()
-
-        from ...core.memory import MemoryManager
-
-        self.memory = MemoryManager(CONFIG_DIR)
-        self.state = SessionState()
-        self.path_guard = PathGuard()
-        self.ctx = RouteCodeContext(
-            state=self.state,
-            config=config,
-            console=self._rich_console,
-            task_manager=task_manager,
-            memory=self.memory,
-            path_guard=self.path_guard,
-        )
-        self.auto_save_counter = 0
-        self.logo_animation_count = 0
-        self.orchestrator = AgentOrchestrator(self.ctx)
-        from ...core.audit import audit_hook
-
-        registry.add_post_hook(audit_hook)
-        registry.add_middleware(
-            AuthorizationMiddleware(confirm_callback=self._confirm_destructive)
-        )
-
-        self._setup_event_handlers()
-        self._kb = KeyBindings()
-        self._setup_key_bindings()
 
         self.app = None
         self.layout_manager = RouteCodeLayout(self)
@@ -157,7 +121,6 @@ class RouteCodeREPL:
             else:
                 self.ctx.loop.call_soon_threadsafe(_schedule)
         except RuntimeError:
-            # We are not in an async context, safely delegate to the main loop
             self.ctx.loop.call_soon_threadsafe(_schedule)
 
     def _is_scrolled_to_bottom(self):
@@ -168,51 +131,6 @@ class RouteCodeREPL:
 
         self.style = styles.build_repl_style(is_dimmed=self.is_modal_open)
         self.request_invalidate()
-
-    def _setup_key_bindings(self):
-        @self._kb.add("c-c")
-        def _(event):
-            if getattr(self, "is_working", False):
-                if hasattr(self, "_current_agent_task") and self._current_agent_task:
-                    self._current_agent_task.cancel()
-                    self._rich_console.print(" [yellow]Agent aborted by user.[/yellow]")
-                return
-
-            now = time.time()
-            if self._ctrl_c_press_time and (now - self._ctrl_c_press_time) < 3.0:
-                event.app.exit()
-            else:
-                self._ctrl_c_press_time = now
-                self.toast_message = "Press Ctrl+C again to exit"
-                self.request_invalidate()
-
-                def clear_toast():
-                    if (
-                        self.toast_message
-                        and time.time() - self._ctrl_c_press_time >= 2.9
-                    ):
-                        self.toast_message = None
-                        self.request_invalidate()
-
-                if getattr(self, "ctx", None) and getattr(self.ctx, "loop", None):
-                    self.ctx.loop.call_later(3.0, clear_toast)
-
-        @self._kb.add("enter", filter=has_focus(self.input_buffer))
-        def _(event):
-            text = self.input_buffer.text.strip()
-            self.input_buffer.reset()
-            if text:
-                if self._welcome_mode:
-                    self._switch_to_session_mode()
-                self._current_agent_task = asyncio.create_task(self.handle_input(text))
-
-        @self._kb.add(Keys.ScrollUp)
-        def _(event):
-            self.history_buffer.cursor_up(count=3)
-            win = self.layout_manager.history_main
-            if win:
-                win.vertical_scroll = max(0, win.vertical_scroll - 3)
-            event.app.invalidate()
 
         @self._kb.add(Keys.ScrollDown)
         def _(event):
@@ -286,7 +204,6 @@ class RouteCodeREPL:
 
                 await handle_save(["auto"], self.ctx)
 
-        bus.on("session.turn_complete", _on_turn_complete)
         bus.on("session.reset", self._on_session_reset)
         bus.on("ui.theme_changed", lambda **kwargs: self._on_theme_changed())
 
@@ -328,12 +245,9 @@ class RouteCodeREPL:
         self.request_invalidate()
 
     def _on_theme_changed(self):
-        self._set_terminal_background()
         self.style = build_repl_style()
+        self._original_print = self._rich_console._instance.print
         self.request_invalidate()
-
-    def _set_terminal_background(self):
-        self.style = build_repl_style()
 
     def _on_resize(self):
         try:
@@ -342,9 +256,58 @@ class RouteCodeREPL:
             pass
 
     async def run(self):
-        self.ctx.loop = asyncio.get_running_loop()
+        loop = asyncio.get_running_loop()
 
-        # Pre-build both layouts
+        # Capture asyncio task exceptions that would otherwise be silently dropped
+        original_handler = loop.get_exception_handler()
+
+        def _task_exc_handler(loop, context):
+            logger.error("Asyncio exception: %s", context)
+            if original_handler:
+                original_handler(loop, context)
+
+        loop.set_exception_handler(_task_exc_handler)
+
+        # ── Phase 1: Build services (dependency-ordered, synchronous) ──
+        from ...core import AppContainer
+
+        self.container = AppContainer(CONFIG_DIR)
+        self.container.build()
+
+        # Swap the rich console reference to our intercepted one
+        self.container.ctx.console = self._rich_console
+        self.ctx = self.container.ctx
+        self.state = self.container.state
+        self.memory = self.container.memory
+        self.ctx.loop = loop
+        self.auto_save_counter = 0
+        self.logo_animation_count = 0
+
+        # ── Phase 2: Initialize (async — load persisted state) ───────
+        await self.container.initialize()
+
+        # ── Phase 3: Validate (assert all services ready) ─────────────
+        self.container.validate()
+
+        # ── Phase 4: Wire ─────────────────────────────────────────────
+        from ..theme import apply_theme
+
+        apply_theme(config.theme)
+        self.style = build_repl_style()
+        self.orchestrator = self.container.orchestrator
+
+        from ...core.audit import audit_hook
+
+        registry.add_post_hook(audit_hook)
+        registry.add_middleware(
+            AuthorizationMiddleware(confirm_callback=self._confirm_destructive)
+        )
+
+        self._setup_event_handlers()
+        self._kb = KeyBindings()
+        self._setup_key_bindings()
+
+        # ── Phase 5: Build UI layout ──────────────────────────────────
         self._welcome_container = self.layout_manager.build_welcome_layout()
         self._session_container = self.layout_manager.build_session_layout()
 
@@ -379,14 +342,15 @@ class RouteCodeREPL:
 
         self.app.routecode_repl = self
 
-        self.app.routecode_repl = self
-
-        # Start periodic refresh loop for animations
+        # ── Phase 6: Start ────────────────────────────────────────────
         asyncio.create_task(self._periodic_refresh_loop())
-        # Start background update check (fires after 3s delay)
         asyncio.create_task(self._check_for_updates())
 
-        await self.app.run_async()
+        try:
+            await self.app.run_async()
+        finally:
+            # ── Phase 7: Shutdown ────────────────────────────────
+            self.container.shutdown()
 
     def _get_active_layout(self):
         if self._welcome_mode:
@@ -403,13 +367,17 @@ class RouteCodeREPL:
 
     async def handle_input(self, text):
         self.history_buffer.cursor_position = len(self.history_buffer.text)
-        if text.startswith("/"):
-            if await execute_command(text, self.ctx):
-                pass
+        try:
+            if text.startswith("/"):
+                if await execute_command(text, self.ctx):
+                    pass
+                else:
+                    self._rich_console.print(f" [error]✘[/error] Unknown command: {text}")
             else:
-                self._rich_console.print(f" [error]✘[/error] Unknown command: {text}")
-        else:
-            await self.process_agent_request(text)
+                await self.process_agent_request(text)
+        except Exception as e:
+            logger.error("handle_input crashed:\n%s", traceback.format_exc())
+            self._rich_console.print(f" [error]✘[/error] Internal error: {e}")
 
     async def process_agent_request(self, user_input: str):
         if not self.orchestrator.provider:

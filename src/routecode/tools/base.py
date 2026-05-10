@@ -1,10 +1,67 @@
 import asyncio
+import logging
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Type, TYPE_CHECKING
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from ..core import RouteCodeContext
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ToolResult:
+    """Typed result from a tool execution."""
+    success: bool
+    content: str = ""
+    error: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    @staticmethod
+    def from_value(value: Any) -> "ToolResult":
+        """Normalizes any tool return value into a ToolResult.
+
+        Handles:
+          - ToolResult instances (pass-through)
+          - dicts with 'success'/'error' keys (tool convention)
+          - raw strings (implicit success)
+          - other types (wrapped as-is)
+        """
+        if isinstance(value, ToolResult):
+            return value
+        if isinstance(value, dict):
+            if "error" in value:
+                return ToolResult(
+                    success=False,
+                    error=str(value["error"]),
+                    content=value.get("content", ""),
+                    metadata={k: v for k, v in value.items() if k not in ("error", "content", "success")},
+                )
+            if "success" in value:
+                return ToolResult(
+                    success=bool(value.get("success", True)),
+                    content=str(value.get("content", "")),
+                    error=str(value["error"]) if "error" in value else None,
+                    metadata={k: v for k, v in value.items() if k not in ("success", "content", "error")},
+                )
+            return ToolResult(success=True, content=str(value.get("content", "")), metadata=value)
+        if isinstance(value, str):
+            return ToolResult(success=True, content=value)
+        return ToolResult(success=True, content=str(value))
+
+    def to_dict(self) -> Dict[str, Any]:
+        if self.success:
+            return {"success": True, "content": self.content, **self.metadata}
+        return {"success": False, "error": self.error}
+
+    @staticmethod
+    def is_error(result: Any) -> bool:
+        """Check if a result represents a tool error."""
+        if isinstance(result, ToolResult):
+            return not result.success
+        return isinstance(result, dict) and "error" in result
 
 
 class BaseTool(ABC):
@@ -46,7 +103,8 @@ class BaseTool(ABC):
         provider: Optional[Any] = None,
         **kwargs,
     ) -> Any:
-        return await asyncio.to_thread(self._run, ctx=ctx, provider=provider, **kwargs)
+        raw = await asyncio.to_thread(self._run, ctx=ctx, provider=provider, **kwargs)
+        return ToolResult.from_value(raw)
 
     @abstractmethod
     def _run(self, **kwargs) -> Any:
@@ -84,7 +142,7 @@ class ToolRegistry:
     ) -> Any:
         tool = self.get_tool(name)
         if not tool:
-            return {"error": f"Tool not found: {name}"}
+            return ToolResult(success=False, error=f"Tool not found: {name}")
 
         self.run_pre_hooks(name, args)
 
@@ -104,12 +162,13 @@ class ToolRegistry:
 
         try:
             result = await pipeline(tool, args, ctx)
-            self.run_post_hooks(name, result)
-            return result
+            tr = ToolResult.from_value(result)
+            self.run_post_hooks(name, tr.to_dict())
+            return tr
         except Exception as e:
-            result = {"error": str(e)}
-            self.run_post_hooks(name, result)
-            return result
+            tr = ToolResult(success=False, error=str(e))
+            self.run_post_hooks(name, tr.to_dict())
+            return tr
 
     def register(self, tool: BaseTool):
         self._tools[tool.name] = tool
@@ -134,14 +193,14 @@ class ToolRegistry:
             try:
                 fn(name, args)
             except Exception:
-                pass
+                logger.exception("Pre-hook failed for tool '%s'", name)
 
     def run_post_hooks(self, name: str, result: Dict):
         for fn in self._post_hooks:
             try:
                 fn(name, result)
             except Exception:
-                pass
+                logger.exception("Post-hook failed for tool '%s'", name)
 
     def parse_and_validate(self, name: str, arguments: Any) -> Dict[str, Any]:
         """

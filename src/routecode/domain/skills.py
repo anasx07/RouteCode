@@ -29,6 +29,16 @@ class Skill:
         self.tools: List[str] = []
         self._parse()
 
+    @property
+    def enabled(self) -> bool:
+        from ..config import config
+
+        return self.name not in config.disabled_skills
+
+    @property
+    def is_bundled(self) -> bool:
+        return "bundled_skills" in str(self.path).replace("\\", "/")
+
     def _parse(self):
         content = self.path.read_text(encoding="utf-8")
         metadata, body = parse_frontmatter(content)
@@ -59,7 +69,7 @@ _skill_cache: Dict[str, Skill] = None
 _skill_cache_mtime: float = 0.0
 
 
-def discover_skills() -> Dict[str, Skill]:
+def discover_skills(only_enabled: bool = False) -> Dict[str, Skill]:
     """
     Discovers all available skills from the configured skill directories.
     Uses MTIME-based caching to avoid expensive filesystem scans.
@@ -107,11 +117,14 @@ def discover_skills() -> Dict[str, Skill]:
 
     _skill_cache = skills
     _skill_cache_mtime = current_mtime
+
+    if only_enabled:
+        return {n: s for n, s in skills.items() if s.enabled}
     return skills
 
 
 def get_skill_prompts() -> str:
-    skills = discover_skills()
+    skills = discover_skills(only_enabled=True)
     if not skills:
         return ""
     lines = ["## Available Skills"]

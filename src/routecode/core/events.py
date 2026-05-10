@@ -1,8 +1,6 @@
-from typing import Callable, Dict, List, Any, Optional
+from typing import Callable, Dict, List, Any, Optional, Type
 import logging
 import asyncio
-import inspect
-from weakref import WeakSet
 
 logger = logging.getLogger(__name__)
 
@@ -10,19 +8,27 @@ logger = logging.getLogger(__name__)
 class EventBus:
     """
     A lightweight, thread-safe event bus for decoupling routecode subsystems.
-    Allows modules to emit events without knowing about their listeners.
+
+    Supports both string-based events (emit/on) and typed dataclass events
+    (emit_typed/on_typed) for improved static analysis and type safety.
     """
 
     def __init__(self):
         self._handlers: Dict[str, List[Callable]] = {}
-        self._active_tasks = WeakSet()
+        self._typed_to_name: Dict[type, str] = {}
 
     def on(self, event: str, handler: Callable):
-        """Registers a handler for a specific event."""
+        """Registers a handler for a specific event name."""
         if event not in self._handlers:
             self._handlers[event] = []
         if handler not in self._handlers[event]:
             self._handlers[event].append(handler)
+
+    def on_typed(self, event_class: type, handler: Callable):
+        """Registers a handler for a typed event dataclass."""
+        name = self._resolve_typed_name(event_class)
+        self._typed_to_name[event_class] = name
+        self.on(name, handler)
 
     def off(self, event: str, handler: Callable):
         """Deregisters a handler for a specific event."""
@@ -36,64 +42,57 @@ class EventBus:
                 self._handlers[event] = []
         else:
             self._handlers = {}
+            self._typed_to_name.clear()
 
     def emit(self, event: str, **data):
         """
-        Synchronously emits an event. Async handlers are fired as background tasks.
+        Synchronously emits a string-named event.
+        All handlers must be synchronous.
         """
         if event not in self._handlers:
             return
 
         for handler in self._handlers[event]:
             try:
-                if inspect.iscoroutinefunction(handler):
-                    self._fire_and_forget(handler, data, event)
-                else:
-                    handler(**data)
+                handler(**data)
             except Exception as e:
                 logger.error(f"Error in sync event handler for {event}: {e}")
+
+    def emit_typed(self, event):
+        """
+        Synchronously emits a typed dataclass event.
+        Converts the event fields to kwargs and dispatches to all registered
+        handlers (both typed and string-based).
+        """
+        name = self._resolve_typed_name(type(event))
+        self.emit(name, **vars(event))
 
     async def emit_async(self, event: str, **data):
         """
         Asynchronously emits an event. Properly awaits all async handlers.
+        Sync handlers are called directly.
         """
         if event not in self._handlers:
             return
 
-        tasks = []
         for handler in self._handlers[event]:
             try:
-                if inspect.iscoroutinefunction(handler):
-                    tasks.append(handler(**data))
+                if asyncio.iscoroutinefunction(handler):
+                    await handler(**data)
                 else:
                     handler(**data)
             except Exception as e:
                 logger.error(f"Error in async event handler for {event}: {e}")
 
-        if tasks:
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            for res in results:
-                if isinstance(res, Exception):
-                    logger.error(f"Async error in handler for {event}: {res}")
-
-    def _fire_and_forget(
-        self, handler: Callable, data: Dict[str, Any], event_name: str
-    ):
-        try:
-            loop = asyncio.get_running_loop()
-            task = loop.create_task(handler(**data))
-            self._active_tasks.add(task)
-            task.add_done_callback(lambda t: self._active_tasks.discard(t))
-
-            def _log_error(t):
-                try:
-                    t.result()
-                except Exception as e:
-                    logger.error(f"Background task error for {event_name}: {e}")
-
-            task.add_done_callback(_log_error)
-        except RuntimeError:
-            pass
+    @staticmethod
+    def _resolve_typed_name(event_class: type) -> str:
+        """Derives a stable event name from a typed event class."""
+        module = getattr(event_class, "__module__", "")
+        qualname = getattr(event_class, "__qualname__", event_class.__name__)
+        if module and module != "builtins":
+            # core.event_types.ProviderChanged -> core.event_types.ProviderChanged
+            return f"{module}.{qualname}"
+        return qualname
 
 
 # Global bus instance

@@ -1,5 +1,5 @@
 import httpx
-from typing import Dict
+from typing import Dict, Optional
 
 
 class ClassifiedError:
@@ -82,6 +82,32 @@ ERROR_CATEGORIES = {
 }
 
 
+# Shared keyword-to-category matching — single source of truth for both
+# classify_http_error() and classify_exception().
+_KEYWORD_MATCHERS = [
+    ("auth", ["api key", "unauthorized", "unauth", "auth failed", "401", "403"]),
+    ("insufficient_quota", ["credit", "quota", "balance", "402", "insufficient_quota"]),
+    ("rate_limit", ["rate limit", "rate_limit", "429", "too many requests"]),
+    ("timeout", ["timeout", "timed out", "408"]),
+    ("prompt_too_long", ["too long", "context length", "maximum context", "413"]),
+    ("connection", ["connect", "connection", "dns", "name resolution"]),
+]
+
+
+def _match_keywords(text: str) -> Optional[str]:
+    """Checks a lowercase text string against ERROR_CATEGORY keyword matchers.
+    Returns the category key if a match is found, or None."""
+    for category, keywords in _KEYWORD_MATCHERS:
+        for kw in keywords:
+            if kw in text:
+                return category
+    return None
+
+
+def _model_not_found_in(text: str) -> bool:
+    return "model" in text and ("not found" in text or "not support" in text)
+
+
 def classify_http_error(status_code: int, body: str = "") -> ClassifiedError:
     body_lower = body.lower()
 
@@ -92,7 +118,7 @@ def classify_http_error(status_code: int, body: str = "") -> ClassifiedError:
     elif status_code == 402:
         return ERROR_CATEGORIES["insufficient_quota"]
     elif status_code == 404:
-        if "model" in body_lower:
+        if _model_not_found_in(body_lower):
             return ERROR_CATEGORIES["model_not_found"]
         return ERROR_CATEGORIES["bad_request"]
     elif status_code == 413:
@@ -102,14 +128,9 @@ def classify_http_error(status_code: int, body: str = "") -> ClassifiedError:
     elif status_code >= 500:
         return ERROR_CATEGORIES["server_error"]
     elif status_code >= 400:
-        if "credit" in body_lower or "quota" in body_lower or "balance" in body_lower:
-            return ERROR_CATEGORIES["insufficient_quota"]
-        if "timeout" in body_lower or "timed out" in body_lower:
-            return ERROR_CATEGORIES["timeout"]
-        if "model" in body_lower and (
-            "not found" in body_lower or "not supported" in body_lower
-        ):
-            return ERROR_CATEGORIES["model_not_found"]
+        cat = _match_keywords(body_lower)
+        if cat:
+            return ERROR_CATEGORIES[cat]
         return ERROR_CATEGORIES["bad_request"]
     else:
         return ERROR_CATEGORIES["unknown"]
@@ -130,19 +151,11 @@ def classify_exception(e: Exception) -> ClassifiedError:
         return ERROR_CATEGORIES["connection"]
 
     msg = str(e).lower()
-    if "timeout" in msg or "timed out" in msg:
-        return ERROR_CATEGORIES["timeout"]
-    if "rate limit" in msg or "429" in msg:
-        return ERROR_CATEGORIES["rate_limit"]
-    if "api key" in msg or "unauthorized" in msg or "401" in msg or "403" in msg:
-        return ERROR_CATEGORIES["auth"]
-    if "credit" in msg or "quota" in msg or "balance" in msg or "402" in msg:
-        return ERROR_CATEGORIES["insufficient_quota"]
-    if "model" in msg and ("not found" in msg or "not support" in msg):
+    if _model_not_found_in(msg):
         return ERROR_CATEGORIES["model_not_found"]
-    if "too long" in msg or "context length" in msg or "maximum context" in msg:
-        return ERROR_CATEGORIES["prompt_too_long"]
-    if "connect" in msg or "connection" in msg or "dns" in msg:
-        return ERROR_CATEGORIES["connection"]
+
+    cat = _match_keywords(msg)
+    if cat:
+        return ERROR_CATEGORIES[cat]
 
     return ERROR_CATEGORIES["unknown"]

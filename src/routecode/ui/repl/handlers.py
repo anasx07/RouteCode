@@ -280,6 +280,13 @@ class AppHooks(OrchestratorHooks):
         self._remove_cursor()
         self._remove_thinking()
 
+        # Auto-save every 5 turns
+        from ..commands import handle_save
+
+        self.repl.auto_save_counter += 1
+        if self.repl.auto_save_counter > 0 and self.repl.auto_save_counter % 5 == 0:
+            await handle_save(["auto"], self.repl.ctx)
+
         if self._in_thought:
             if self._stream_buffer:
                 formatted = escape(self._stream_buffer).replace("\n", "\n[dim]│[/dim] ")

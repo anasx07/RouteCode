@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from typing import List, Dict, Any, TYPE_CHECKING
 from .events import bus
 from .state import count_tokens
@@ -6,6 +7,8 @@ from .state import count_tokens
 if TYPE_CHECKING:
     from .context import RouteCodeContext
     from .history import ConversationHistory
+
+logger = logging.getLogger(__name__)
 
 
 class ContextManager:
@@ -36,18 +39,13 @@ class ContextManager:
             compacted = self.microcompact(history.get_messages())
             if len(compacted) < original_len:
                 history.set_messages(compacted)
-                # Recalculate tokens for the retained history
                 retained_content = " ".join(
                     m.get("content", "") or "" for m in compacted
                 )
                 if hasattr(self.ctx.state, "_tokenizer") and self.ctx.state._tokenizer:
-                    new_token_count = self.ctx.state._tokenizer.count_tokens(
+                    self.ctx.state._tokenizer.recalculate(
                         retained_content, model
                     )
-                    self.ctx.state._tokenizer.load_state(
-                        new_token_count, self.ctx.state.estimated_cost
-                    )
-                    self.ctx.state.tokens_used = new_token_count
                 else:
                     self.ctx.state.tokens_used = count_tokens(retained_content, model)
 
@@ -153,10 +151,10 @@ class ContextManager:
             task_id = f"c{abs(hash(compact_prompt)) % 10**7}"
             task_manager.create("Context compaction", None, task_id)
 
-            # Run as async task on the main loop
             asyncio.create_task(
                 _run_sub_agent_async(compact_prompt, 3, task_id, self.ctx)
             )
             return True
         except Exception:
+            logger.exception("Context compaction failed")
             return False

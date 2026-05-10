@@ -85,21 +85,24 @@ class TaskManager:
 
     def kill(self, task_id: str) -> bool:
         killed = False
+        worker = None
         with self._lock:
             if task_id in self._tasks:
                 record = self._tasks[task_id]
                 if record.status == "running":
                     record.status = "killed"
                     record.completed_at = time.time()
-
-                    # If it's an asyncio Task, cancel it immediately
-                    if isinstance(record.worker, asyncio.Task):
-                        try:
-                            record.worker.cancel()
-                        except Exception:
-                            pass
+                    worker = record.worker
                     record.worker = None
                     killed = True
+
+        # Cancel outside the lock to avoid deadlock if the task's
+        # done callback tries to acquire the same lock.
+        if isinstance(worker, asyncio.Task):
+            try:
+                worker.cancel()
+            except Exception:
+                pass
 
         if killed:
             self.prune()
