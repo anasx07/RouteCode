@@ -13,8 +13,8 @@ class TextChunk(TypedDict):
     content: str
 
 
-class ReasoningChunk(TypedDict):
-    type: Literal["reasoning"]
+class ThoughtChunk(TypedDict):
+    type: Literal["thought"]
     content: str
 
 
@@ -33,5 +33,5 @@ class ErrorChunk(TypedDict):
     content: str
 
 
-StreamChunk = TextChunk | ReasoningChunk | ToolCallChunk | UsageChunk | ErrorChunk
+StreamChunk = TextChunk | ThoughtChunk | ToolCallChunk | UsageChunk | ErrorChunk
 """Union of all possible stream chunk types yielded by ask()."""

@@ -122,11 +122,11 @@ class AppHooks(OrchestratorHooks):
             self.repl.history_buffer.cursor_position = old_cursor
 
     async def on_chunk(self, chunk):
-        if self._first_chunk and chunk["type"] in ("text", "reasoning", "tool_call"):
+        if self._first_chunk and chunk["type"] in ("text", "thought", "tool_call"):
             self._remove_thinking()
             self._first_chunk = False
 
-        if chunk["type"] == "reasoning":
+        if chunk["type"] == "thought":
             self._remove_cursor()
             await self._start_thought()
             content = chunk["content"]
@@ -139,7 +139,7 @@ class AppHooks(OrchestratorHooks):
 
         if chunk["type"] == "text":
             if self._in_thought and not self._stream_buffer:
-                # Transitioning from native reasoning chunks to text chunks
+                # Transitioning from native thought chunks to text chunks
                 self._remove_cursor()
                 self._end_thought()
                 self._add_cursor()

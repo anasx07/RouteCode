@@ -27,6 +27,13 @@ class ConsoleProxy:
     def __exit__(self, *args):
         return self._instance.__exit__(*args)
 
+    def get_print_method(self):
+        """Returns the underlying console's print method.
+        Use this instead of accessing _instance directly when you need
+        the actual console's print (e.g., after a theme change)."""
+        inst = self._instance or Console()
+        return inst.print
+
 
 # Global console proxy instances
 console = ConsoleProxy()
