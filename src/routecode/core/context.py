@@ -5,11 +5,11 @@ from rich.console import Console
 from .state import SessionState
 from ..config import Config
 from .memory import MemoryManager
-
 from .path_guard import PathGuard
 
 if TYPE_CHECKING:
     from ..domain.task_manager import TaskManager
+    from .events import EventBus
 
 
 @dataclass
@@ -25,4 +25,5 @@ class RouteCodeContext:
     task_manager: "TaskManager"
     memory: MemoryManager
     path_guard: PathGuard
+    bus: "EventBus" = None
     loop: Optional[asyncio.AbstractEventLoop] = None

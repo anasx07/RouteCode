@@ -6,7 +6,7 @@ from prompt_toolkit.mouse_events import MouseEventType
 from prompt_toolkit.widgets import Frame
 from prompt_toolkit.filters import Condition
 from .styles import SimpleAnsiLexer
-from ..theme import THEME_ACCENTS, _current_theme_name
+from ..theme import get_theme_accent
 from ..renderables import get_logo, format_duration
 from ... import __version__
 
@@ -232,6 +232,7 @@ class RouteCodeLayout:
         left_pane = HSplit(
             [
                 history_window,
+                Window(style="class:history"),  # Expanding spacer to push input_area to the bottom
                 input_area,
             ]
         )
@@ -246,7 +247,7 @@ class RouteCodeLayout:
     # ── Text Generators ───────────────────────────────────────────────────────
 
     def _get_logo_formatted(self):
-        accent = THEME_ACCENTS.get(_current_theme_name, "#ffaf00")
+        accent = get_theme_accent()
         dim_color = "#888899"  # vibrant silver for "route"
         gap = "   "  # 3-space gap between words
         result = []
@@ -264,7 +265,7 @@ class RouteCodeLayout:
         return result
 
     def _get_welcome_model_line(self):
-        accent = THEME_ACCENTS.get(_current_theme_name, "#ffaf00")
+        accent = get_theme_accent()
         return [
             (f"fg:{accent} bold", f"{self.repl.ctx.config.provider.title()}"),
             ("fg:#555566", " · "),
@@ -272,7 +273,7 @@ class RouteCodeLayout:
         ]
 
     def _get_welcome_tip(self):
-        accent = THEME_ACCENTS.get(_current_theme_name, "#ffaf00")
+        accent = get_theme_accent()
         return [
             (f"fg:{accent}", "● "),
             (f"fg:{accent} bold", "Tip "),
@@ -282,7 +283,7 @@ class RouteCodeLayout:
         ]
 
     def _get_input_model_line(self):
-        accent = THEME_ACCENTS.get(_current_theme_name, "#ffaf00")
+        accent = get_theme_accent()
         return [
             (
                 f"bg:#22222a fg:{accent} bold",
@@ -307,7 +308,7 @@ class RouteCodeLayout:
             spinner = frames[frame_idx]
 
             dur_str = format_duration(duration)
-            accent = THEME_ACCENTS.get(_current_theme_name, "#ffaf00")
+            accent = get_theme_accent()
             res.extend(
                 [
                     ("fg:#555566", " · "),
@@ -318,7 +319,7 @@ class RouteCodeLayout:
         return res
 
     def _get_session_footer_right(self):
-        accent = THEME_ACCENTS.get(_current_theme_name, "#ffaf00")
+        accent = get_theme_accent()
         cwd = os.path.basename(os.getcwd()) or "~"
 
         base = []

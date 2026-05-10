@@ -48,11 +48,10 @@ class PaletteMenu(BaseModalLayer):
         @kb.add("enter")
         def _(event):
             if menu_list.values:
-                self.result = menu_list.current_value
+                self.result = menu_list.values[menu_list._selected_index][0]
                 if not self.future.done():
                     self.future.set_result(self.result)
 
-        @kb.add("up", eager=True)
         def _(event):
             menu_list._selected_index -= 1
             event.app.invalidate()
@@ -263,7 +262,7 @@ class ModelPaletteMenu(PaletteMenu):
         @kb.add("enter")
         def _(event):
             if menu_list.values:
-                self.result = menu_list.current_value
+                self.result = menu_list.values[menu_list._selected_index][0]
                 if not self.future.done():
                     self.future.set_result(self.result)
 

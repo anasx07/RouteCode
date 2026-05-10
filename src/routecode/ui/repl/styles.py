@@ -3,7 +3,7 @@ from prompt_toolkit.lexers import Lexer
 from prompt_toolkit.formatted_text import ANSI
 from prompt_toolkit.output.vt100 import Vt100_Output
 
-from ..theme import get_theme_bg, THEME_ACCENTS, _current_theme_name
+from ..theme import get_theme_bg, get_theme_accent
 from ...utils.helpers import parse_hex_color
 
 
@@ -90,7 +90,7 @@ def _is_modal_open() -> bool:
 def build_repl_style(is_dimmed: bool = False):
     bg = get_theme_bg()
     active_bg = _get_active_bg(is_dimmed)
-    accent = THEME_ACCENTS.get(_current_theme_name, "#ffaf00")
+    accent = get_theme_accent()
 
     if is_dimmed:
         sidebar_bg = "#08080a"

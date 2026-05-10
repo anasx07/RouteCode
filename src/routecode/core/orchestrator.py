@@ -6,6 +6,7 @@ from .context import RouteCodeContext
 from .history import ConversationHistory
 from .context_manager import ContextManager
 from .events import bus
+from .constants import MAX_TOOL_RESULT_CHARS, MAX_ORCHESTRATOR_TURNS
 from ..utils.storage import AtomicJsonStore
 from ..utils.logger import get_logger
 
@@ -94,8 +95,7 @@ class AgentOrchestrator:
         self,
         history: ConversationHistory,
         hooks: Optional[OrchestratorHooks] = None,
-        max_turns: int = 20,
-        tool_executor: Optional[Callable] = None,
+        max_turns: int = MAX_ORCHESTRATOR_TURNS,
     ):
         """
         Runs the core agent loop: LLM call -> Tool execution -> State update.
@@ -108,11 +108,16 @@ class AgentOrchestrator:
 
         hooks = hooks or OrchestratorHooks()
         tool_executor = tool_executor or self._call_tool_safe
-        tool_schemas = [
-            tool.to_json_schema()
-            for tool in registry._tools.values()
-            if tool.name != "task"
-        ]
+        tool_schemas = []
+        for tool in registry._tools.values():
+            if tool.name == "task":
+                continue
+            try:
+                tool_schemas.append(tool.to_json_schema())
+            except Exception as e:
+                logger.error(f"Failed to generate schema for tool '{tool.name}': {str(e)}")
+                # We skip failing tools to prevent crashing the whole session
+                continue
 
         turn_count = 0
         while turn_count < max_turns:
@@ -226,7 +231,8 @@ class AgentOrchestrator:
                         results = await asyncio.gather(*tasks)
                         for tid, n, res in results:
                             await self._append_tool_result(history, tid, n, res)
-                            await hooks.on_tool_result(n, res, 0.0)
+                            hook_res = res.to_dict() if hasattr(res, 'to_dict') else res
+                            await hooks.on_tool_result(n, hook_res, 0.0)
                     else:
                         # Sequential execution
                         for tc_id, name, args in items:
@@ -235,7 +241,8 @@ class AgentOrchestrator:
                             res = await tool_executor(name, args)
                             elapsed = time.time() - ts
                             await self._append_tool_result(history, tc_id, name, res)
-                            await hooks.on_tool_result(name, res, elapsed)
+                            hook_res = res.to_dict() if hasattr(res, 'to_dict') else res
+                            await hooks.on_tool_result(name, hook_res, elapsed)
 
             except Exception as e:
                 await hooks.on_error(f"Orchestrator error: {str(e)}")
@@ -260,35 +267,52 @@ class AgentOrchestrator:
         return batches
 
     async def _call_tool_safe(self, name: str, args: dict) -> Dict[str, Any]:
+        from ..tools.base import ToolResult
+
         tool = registry.get_tool(name)
         if not tool:
-            return {"error": f"Tool not found: {name}"}
+            return ToolResult(success=False, error=f"Tool not found: {name}")
         try:
-            # Most tools are still synchronous, so we run them in a thread to avoid blocking the event loop.
-            return await asyncio.to_thread(
-                tool.execute, **args, ctx=self.ctx, provider=self.provider
-            )
+            return await tool.execute(ctx=self.ctx, provider=self.provider, **args)
         except Exception as e:
-            return {"error": str(e)}
+            return ToolResult(success=False, error=str(e))
 
     async def _append_tool_result(
         self,
         history: ConversationHistory,
         tc_id: str,
         name: str,
-        result: Dict[str, Any],
+        result: "ToolResult",
     ):
+        from ..tools.base import ToolResult
+
         MAX_CHARS = 50000
-        content = json.dumps(result)
+
+        if ToolResult.is_error(result):
+            error_msg = result.error if isinstance(result, ToolResult) else result.get("error", "Unknown error")
+            history.append(
+                {
+                    "role": "system",
+                    "content": f"Tool {name} failed: {error_msg}",
+                }
+            )
+            self.tokenizer.add_usage(
+                self.tokenizer.count_tokens(error_msg, self.ctx.config.model),
+                self.ctx.config.model,
+            )
+            return
+
+        payload = result.to_dict() if isinstance(result, ToolResult) else result
+        content = json.dumps(payload)
 
         if len(content) > MAX_CHARS:
             path = CONFIG_DIR / "tool_results" / f"{tc_id}.json"
             store = AtomicJsonStore(path)
-            await store.save_async(result)
-            result["content"] = (
-                f"[Result too large, saved to {path}]\n{result.get('content', '')[:2000]}"
+            await store.save_async(payload)
+            payload["content"] = (
+                f"[Result too large, saved to {path}]\n{payload.get('content', '')[:2000]}"
             )
-            content = json.dumps(result)
+            content = json.dumps(payload)
 
         history.append(
             {"role": "tool", "tool_call_id": tc_id, "name": name, "content": content}

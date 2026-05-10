@@ -72,3 +72,35 @@ testpaths = ["tests"]
 norecursedirs = [".git", ".routecode", "venv", ".venv", "build", "dist"]
 addopts = "--ignore=test.txt --ignore=test_progress.txt"
 python_files = "test_*.py"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort (import sorting)
+    "W",   # pycodestyle warnings
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "TCH", # type-checking imports
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "B008",   # do not perform function calls in argument defaults
+    "TCH004", # move import out of type-checking block
+]
+unfixable = []
+
+[tool.ruff.lint.isort]
+known-first-party = ["routecode"]
+extra-standard-library = ["dataclasses"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = false

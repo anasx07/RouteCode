@@ -42,8 +42,11 @@ def load_attachment(path: str) -> Optional[Dict]:
             }
 
         elif att_type == "pdf":
-            content = f"[PDF file: {name}. Text extraction requires PyMuPDF. File at: {resolved}]"
-            return {"type": "text", "name": name, "content": content, "path": resolved}
+            raise NotImplementedError(
+                f"PDF text extraction not supported. "
+                f"Install PyMuPDF (pip install pymupdf) to read PDFs. "
+                f"File at: {resolved}"
+            )
 
         elif att_type == "text":
             with open(resolved, "r", encoding="utf-8", errors="replace") as f:

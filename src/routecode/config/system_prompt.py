@@ -17,7 +17,7 @@ You have access to local file system tools and a shell environment.
 When responding, start with a <thought> block for your internal reasoning and plan, then provide your response."""
 
 
-def _build_workspace_section() -> str:
+async def _build_workspace_section_async() -> str:
     import platform
     from datetime import datetime
 
@@ -31,13 +31,12 @@ def _build_workspace_section() -> str:
     try:
         import subprocess
 
-        # Try to get git tree first
-        res = subprocess.run(
+        res = await asyncio.to_thread(
+            subprocess.run,
             ["git", "ls-tree", "-r", "--name-only", "HEAD"],
             capture_output=True,
             text=True,
             check=False,
-            shell=True if os_name == "Windows" else False,
         )
         if res.returncode == 0:
             lines = res.stdout.strip().splitlines()
@@ -48,7 +47,6 @@ def _build_workspace_section() -> str:
             else:
                 project_structure = "\n".join(lines)
         else:
-            # Fallback to listing current directory
             files = os.listdir(cwd)
             project_structure = "\n".join(files[:40])
             if len(files) > 40:
@@ -284,12 +282,13 @@ async def compute_system_prompt(ctx: "RouteCodeContext") -> str:
         _build_configuration_tiers_async(ctx),
         _build_git_section_async(),
         _build_context_section_async(),
+        _build_workspace_section_async(),
     )
 
-    config_tiers_sect, git_sect, context_sect = dynamic_results
+    config_tiers_sect, git_sect, context_sect, workspace_sect = dynamic_results
 
     sections += [
-        _build_workspace_section(),
+        workspace_sect,
         _build_tools_section(),
         _build_skill_section(),
         _build_env_section(),

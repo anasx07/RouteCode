@@ -28,6 +28,13 @@ from .session import (
 )
 from .tasks import handle_tasks, handle_task_stop
 from .memory import handle_remember, handle_forget, handle_memories
+from .skills import (
+    handle_skill,
+    handle_skill_create,
+    handle_skill_find,
+    handle_skill_manage,
+    handle_skill_uninstall,
+)
 
 COMMANDS = {
     "/help": handle_help,
@@ -52,6 +59,11 @@ COMMANDS = {
     "/remember": handle_remember,
     "/forget": handle_forget,
     "/memories": handle_memories,
+    "/skill": handle_skill,
+    "/skill-create": handle_skill_create,
+    "/skill-find": handle_skill_find,
+    "/skill-manage": handle_skill_manage,
+    "/skill-uninstall": handle_skill_uninstall,
     "/exit": handle_exit,
     "/update": handle_update,
 }
@@ -81,6 +93,11 @@ def get_command_metadata() -> Dict[str, str]:
         "/remember <key> <value>": "Save a memory for future sessions",
         "/forget <key>": "Delete a saved memory",
         "/memories": "List all saved memories",
+        "/skill [name]": "Invoke a skill interactively or by name",
+        "/skill-create": "Create a new reusable skill",
+        "/skill-find": "List all installed skills",
+        "/skill-manage": "Enable or disable specific skills",
+        "/skill-uninstall [name]": "Permanently delete an external skill",
         "/exit": "Exit the session",
         "/update": "Check for and install RouteCode updates",
     }

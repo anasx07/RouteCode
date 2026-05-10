@@ -104,10 +104,14 @@ context: {context}
             return {"success": False, "error": f"Failed to create skill: {str(e)}"}
 
 
+class EmptySchema(BaseModel):
+    pass
+
+
 class FindSkillsTool(BaseTool):
     name = "find_skills"
     description = "List all currently installed skills and their descriptions."
-    input_schema = BaseModel
+    input_schema = EmptySchema
 
     def prompt(self) -> str:
         return "- find_skills: List all installed skills and discover your extended capabilities."

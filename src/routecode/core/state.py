@@ -29,27 +29,28 @@ class SessionState:
     model: Optional[str] = None
     workspace_path: Optional[str] = None
 
-    def bind_tokenizer(self, tokenizer):
+    def bind_tokenizer(self, tokenizer, bus=None):
         self._tokenizer = tokenizer
+        (bus or self._get_bus()).on(
+            "tokenizer.usage_updated", self._on_usage_updated
+        )
+
+    @staticmethod
+    def _get_bus():
         from .events import bus
 
-        bus.on("tokenizer.usage_updated", self._on_usage_updated)
+        return bus
+
 
     def _on_usage_updated(self, tokens: int, cost: float, **kwargs):
         self.tokens_used = tokens
         self.estimated_cost = cost
 
     def get_context_usage(self, model: str) -> float:
-        """Returns the current context usage percentage."""
+        """Returns the current context usage percentage via the bound tokenizer."""
         if hasattr(self, "_tokenizer") and self._tokenizer:
             return self._tokenizer.get_context_usage_percent(model)
-
-        from ..utils.costs import cost_estimator
-
-        _, ctx_limit, _ = cost_estimator.calculate_cost(0, 0, model)
-        if ctx_limit <= 0:
-            return 0.0
-        return (self.tokens_used / ctx_limit) * 100
+        return 0.0
 
     def reset_context_warning(self):
         """Resets the context warning flag, typically after compaction."""

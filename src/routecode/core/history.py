@@ -1,23 +1,33 @@
-from typing import List, Dict, Any, Optional
+from collections import deque
+from typing import List, Dict, Any, Optional, Deque
 from .events import bus
 
 
 class ConversationHistory:
     """
     Unified manager for conversation messages.
-    Wraps a list of messages and provides safe mutation methods.
+
+    Uses a deque with a configurable max size to bound memory growth.
+    Safe mutation methods emit events for downstream listeners.
     """
 
-    def __init__(self, messages: Optional[List[Dict[str, Any]]] = None):
-        self._messages: List[Dict[str, Any]] = messages if messages is not None else []
+    def __init__(
+        self,
+        messages: Optional[List[Dict[str, Any]]] = None,
+        maxlen: int = 2000,
+    ):
+        self._messages: Deque[Dict[str, Any]] = deque(
+            messages if messages is not None else [],
+            maxlen=maxlen,
+        )
 
     def append(self, message: Dict[str, Any]):
         self._messages.append(message)
         bus.emit("history.appended", message=message)
 
     def extend(self, messages: List[Dict[str, Any]]):
-        self._messages.extend(messages)
         for m in messages:
+            self._messages.append(m)
             bus.emit("history.appended", message=m)
 
     def clear(self):
@@ -25,27 +35,31 @@ class ConversationHistory:
         bus.emit("history.cleared")
 
     def rewind(self, count: int):
-        """Removes the last N turns/messages."""
+        """Removes the last N messages."""
         if count <= 0:
             return
-        self._messages = self._messages[:-count]
+        for _ in range(min(count, len(self._messages))):
+            self._messages.pop()
         bus.emit("history.rewound", count=count)
 
     def set_messages(self, messages: Any):
         """Completely replaces the history."""
         if isinstance(messages, ConversationHistory):
-            self._messages = messages.get_messages()
+            source = messages.get_messages()
         else:
-            self._messages = list(messages)
+            source = list(messages)
+        self._messages.clear()
+        for m in source:
+            self._messages.append(m)
         bus.emit("history.reset")
 
     def get_messages(self) -> List[Dict[str, Any]]:
         """Returns the raw list for iteration or API calls."""
-        return self._messages
+        return list(self._messages)
 
     def to_list(self) -> List[Dict[str, Any]]:
-        """Returns a copy of the underlying list."""
-        return self._messages[:]
+        """Returns a shallow copy as a list."""
+        return list(self._messages)
 
     def snapshot(self) -> List[Dict[str, Any]]:
         """Alias for to_list()."""
@@ -55,6 +69,8 @@ class ConversationHistory:
         return len(self._messages)
 
     def __getitem__(self, index):
+        if isinstance(index, slice):
+            return list(self._messages)[index]
         return self._messages[index]
 
     def __iter__(self):

@@ -11,7 +11,6 @@ from prompt_toolkit.layout.margins import ScrollbarMargin, ConditionalMargin
 from prompt_toolkit.layout.containers import ConditionalContainer
 from prompt_toolkit.filters import to_filter, has_completions, is_done
 from prompt_toolkit.layout.scrollable_pane import ScrollOffsets
-from prompt_toolkit.layout.dimension import Dimension
 
 
 class HoverCompletionsMenuControl(CompletionsMenuControl):
@@ -35,13 +34,57 @@ class HoverCompletionsMenuControl(CompletionsMenuControl):
         return super().mouse_handler(mouse_event)
 
 
+def _make_list_mouse_handler(
+    self,
+    *,
+    get_index=None,
+    on_click=None,
+    can_select=None,
+    invalidate=False,
+):
+    """
+    Builds a mouse handler for list-style widgets.
+
+    Parameters:
+        get_index: callable(y) -> int|None — resolves mouse y to item index.
+        on_click: callable(idx) — called on MOUSE_UP.
+        can_select: callable(idx) -> bool — filters which items accept clicks.
+        invalidate: if True, calls get_app().invalidate() on scroll.
+    """
+    if get_index is None:
+        get_index = lambda y: y
+
+    def mouse_handler(mouse_event: MouseEvent) -> None:
+        y = mouse_event.position.y
+        if mouse_event.event_type == MouseEventType.MOUSE_MOVE:
+            idx = get_index(y)
+            if idx is not None:
+                self._selected_index = idx
+        elif mouse_event.event_type == MouseEventType.MOUSE_UP:
+            idx = get_index(y)
+            if idx is not None and (can_select is None or can_select(idx)):
+                self._current_index = idx
+                if on_click:
+                    on_click(idx)
+        elif mouse_event.event_type == MouseEventType.SCROLL_UP:
+            self._selected_index -= 1
+            if invalidate:
+                get_app().invalidate()
+        elif mouse_event.event_type == MouseEventType.SCROLL_DOWN:
+            self._selected_index += 1
+            if invalidate:
+                get_app().invalidate()
+
+    return mouse_handler
+
+
 class HoverCompletionsMenu(ConditionalContainer):
     """CompletionsMenu with mouse-hover highlighting support."""
 
-    def __init__(
-        self, max_height=None, scroll_offset=0, extra_filter=None, z_index=10**8
-    ):
+    def __init__(self, max_height=None, scroll_offset=0, extra_filter=None):
         extra_filter = to_filter(extra_filter if extra_filter is not None else True)
+
+        from prompt_toolkit.layout.dimension import Dimension
 
         window = Window(
             content=HoverCompletionsMenuControl(),
@@ -61,6 +104,7 @@ class HoverCompletionsMenu(ConditionalContainer):
             content=window,
             filter=extra_filter & has_completions & ~is_done,
         )
+
 
 
 class HoverRadioList:
@@ -115,19 +159,14 @@ class HoverRadioList:
         self._current_index = value % len(self.values)
 
     def _get_text_fragments(self):
-        def mouse_handler(mouse_event: MouseEvent) -> None:
-            if mouse_event.event_type == MouseEventType.MOUSE_MOVE:
-                self._selected_index = mouse_event.position.y
-            elif mouse_event.event_type == MouseEventType.MOUSE_UP:
-                idx = mouse_event.position.y
-                if idx < len(self.values):
-                    self._current_index = idx
-                    if self._on_enter:
-                        self._on_enter()
-            elif mouse_event.event_type == MouseEventType.SCROLL_UP:
-                self._selected_index -= 1
-            elif mouse_event.event_type == MouseEventType.SCROLL_DOWN:
-                self._selected_index += 1
+        mouse_handler = _make_list_mouse_handler(
+            self,
+            on_click=lambda idx: (
+                self._on_enter()
+                if self._on_enter
+                else None
+            ),
+        )
 
         result = []
         menu_width = 40
@@ -245,24 +284,12 @@ class MenuRadioList(RadioList):
         y_to_idx = {}
         current_y = 0
 
-        def mouse_handler(mouse_event: MouseEvent) -> None:
-            y = mouse_event.position.y
-
-            if mouse_event.event_type == MouseEventType.MOUSE_MOVE:
-                idx = y_to_idx.get(y)
-                if idx is not None:
-                    self._selected_index = idx
-            elif mouse_event.event_type == MouseEventType.MOUSE_UP:
-                idx = y_to_idx.get(y)
-                if idx is not None:
-                    self._selected_index = idx
-                    self._handle_enter()
-            elif mouse_event.event_type == MouseEventType.SCROLL_UP:
-                self._selected_index -= 1
-                get_app().invalidate()
-            elif mouse_event.event_type == MouseEventType.SCROLL_DOWN:
-                self._selected_index += 1
-                get_app().invalidate()
+        mouse_handler = _make_list_mouse_handler(
+            self,
+            get_index=lambda y: y_to_idx.get(y),
+            on_click=lambda idx: self._handle_enter(),
+            invalidate=True,
+        )
 
         result = []
         menu_width = 40
@@ -372,30 +399,22 @@ class CategoryRadioList:
         y_to_idx = {}
         current_y = 0
 
-        def mouse_handler(mouse_event: MouseEvent) -> None:
-            y = mouse_event.position.y
-
-            if mouse_event.event_type == MouseEventType.MOUSE_MOVE:
-                idx = y_to_idx.get(y)
-                if idx is not None:
-                    self._selected_index = idx
-            elif mouse_event.event_type == MouseEventType.MOUSE_UP:
-                idx = y_to_idx.get(y)
-                if idx is not None and not self.values[idx][2]:
-                    self._current_index = idx
-                    if hasattr(self, "_on_enter"):
-                        self._on_enter()
-            elif mouse_event.event_type == MouseEventType.SCROLL_UP:
-                self._selected_index -= 1
-            elif mouse_event.event_type == MouseEventType.SCROLL_DOWN:
-                self._selected_index += 1
+        mouse_handler = _make_list_mouse_handler(
+            self,
+            get_index=lambda y: y_to_idx.get(y),
+            on_click=lambda idx: (
+                self._on_enter()
+                if hasattr(self, "_on_enter")
+                else None
+            ),
+            can_select=lambda idx: not self.values[idx][2],
+        )
 
         result = []
         menu_width = 58
 
         for i, (value, label, is_header, description, tag) in enumerate(self.values):
             if is_header:
-                # Header takes 3 lines: empty, label, empty
                 y_to_idx[current_y] = i
                 y_to_idx[current_y + 1] = i
                 y_to_idx[current_y + 2] = i
@@ -403,7 +422,6 @@ class CategoryRadioList:
                 result.append(("class:menu-header", f"\n{label}\n", mouse_handler))
                 continue
 
-            # Item takes 1 line
             y_to_idx[current_y] = i
             current_y += 1
             selected = i == self._current_index
