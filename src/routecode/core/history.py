@@ -42,6 +42,17 @@ class ConversationHistory:
             self._messages.pop()
         bus.emit("history.rewound", count=count)
 
+    def truncate_after(self, index: int):
+        """Drops all messages after the given index (0-based, inclusive).
+        O(k) pops with no list copy — intended to replace expensive slice+set_messages."""
+        target = index + 1
+        current = len(self._messages)
+        if current <= target:
+            return
+        for _ in range(current - target):
+            self._messages.pop()
+        bus.emit("history.rewound", count=current - target)
+
     def set_messages(self, messages: Any):
         """Completely replaces the history."""
         if isinstance(messages, ConversationHistory):

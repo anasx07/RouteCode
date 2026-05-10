@@ -104,7 +104,7 @@ class LiteLLMProvider(AIProvider):
                     # Handle reasoning content (e.g. DeepSeek, OpenAI O1)
                     reasoning = delta.get("reasoning_content")
                     if reasoning:
-                        yield {"type": "reasoning", "content": reasoning}
+                        yield {"type": "thought", "content": reasoning}
 
                     # Handle tool calls
                     tool_calls = delta.get("tool_calls")

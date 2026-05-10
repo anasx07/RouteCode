@@ -277,7 +277,7 @@ async def handle_edit(args: List[str], ctx: RouteCodeContext):
 
     if new_content is not None and new_content != old_content:
         msg["content"] = new_content
-        ctx.state.session_messages.set_messages(ctx.state.session_messages[: idx + 1])
+        ctx.state.session_messages.truncate_after(idx)
         ctx.state.tokens_used = 0
         ctx.state.context_warned = False
         print_success(f"Message {idx} updated. Conversation truncated after edit.")

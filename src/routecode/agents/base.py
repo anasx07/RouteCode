@@ -21,7 +21,7 @@ class AIProvider(ABC):
 
         Chunk types:
           - {"type": "text",      "content": str}      — response text
-          - {"type": "reasoning",  "content": str}      — reasoning tokens
+          - {"type": "thought",    "content": str}      — reasoning tokens
           - {"type": "tool_call",  "tool_call": dict}   — function call
           - {"type": "usage",      "usage": dict}       — token usage
           - {"type": "error",      "content": str}      — fatal error

@@ -1,7 +1,8 @@
 import os
 import sys
 import asyncio
-from typing import Optional, TYPE_CHECKING
+import time
+from typing import Optional, Tuple, TYPE_CHECKING
 from ..tools import registry
 
 if TYPE_CHECKING:
@@ -9,6 +10,43 @@ if TYPE_CHECKING:
 
 
 SYSTEM_PROMPT_DYNAMIC_BOUNDARY = "__DYNAMIC__"
+
+# Cache the full system prompt to avoid rebuilding every turn
+_cached_prompt: Optional[str] = None
+_cached_config_key: Tuple[str, str, str] = ("", "", "")
+_cached_workspace_mtime: float = 0.0
+_cached_git_head: Optional[str] = None
+
+
+def _get_workspace_mtime() -> float:
+    try:
+        cwd = os.getcwd()
+        return os.stat(cwd).st_mtime
+    except Exception:
+        return time.time()
+
+
+def _get_config_key(ctx: "RouteCodeContext") -> Tuple[str, str, str]:
+    return (ctx.config.provider, ctx.config.model, ctx.config.personality)
+
+
+async def _get_git_head() -> Optional[str]:
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            "git rev-parse HEAD",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3.0)
+        return stdout.decode().strip() or None
+    except Exception:
+        return None
+
+
+def invalidate_system_prompt_cache():
+    """Force rebuild of the system prompt on next call."""
+    global _cached_prompt
+    _cached_prompt = None
 
 
 def _build_identity_section() -> str:

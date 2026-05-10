@@ -96,6 +96,7 @@ class AgentOrchestrator:
         history: ConversationHistory,
         hooks: Optional[OrchestratorHooks] = None,
         max_turns: int = MAX_ORCHESTRATOR_TURNS,
+        tool_executor: Optional[Callable] = None,
     ):
         """
         Runs the core agent loop: LLM call -> Tool execution -> State update.
@@ -144,6 +145,10 @@ class AgentOrchestrator:
 
                     if chunk["type"] == "text":
                         full_response += chunk["content"]
+                    elif chunk["type"] in ("thought", "reasoning"):
+                        if 'full_thought' not in locals():
+                            full_thought = ""
+                        full_thought += chunk["content"]
                     elif chunk["type"] == "tool_call":
                         tool_calls.append(chunk["tool_call"])
                     elif chunk["type"] == "usage":
@@ -156,6 +161,8 @@ class AgentOrchestrator:
                 assistant_message = {"role": "assistant"}
                 if full_response:
                     assistant_message["content"] = full_response
+                if 'full_thought' in locals() and full_thought:
+                    assistant_message["thought"] = full_thought
                 if tool_calls:
                     sanitized = []
                     for tc in tool_calls:

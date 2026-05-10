@@ -3,7 +3,7 @@ name = "routecode"
 dynamic = ["version"]
 description = "RouteCode — an AI coding assistant for your terminal"
 readme = "README.md"
-license = { text = "MIT" }
+license = { text = "GPL-3.0-only" }
 authors = [
     { name = "SpeerX", email = "anasrhnim07@gmail.com" }
 ]

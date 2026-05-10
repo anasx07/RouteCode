@@ -246,7 +246,7 @@ class RouteCodeREPL(KeyBindingsMixin):
 
     def _on_theme_changed(self):
         self.style = build_repl_style()
-        self._original_print = self._rich_console._instance.print
+        self._original_print = self._rich_console.get_print_method()
         self.request_invalidate()
 
     def _on_resize(self):

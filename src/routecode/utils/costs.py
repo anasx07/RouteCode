@@ -52,6 +52,11 @@ class CostEstimator:
             self._model_info_failed.add(model)
             return None
 
+    def clear_cache(self):
+        """Reset all cached model info. Use when the LiteLLM pricing database may have updated."""
+        self._model_info_cache.clear()
+        self._model_info_failed.clear()
+
     def calculate_cost(
         self, input_tokens: int, output_tokens: int, model: str
     ) -> Tuple[float, int, float]:
