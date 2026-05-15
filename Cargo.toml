@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "apps/cli",
+    "libs/sdk",
+]
+resolver = "2"

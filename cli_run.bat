@@ -1,0 +1,3 @@
+@echo off
+echo Running RouteCode CLI...
+cargo run -p routecode-cli -- %*
