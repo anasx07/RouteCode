@@ -4,15 +4,13 @@
 
 [![CI](https://github.com/anasx07/routecode/actions/workflows/ci.yml/badge.svg)](https://github.com/anasx07/routecode/actions/workflows/ci.yml)
 [![Release](https://github.com/anasx07/routecode/actions/workflows/release.yml/badge.svg)](https://github.com/anasx07/routecode/actions/workflows/release.yml)
-[![PyPI](https://img.shields.io/pypi/v/routecode)](https://pypi.org/project/routecode/)
-[![Python](https://img.shields.io/pypi/pyversions/routecode)](https://pypi.org/project/routecode/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
 ---
 
 ## Install
 
-### ⚡ One-liner (no Python required)
+### ⚡ One-liner
 
 **macOS / Linux:**
 ```sh
@@ -28,15 +26,11 @@ Downloads a self-contained binary and puts `routecode` on your PATH automaticall
 
 ---
 
-### 🐍 Via pip / pipx
+### 🦀 Via Cargo
 
 ```sh
-pipx install routecode   # recommended — isolated environment
-# or
-pip install routecode
+cargo install --path apps/cli
 ```
-
-Both `routecode` commands are registered after install.
 
 ---
 
@@ -60,9 +54,8 @@ Place the binary anywhere on your `PATH` and rename it to `routecode`.
 ```sh
 routecode                            # start interactive session
 routecode --model gpt-4o             # specific model
-routecode --provider anthropic       # specific provider
-routecode --resume                   # resume last session
-routecode --print "refactor this"    # single-shot, non-interactive
+routecode --provider openrouter      # specific provider
+routecode --resume last_session      # resume last session
 ```
 
 On first run, RouteCode will ask for your API key and save it to `~/.routecode/config.json`.
@@ -71,25 +64,27 @@ On first run, RouteCode will ask for your API key and save it to `~/.routecode/c
 
 ## Supported providers
 
-| Provider     | Env var                |
-|--------------|------------------------|
-| Anthropic    | `ANTHROPIC_API_KEY`    |
-| OpenAI       | `OPENAI_API_KEY`       |
-| Google       | `GEMINI_API_KEY`       |
-| DeepSeek     | `DEEPSEEK_API_KEY`     |
-| OpenRouter   | `OPENROUTER_API_KEY`   |
+| Provider     | Env var                | Base URL (if custom) |
+|--------------|------------------------|----------------------|
+| OpenRouter   | `OPENROUTER_API_KEY`   | -                    |
+| NVIDIA       | `NVIDIA_API_KEY`       | `https://integrate.api.nvidia.com/v1` |
+| OpenCode Zen | `OPENCODE_ZEN_API_KEY` | `https://api.opencode.ai/zen/v1` |
+| OpenCode Go  | `OPENCODE_GO_API_KEY`  | `https://api.opencode.ai/go/v1` |
+| OpenAI       | `OPENAI_API_KEY`       | -                    |
+| Anthropic    | `ANTHROPIC_API_KEY`    | -                    |
+| Google       | `GEMINI_API_KEY`       | -                    |
+| DeepSeek     | `DEEPSEEK_API_KEY`     | -                    |
+| Cloudflare Workers AI | `CLOUDFLARE_API_KEY` (or `account_id:token`) | - |
+| Cloudflare AI Gateway | `CLOUDFLARE_API_KEY` (or `account_id:gateway_id:token`) | - |
 
 ---
 
 ## What RouteCode can do
 
-- **Read, write, and edit files** with diff preview and a permission system
-- **Run bash commands** with captured output and audit logging
-- **Spawn background sub-agents** for long tasks while you keep chatting
-- **Context compaction** — auto-summarises history so long sessions never hit limits
-- **Skills** — drop Markdown files into `.routecode/skills/` to give RouteCode reusable instructions
-- **Session resume** — every conversation is saved; pick up where you left off
-- **Themes & personalities** — customise the look and the agent's tone
+- **Read and write files** with AI-driven tools
+- **Run shell commands** with captured output
+- **Session management** — save and resume conversations
+- **Token usage tracking** — monitor costs in real-time
 
 ---
 
@@ -97,12 +92,9 @@ On first run, RouteCode will ask for your API key and save it to `~/.routecode/c
 
 | Command    | Description                            |
 |------------|----------------------------------------|
-| `/config`  | View and set provider, model, API keys |
 | `/model`   | Switch model mid-session               |
-| `/session` | Save, load, list, or clear sessions    |
-| `/memory`  | Manage persistent memory               |
-| `/tasks`   | View and manage background tasks       |
-| `/theme`   | Switch UI theme                        |
+| `/resume`  | Resume a saved session                 |
+| `/sessions`| List all saved sessions                |
 | `/clear`   | Clear the current conversation         |
 | `/help`    | Show all commands                      |
 
@@ -113,34 +105,27 @@ On first run, RouteCode will ask for your API key and save it to `~/.routecode/c
 ```sh
 git clone https://github.com/anasx07/routecode
 cd routecode
-python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
-pip install -e ".[dev]"
-routecode
-```
-
-Build a standalone binary locally:
-```sh
-pyinstaller --clean routecode.spec
-./dist/routecode
+cargo build --release -p routecode-cli
+# Binary is located at target/release/routecode-cli (or .exe on Windows)
+./target/release/routecode-cli
 ```
 
 ---
 
 ## Architecture & Project Structure
 
-RouteCode follows a domain-driven, modular architecture designed for stability and scalability.
+RouteCode is a Rust workspace consisting of a CLI application and a shared SDK.
 
 ```text
-src/routecodecli/
-├── agents/             # Provider-specific implementations (LiteLLM, Anthropic, etc.)
-├── commands/           # CLI slash-command handlers (/config, /session, etc.)
-├── config/             # Global settings, models database, and system prompt logic
-├── core/               # Orchestration, event bus, context management, and state
-├── domain/             # Business logic (Task management, Skills, Git, Personalities)
-├── tools/              # AI-accessible tools (file_edit, bash, webfetch, etc.)
-├── ui/                 # TUI components, theme engine, and dialogs
-│   └── repl/           # Core interactive application logic (split-pane TUI)
-└── utils/              # Shared utilities (logging, atomic storage, cost estimation)
+apps/cli/               # TUI application
+└── src/
+    └── ui/             # Ratatui-based interface
+libs/sdk/               # Core logic and AI orchestrator
+└── src/
+    ├── agents/         # AI Provider implementations
+    ├── core/           # Orchestrator and message types
+    ├── tools/          # AI tools (file_ops, bash, etc.)
+    └── utils/          # Storage, costs, and shared utilities
 ```
 
 ---
@@ -150,13 +135,13 @@ src/routecodecli/
 PRs are welcome. Please open an issue first for significant changes.
 
 ```sh
-pip install -e ".[dev]"
-pytest            # run tests
-ruff check src/   # lint
+cargo test            # run tests
+cargo fmt             # format code
+cargo clippy          # lint
 ```
 
 ---
 
 ## License
 
-[MIT](LICENSE)
+[GPL v3.0](LICENSE)

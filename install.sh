@@ -1,93 +1,49 @@
 #!/bin/sh
-# RouteCode installer — macOS & Linux
-# Usage: curl -fsSL https://raw.githubusercontent.com/anasx07/routecode/main/install.sh | sh
 set -e
 
-REPO="anasx07/routecode"
-BINARY="routecode"
-INSTALL_DIR="${ROUTECODE_INSTALL_DIR:-$HOME/.local/bin}"
+# Detect OS and Architecture
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m)
 
-# ── Colour helpers ────────────────────────────
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BOLD='\033[1m'; RESET='\033[0m'
-info()    { printf "${BOLD}[routecode]${RESET} %s\n" "$1"; }
-success() { printf "${GREEN}[routecode]${RESET} %s\n" "$1"; }
-warn()    { printf "${YELLOW}[routecode]${RESET} %s\n" "$1"; }
-error()   { printf "${RED}[routecode]${RESET} %s\n" "$1" >&2; exit 1; }
-
-# ── Detect OS ────────────────────────────────
-OS="$(uname -s)"
 case "$OS" in
-  Linux*)   OS_NAME="linux"  ;;
-  Darwin*)  OS_NAME="macos"  ;;
-  *)        error "Unsupported OS: $OS" ;;
-esac
-
-# ── Detect architecture ───────────────────────
-ARCH="$(uname -m)"
-case "$ARCH" in
-  x86_64|amd64)   ARCH_NAME="x86_64" ;;
-  arm64|aarch64)  ARCH_NAME="arm64"   ;;
-  *)              error "Unsupported architecture: $ARCH" ;;
-esac
-
-ASSET="${BINARY}-${OS_NAME}-${ARCH_NAME}"
-
-# ── Resolve latest release ────────────────────
-info "Fetching latest release..."
-if command -v curl >/dev/null 2>&1; then
-  FETCH="curl -fsSL"
-elif command -v wget >/dev/null 2>&1; then
-  FETCH="wget -qO-"
-else
-  error "curl or wget is required."
-fi
-
-LATEST=$($FETCH "https://api.github.com/repos/${REPO}/releases/latest" \
-  | grep '"tag_name"' | head -1 | cut -d'"' -f4)
-
-[ -z "$LATEST" ] && error "Could not determine latest release. Check your internet connection."
-
-info "Installing routecode ${LATEST} (${OS_NAME}/${ARCH_NAME})..."
-
-URL="https://github.com/${REPO}/releases/download/${LATEST}/${ASSET}"
-
-# ── Download ──────────────────────────────────
-mkdir -p "$INSTALL_DIR"
-TMP="$(mktemp)"
-
-if command -v curl >/dev/null 2>&1; then
-  curl -fsSL --progress-bar "$URL" -o "$TMP" || error "Download failed: $URL"
-else
-  wget -q --show-progress "$URL" -O "$TMP" || error "Download failed: $URL"
-fi
-
-chmod +x "$TMP"
-mv "$TMP" "${INSTALL_DIR}/${BINARY}"
-
-success "routecode installed to ${INSTALL_DIR}/${BINARY}"
-
-# ── PATH check ────────────────────────────────
-case ":$PATH:" in
-  *":${INSTALL_DIR}:"*)
-    success "Already on PATH. Type 'routecode' to get started."
+  linux)
+    ASSET="routecode-linux-x86_64"
     ;;
-  *)
-    warn "${INSTALL_DIR} is not on your PATH."
-
-    SHELL_NAME="$(basename "${SHELL:-sh}")"
-    case "$SHELL_NAME" in
-      zsh)   PROFILE="$HOME/.zshrc"   ;;
-      bash)  PROFILE="$HOME/.bashrc"  ;;
-      fish)  PROFILE="$HOME/.config/fish/config.fish" ;;
-      *)     PROFILE="" ;;
-    esac
-
-    if [ -n "$PROFILE" ]; then
-      printf '\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$PROFILE"
-      success "Appended to ${PROFILE}. Run: source ${PROFILE}"
+  darwin)
+    if [ "$ARCH" = "arm64" ]; then
+      ASSET="routecode-macos-arm64"
     else
-      warn "Add this to your shell profile manually:"
-      printf "\n  ${BOLD}export PATH=\"\$HOME/.local/bin:\$PATH\"${RESET}\n\n"
+      ASSET="routecode-macos-x86_64"
     fi
     ;;
+  *)
+    echo "Unsupported OS: $OS"
+    exit 1
+    ;;
 esac
+
+echo "Downloading RouteCode for $OS ($ARCH)..."
+
+# Get latest version tag
+LATEST_TAG=$(curl -s https://api.github.com/repos/anasx07/routecode/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+
+if [ -z "$LATEST_TAG" ]; then
+  echo "Failed to fetch latest release tag. Defaulting to main branch (not recommended)."
+  exit 1
+fi
+
+URL="https://github.com/anasx07/routecode/releases/download/$LATEST_TAG/$ASSET"
+INSTALL_DIR="/usr/local/bin"
+
+if [ ! -w "$INSTALL_DIR" ]; then
+  echo "Install directory $INSTALL_DIR is not writable. Trying with sudo..."
+  curl -L "$URL" -o routecode
+  chmod +x routecode
+  sudo mv routecode "$INSTALL_DIR/routecode"
+else
+  curl -L "$URL" -o "$INSTALL_DIR/routecode"
+  chmod +x "$INSTALL_DIR/routecode"
+fi
+
+echo "RouteCode installed successfully to $INSTALL_DIR/routecode"
+routecode --version

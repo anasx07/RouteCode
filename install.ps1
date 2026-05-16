@@ -1,62 +1,32 @@
-# RouteCode installer — Windows (PowerShell)
-# Usage: irm https://raw.githubusercontent.com/anasx07/routecode/main/install.ps1 | iex
-#Requires -Version 5.1
-$ErrorActionPreference = "Stop"
+$repo = "anasx07/routecode"
+$latestRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/latest"
+$tag = $latestRelease.tag_name
 
-$REPO = "anasx07/routecode"
-$BINARY = "routecode"
-$ASSET = "routecode-cli-windows-x86_64.exe"
-$INSTALL_DIR = "$env:LOCALAPPDATA\Programs\routecode"
+$assetName = "routecode-windows-x86_64.exe"
+$url = "https://github.com/$repo/releases/download/$tag/$assetName"
 
-function Write-Info { Write-Host "[routecode] $args" -ForegroundColor Cyan }
-function Write-Success { Write-Host "[routecode] $args" -ForegroundColor Green }
-function Write-Warn { Write-Host "[routecode] $args" -ForegroundColor Yellow }
-function Write-Fail { Write-Host "[routecode] $args" -ForegroundColor Red; exit 1 }
-
-# ── Resolve latest release ────────────────────
-Write-Info "Fetching latest release..."
-try {
-  $release = Invoke-RestMethod "https://api.github.com/repos/$REPO/releases/latest"
-  $LATEST = $release.tag_name
-}
-catch {
-  Write-Fail "Could not fetch latest release: $_"
+$installDir = "$HOME\.routecode\bin"
+if (!(Test-Path $installDir)) {
+    New-Item -ItemType Directory -Path $installDir | Out-Null
 }
 
-if (-not $LATEST) { Write-Fail "Could not determine latest release." }
+$destPath = "$installDir\routecode.exe"
 
-$URL = "https://github.com/$REPO/releases/download/$LATEST/$ASSET"
-$DEST = "$INSTALL_DIR\$BINARY.exe"
+Write-Host "Downloading RouteCode $tag..." -ForegroundColor Cyan
+Invoke-WebRequest -Uri $url -OutFile $destPath
 
-Write-Info "Installing routecode $LATEST..."
-
-# ── Download ──────────────────────────────────
-New-Item -ItemType Directory -Force -Path $INSTALL_DIR | Out-Null
-
-$TMP = [System.IO.Path]::GetTempFileName() + ".exe"
-try {
-  $client = New-Object System.Net.WebClient
-  $client.DownloadFile($URL, $TMP)
-}
-catch {
-  Write-Fail "Download failed from $URL`n$_"
+# Add to PATH for current session if not already there
+if ($env:PATH -notlike "*$installDir*") {
+    $env:PATH += ";$installDir"
 }
 
-Move-Item -Force $TMP $DEST
-Write-Success "routecode installed to $DEST"
-
-# ── PATH ──────────────────────────────────────
-$userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
-if (-not $userPath) { $userPath = "" }
-
-if (($userPath -split ";") -notcontains $INSTALL_DIR) {
-  $newPath = ($userPath.TrimEnd(";") + ";$INSTALL_DIR").TrimStart(";")
-  [Environment]::SetEnvironmentVariable("PATH", $newPath, "User")
-  Write-Success "Added $INSTALL_DIR to your user PATH."
-  Write-Warn    "Restart your terminal for 'routecode' to work."
-}
-else {
-  Write-Success "Already on PATH."
+# Add to User PATH permanently if not already there
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if ($userPath -notlike "*$installDir*") {
+    [Environment]::SetEnvironmentVariable("Path", "$userPath;$installDir", "User")
+    Write-Host "Added $installDir to User PATH." -ForegroundColor Yellow
 }
 
-Write-Success "Done! Type routecode to get started."
+Write-Host "RouteCode installed successfully!" -ForegroundColor Green
+Write-Host "You may need to restart your terminal for PATH changes to take effect." -ForegroundColor Gray
+& routecode --version
