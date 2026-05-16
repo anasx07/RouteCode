@@ -22,6 +22,7 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.8", features = ["v4", "serde"] }
 log = "0.4"
 env_logger = "0.11"
+similar = "2.5"
 
 [dev-dependencies]
 tempfile = "3.10"

@@ -52,13 +52,57 @@ use routecode_sdk::tools::file_ops::{FileEditTool, FileReadTool, FileWriteTool};
 use routecode_sdk::tools::navigation::{GrepTool, LsTool};
 use routecode_sdk::tools::ToolRegistry;
 use std::io;
+use std::process::Command;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use ui::{run_app, App};
+use simplelog::*;
+use std::fs::File;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+
+    // Initialize logging
+    let base_dir = routecode_sdk::utils::storage::get_base_dir();
+    if !base_dir.exists() {
+        std::fs::create_dir_all(&base_dir)?;
+    }
+    let log_path = base_dir.join("routecode.log");
+
+    let log_level = if cli.debug { LevelFilter::Debug } else { LevelFilter::Info };
+    
+    CombinedLogger::init(vec![
+        WriteLogger::new(
+            log_level,
+            ConfigBuilder::new().set_time_format_rfc3339().build(),
+            File::create(&log_path)?,
+        ),
+    ])?;
+
+    if cli.debug {
+        log::debug!("Debug mode active. Spawning log window...");
+        // Spawn a new terminal window to tail the log file
+        #[cfg(target_os = "windows")]
+        {
+            let _ = Command::new("cmd")
+                .args(["/C", "start", "powershell", "-NoExit", "-Command", &format!("Get-Content -Path '{}' -Wait", log_path.display())])
+                .spawn();
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let _ = Command::new("osascript")
+                .args(["-e", &format!("tell application \"Terminal\" to do script \"tail -f '{}'\"", log_path.display())])
+                .spawn();
+        }
+        #[cfg(target_os = "linux")]
+        {
+            // Try common terminal emulators
+            let _ = Command::new("x-terminal-emulator")
+                .args(["-e", "tail", "-f", &log_path.display().to_string()])
+                .spawn();
+        }
+    }
 
     if let Some(Commands::Version) = cli.command {
         println!("routecode {}", env!("CARGO_PKG_VERSION"));

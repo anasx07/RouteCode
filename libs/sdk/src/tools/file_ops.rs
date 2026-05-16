@@ -3,6 +3,44 @@ use crate::tools::traits::Tool;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::fs;
+use std::path::{Path, PathBuf};
+use similar::{ChangeTag, TextDiff};
+
+fn normalize_path(path: &str) -> PathBuf {
+    let mut p = path;
+    if p.starts_with("/workspace/") {
+        p = &p[11..];
+    } else if p.starts_with("/workspace") {
+        p = &p[10..];
+    } else if p.starts_with("/") {
+        p = &p[1..];
+    }
+    PathBuf::from(p)
+}
+
+fn ensure_parent_dir(path: &Path) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        if !parent.exists() && !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+    Ok(())
+}
+
+fn generate_diff(old: &str, new: &str) -> String {
+    let mut diff_str = String::new();
+    let diff = TextDiff::from_lines(old, new);
+
+    for change in diff.iter_all_changes() {
+        let sign = match change.tag() {
+            ChangeTag::Delete => "-",
+            ChangeTag::Insert => "+",
+            ChangeTag::Equal => " ",
+        };
+        diff_str.push_str(&format!("{}{}", sign, change));
+    }
+    diff_str
+}
 
 pub struct FileReadTool;
 
@@ -25,12 +63,13 @@ impl Tool for FileReadTool {
     }
 
     async fn execute(&self, args: Value) -> Result<ToolResult, anyhow::Error> {
-        let path = args["path"]
+        let raw_path = args["path"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing path"))?;
-        match fs::read_to_string(path) {
+        let path = normalize_path(raw_path);
+        match fs::read_to_string(&path) {
             Ok(content) => Ok(ToolResult::success(content)),
-            Err(e) => Ok(ToolResult::error(format!("Failed to read file: {}", e))),
+            Err(e) => Ok(ToolResult::error(format!("Failed to read file '{}': {}", path.display(), e))),
         }
     }
 }
@@ -57,15 +96,24 @@ impl Tool for FileWriteTool {
     }
 
     async fn execute(&self, args: Value) -> Result<ToolResult, anyhow::Error> {
-        let path = args["path"]
+        let raw_path = args["path"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing path"))?;
         let content = args["content"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing content"))?;
-        match fs::write(path, content) {
-            Ok(_) => Ok(ToolResult::success("File written successfully")),
-            Err(e) => Ok(ToolResult::error(format!("Failed to write file: {}", e))),
+        
+        let path = normalize_path(raw_path);
+        let old_content = fs::read_to_string(&path).unwrap_or_default();
+        let diff = generate_diff(&old_content, content);
+
+        if let Err(e) = ensure_parent_dir(&path) {
+            return Ok(ToolResult::error(format!("Failed to create directories for '{}': {}", path.display(), e)));
+        }
+
+        match fs::write(&path, content) {
+            Ok(_) => Ok(ToolResult::success(format!("File '{}' written successfully", path.display())).with_diff(diff)),
+            Err(e) => Ok(ToolResult::error(format!("Failed to write file '{}': {}", path.display(), e))),
         }
     }
 }
@@ -94,7 +142,7 @@ impl Tool for FileEditTool {
     }
 
     async fn execute(&self, args: Value) -> Result<ToolResult, anyhow::Error> {
-        let path = args["path"]
+        let raw_path = args["path"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing path"))?;
         let old_string = args["old_string"]
@@ -105,20 +153,21 @@ impl Tool for FileEditTool {
             .ok_or_else(|| anyhow::anyhow!("Missing new_string"))?;
         let allow_multiple = args["allow_multiple"].as_bool().unwrap_or(false);
 
-        let content = match fs::read_to_string(path) {
+        let path = normalize_path(raw_path);
+        let content = match fs::read_to_string(&path) {
             Ok(c) => c,
-            Err(e) => return Ok(ToolResult::error(format!("Failed to read file: {}", e))),
+            Err(e) => return Ok(ToolResult::error(format!("Failed to read file '{}': {}", path.display(), e))),
         };
 
         let matches = content.matches(old_string).count();
         if matches == 0 {
             return Ok(ToolResult::error(format!(
                 "Could not find exact match for 'old_string' in {}",
-                path
+                path.display()
             )));
         }
         if matches > 1 && !allow_multiple {
-            return Ok(ToolResult::error(format!("Found {} occurrences of 'old_string', but 'allow_multiple' is false. Please provide more context.", matches)));
+            return Ok(ToolResult::error(format!("Found {} occurrences of 'old_string' in {}, but 'allow_multiple' is false. Please provide more context.", matches, path.display())));
         }
 
         let new_content = if allow_multiple {
@@ -127,12 +176,14 @@ impl Tool for FileEditTool {
             content.replacen(old_string, new_string, 1)
         };
 
-        match fs::write(path, new_content) {
+        let diff = generate_diff(old_string, new_string);
+
+        match fs::write(&path, new_content) {
             Ok(_) => Ok(ToolResult::success(format!(
                 "Successfully replaced {} occurrence(s) in {}",
-                matches, path
-            ))),
-            Err(e) => Ok(ToolResult::error(format!("Failed to write file: {}", e))),
+                matches, path.display()
+            )).with_diff(diff)),
+            Err(e) => Ok(ToolResult::error(format!("Failed to write file '{}': {}", path.display(), e))),
         }
     }
 }

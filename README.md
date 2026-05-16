@@ -5,6 +5,7 @@
 [![CI](https://github.com/anasx07/routecode/actions/workflows/ci.yml/badge.svg)](https://github.com/anasx07/routecode/actions/workflows/ci.yml)
 [![Release](https://github.com/anasx07/routecode/actions/workflows/release.yml/badge.svg)](https://github.com/anasx07/routecode/actions/workflows/release.yml)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![Discord](https://img.shields.io/badge/Discord-Join%20Community-5865F2?logo=discord&logoColor=white)](https://discord.gg/RFVNKQUXY2)
 
 ---
 
@@ -127,6 +128,19 @@ libs/sdk/               # Core logic and AI orchestrator
     ├── tools/          # AI tools (file_ops, bash, etc.)
     └── utils/          # Storage, costs, and shared utilities
 ```
+
+---
+
+## Community
+
+Join the RouteCode Discord — where bugs get caught, features get shaped, and contributors find each other.
+
+[![Discord](https://img.shields.io/badge/Discord-Join%20Community-5865F2?logo=discord&logoColor=white)](https://discord.gg/RFVNKQUXY2)
+
+- 💬 General chat and questions
+- 🐛 Bug reports and help
+- 💡 Feature requests and roadmap discussion
+- 🎉 Show and tell — share what you built
 
 ---
 

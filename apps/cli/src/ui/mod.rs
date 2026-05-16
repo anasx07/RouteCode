@@ -1,4 +1,4 @@
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, MouseEventKind};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -197,335 +197,345 @@ pub async fn run_app<B: ratatui::backend::Backend>(
             .unwrap_or_else(|| std::time::Duration::from_secs(0));
 
         if event::poll(timeout)? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
-                    match key.code {
-                        KeyCode::Char('p') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
-                            app.show_menu = true;
-                            app.menu_state.select(Some(0));
-                            app.update_filtered_commands();
-                        }
-                        KeyCode::Char('a') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
-                            if app.show_model_menu { app.show_model_menu = false; }
-                            app.show_provider_menu = true;
-                            app.menu_state.select(Some(0));
-                        }
-                        KeyCode::Char('c') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
-                            if app.is_generating {
-                                if let Some(handle) = app.current_task.take() { handle.abort(); }
-                                app.is_generating = false;
-                                app.active_tool = None;
+            match event::read()? {
+                Event::Key(key) => {
+                    if key.kind == KeyEventKind::Press {
+                        match key.code {
+                            KeyCode::Char('p') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
+                                app.show_menu = true;
+                                app.menu_state.select(Some(0));
+                                app.update_filtered_commands();
                             }
-                        }
-                        KeyCode::Char('l') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
-                            app.history.clear();
-                            app.screen = Screen::Welcome;
-                            app.history_scroll = 0;
-                        }
-                        KeyCode::Enter if key.modifiers.contains(event::KeyModifiers::SHIFT) => {
-                            app.input.insert_newline();
-                        }
-                        KeyCode::Enter => {
-                            if app.show_menu {
-                                if let Some(selected) = app.menu_state.selected() {
-                                    if let Some(cmd) = app.filtered_commands.get(selected) {
-                                        let name = cmd.name.to_string();
-                                        app.show_menu = false;
-                                        app.input = TextArea::default();
-                                        handle_command(&mut app, &name).await;
-                                    }
+                            KeyCode::Char('a') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
+                                if app.show_model_menu { app.show_model_menu = false; }
+                                app.show_provider_menu = true;
+                                app.menu_state.select(Some(0));
+                            }
+                            KeyCode::Char('c') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
+                                if app.is_generating {
+                                    if let Some(handle) = app.current_task.take() { handle.abort(); }
+                                    app.is_generating = false;
+                                    app.active_tool = None;
                                 }
-                            } else if app.show_provider_menu {
-                                if let Some(selected) = app.menu_state.selected() {
-                                    if let Some(p) = PROVIDERS.get(selected) {
-                                        app.pending_provider_id = Some(p.id.to_string());
-                                        app.is_inputting_api_key = true;
-                                        app.api_key_input = TextArea::default();
-                                        app.show_provider_menu = false;
-                                        if p.id == "cloudflare-workers" || p.id == "cloudflare-gateway" {
-                                            app.api_key_input_stage = ApiKeyInputStage::CloudflareAccountId;
-                                        } else {
-                                            app.api_key_input_stage = ApiKeyInputStage::ApiKey;
+                            }
+                            KeyCode::Char('l') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
+                                app.history.clear();
+                                app.screen = Screen::Welcome;
+                                app.history_scroll = 0;
+                            }
+                            KeyCode::Enter if key.modifiers.contains(event::KeyModifiers::SHIFT) => {
+                                app.input.insert_newline();
+                            }
+                            KeyCode::Enter => {
+                                if app.show_menu {
+                                    if let Some(selected) = app.menu_state.selected() {
+                                        if let Some(cmd) = app.filtered_commands.get(selected) {
+                                            let name = cmd.name.to_string();
+                                            app.show_menu = false;
+                                            app.input = TextArea::default();
+                                            handle_command(&mut app, &name).await;
                                         }
                                     }
-                                }
-                            } else if app.show_model_menu {
-                                if let Some(selected) = app.menu_state.selected() {
-                                    if let Some(ModelMenuItem::Model(model_info)) = app.filtered_models.get(selected).cloned() {
-                                        let provider_id = &model_info.provider_id;
-                                        let model_name = &model_info.name;
-                                        let mut config = app.orchestrator.config.lock().await;
-                                        let env_key = format!("{}_API_KEY", provider_id.to_uppercase().replace("-", "_"));
-                                        let api_key = std::env::var(env_key).ok().or_else(|| config.api_keys.get(provider_id).cloned());
-                                        if let Some(key) = api_key {
-                                            config.model = model_name.clone();
-                                            config.provider = provider_id.clone();
-                                            config.recent_models.retain(|m| m.name != *model_name || m.provider_id != *provider_id);
-                                            config.recent_models.insert(0, model_info.clone());
-                                            config.recent_models.truncate(3);
-                                            let _ = routecode_sdk::utils::storage::save_config(&config);
-                                            if app.provider_name.to_lowercase() != *provider_id {
-                                                let provider = routecode_sdk::agents::resolve_provider(provider_id, key);
-                                                app.provider_name = provider.name().to_string();
-                                                app.current_provider_id = provider_id.clone();
-                                                drop(config);
-                                                app.orchestrator.change_provider(provider).await;
-                                            } else { drop(config); }
-                                            app.current_model = model_name.clone();
-                                            app.history.push(Message::system(format!("Switched to {} on {}", model_name, app.provider_name)));
-                                            app.show_model_menu = false;
-                                        } else {
-                                            app.history.push(Message::system(format!("Error: No API key for {}", provider_id)));
-                                        }
-                                    }
-                                }
-                            } else if app.is_inputting_api_key {
-                                let input_value = app.api_key_input.lines().join("\n").trim().to_string();
-                                if !input_value.is_empty() {
-                                    match app.api_key_input_stage {
-                                        ApiKeyInputStage::ApiKey => {
-                                            if let Some(provider_id) = app.pending_provider_id.take() {
-                                                let mut config = app.orchestrator.config.lock().await;
-                                                config.api_keys.insert(provider_id.clone(), input_value);
-                                                let _ = routecode_sdk::utils::storage::save_config(&config);
-                                                app.history.push(Message::system(format!("API Key saved for {}", provider_id)));
-                                            }
-                                            app.is_inputting_api_key = false;
-                                            app.api_key_input_stage = ApiKeyInputStage::None;
-                                        }
-                                        ApiKeyInputStage::CloudflareAccountId => {
-                                            app.pending_account_id = Some(input_value);
+                                } else if app.show_provider_menu {
+                                    if let Some(selected) = app.menu_state.selected() {
+                                        if let Some(p) = PROVIDERS.get(selected) {
+                                            app.pending_provider_id = Some(p.id.to_string());
+                                            app.is_inputting_api_key = true;
                                             app.api_key_input = TextArea::default();
-                                            if app.pending_provider_id.as_deref() == Some("cloudflare-gateway") {
-                                                app.api_key_input_stage = ApiKeyInputStage::CloudflareGatewayId;
-                                            } else { app.api_key_input_stage = ApiKeyInputStage::CloudflareApiKey; }
-                                        }
-                                        ApiKeyInputStage::CloudflareGatewayId => {
-                                            app.pending_gateway_id = Some(input_value);
-                                            app.api_key_input = TextArea::default();
-                                            app.api_key_input_stage = ApiKeyInputStage::CloudflareApiKey;
-                                        }
-                                        ApiKeyInputStage::CloudflareApiKey => {
-                                            if let Some(provider_id) = app.pending_provider_id.take() {
-                                                let account_id = app.pending_account_id.take().unwrap_or_default();
-                                                let final_key = if provider_id == "cloudflare-gateway" {
-                                                    let gateway_id = app.pending_gateway_id.take().unwrap_or_default();
-                                                    format!("{}:{}:{}", account_id, gateway_id, input_value)
-                                                } else { format!("{}:{}", account_id, input_value) };
-                                                let mut config = app.orchestrator.config.lock().await;
-                                                config.api_keys.insert(provider_id.clone(), final_key);
-                                                let _ = routecode_sdk::utils::storage::save_config(&config);
-                                                app.history.push(Message::system(format!("Credentials saved for {}", provider_id)));
+                                            app.show_provider_menu = false;
+                                            if p.id == "cloudflare-workers" || p.id == "cloudflare-gateway" {
+                                                app.api_key_input_stage = ApiKeyInputStage::CloudflareAccountId;
+                                            } else {
+                                                app.api_key_input_stage = ApiKeyInputStage::ApiKey;
                                             }
-                                            app.is_inputting_api_key = false;
-                                            app.api_key_input_stage = ApiKeyInputStage::None;
                                         }
-                                        _ => { app.is_inputting_api_key = false; }
+                                    }
+                                } else if app.show_model_menu {
+                                    if let Some(selected) = app.menu_state.selected() {
+                                        if let Some(ModelMenuItem::Model(model_info)) = app.filtered_models.get(selected).cloned() {
+                                            let provider_id = &model_info.provider_id;
+                                            let model_name = &model_info.name;
+                                            let mut config = app.orchestrator.config.lock().await;
+                                            let env_key = format!("{}_API_KEY", provider_id.to_uppercase().replace("-", "_"));
+                                            let api_key = std::env::var(env_key).ok().or_else(|| config.api_keys.get(provider_id).cloned());
+                                            if let Some(key) = api_key {
+                                                config.model = model_name.clone();
+                                                config.provider = provider_id.clone();
+                                                config.recent_models.retain(|m| m.name != *model_name || m.provider_id != *provider_id);
+                                                config.recent_models.insert(0, model_info.clone());
+                                                config.recent_models.truncate(3);
+                                                let _ = routecode_sdk::utils::storage::save_config(&config);
+                                                if app.provider_name.to_lowercase() != *provider_id {
+                                                    let provider = routecode_sdk::agents::resolve_provider(provider_id, key);
+                                                    app.provider_name = provider.name().to_string();
+                                                    app.current_provider_id = provider_id.clone();
+                                                    drop(config);
+                                                    app.orchestrator.change_provider(provider).await;
+                                                } else { drop(config); }
+                                                app.current_model = model_name.clone();
+                                                app.history.push(Message::system(format!("Switched to {} on {}", model_name, app.provider_name)));
+                                                app.show_model_menu = false;
+                                            } else {
+                                                app.history.push(Message::system(format!("Error: No API key for {}", provider_id)));
+                                            }
+                                        }
+                                    }
+                                } else if app.is_inputting_api_key {
+                                    let input_value = app.api_key_input.lines().join("\n").trim().to_string();
+                                    if !input_value.is_empty() {
+                                        match app.api_key_input_stage {
+                                            ApiKeyInputStage::ApiKey => {
+                                                if let Some(provider_id) = app.pending_provider_id.take() {
+                                                    let mut config = app.orchestrator.config.lock().await;
+                                                    config.api_keys.insert(provider_id.clone(), input_value);
+                                                    let _ = routecode_sdk::utils::storage::save_config(&config);
+                                                    app.history.push(Message::system(format!("API Key saved for {}", provider_id)));
+                                                }
+                                                app.is_inputting_api_key = false;
+                                                app.api_key_input_stage = ApiKeyInputStage::None;
+                                            }
+                                            ApiKeyInputStage::CloudflareAccountId => {
+                                                app.pending_account_id = Some(input_value);
+                                                app.api_key_input = TextArea::default();
+                                                if app.pending_provider_id.as_deref() == Some("cloudflare-gateway") {
+                                                    app.api_key_input_stage = ApiKeyInputStage::CloudflareGatewayId;
+                                                } else { app.api_key_input_stage = ApiKeyInputStage::CloudflareApiKey; }
+                                            }
+                                            ApiKeyInputStage::CloudflareGatewayId => {
+                                                app.pending_gateway_id = Some(input_value);
+                                                app.api_key_input = TextArea::default();
+                                                app.api_key_input_stage = ApiKeyInputStage::CloudflareApiKey;
+                                            }
+                                            ApiKeyInputStage::CloudflareApiKey => {
+                                                if let Some(provider_id) = app.pending_provider_id.take() {
+                                                    let account_id = app.pending_account_id.take().unwrap_or_default();
+                                                    let final_key = if provider_id == "cloudflare-gateway" {
+                                                        let gateway_id = app.pending_gateway_id.take().unwrap_or_default();
+                                                        format!("{}:{}:{}", account_id, gateway_id, input_value)
+                                                    } else { format!("{}:{}", account_id, input_value) };
+                                                    let mut config = app.orchestrator.config.lock().await;
+                                                    config.api_keys.insert(provider_id.clone(), final_key);
+                                                    let _ = routecode_sdk::utils::storage::save_config(&config);
+                                                    app.history.push(Message::system(format!("Credentials saved for {}", provider_id)));
+                                                }
+                                                app.is_inputting_api_key = false;
+                                                app.api_key_input_stage = ApiKeyInputStage::None;
+                                            }
+                                            _ => { app.is_inputting_api_key = false; }
+                                        }
+                                    } else {
+                                        app.is_inputting_api_key = false;
+                                        app.api_key_input_stage = ApiKeyInputStage::None;
                                     }
                                 } else {
+                                    let input_text = app.input.lines().join("\n");
+                                    if !input_text.trim().is_empty() {
+                                        if input_text.starts_with('/') {
+                                            handle_command(&mut app, &input_text).await;
+                                        } else {
+                                            app.history.push(Message::user(input_text.clone()));
+                                            app.prompt_history.push(input_text.clone());
+                                            app.prompt_history_index = None;
+                                            app.input = TextArea::default();
+                                            app.screen = Screen::Session;
+                                            app.is_generating = true;
+                                            let orchestrator = app.orchestrator.clone();
+                                            let mut history = app.history.clone();
+                                            let model = app.current_model.clone();
+                                            let tx = app.tx.clone();
+                                            let task = tokio::spawn(async move {
+                                                let _ = orchestrator.run(&mut history, &model, Some(tx)).await;
+                                            });
+                                            app.current_task = Some(task);
+                                        }
+                                        app.input = TextArea::default();
+                                    }
+                                }
+                            }
+                            KeyCode::Esc => {
+                                if app.show_menu { app.show_menu = false; }
+                                else if app.show_provider_menu { app.show_provider_menu = false; }
+                                else if app.show_model_menu { app.show_model_menu = false; }
+                                else if app.is_inputting_api_key {
                                     app.is_inputting_api_key = false;
                                     app.api_key_input_stage = ApiKeyInputStage::None;
-                                }
-                            } else {
-                                let input_text = app.input.lines().join("\n");
-                                if !input_text.trim().is_empty() {
-                                    if input_text.starts_with('/') {
-                                        handle_command(&mut app, &input_text).await;
-                                    } else {
-                                        app.history.push(Message::user(input_text.clone()));
-                                        app.prompt_history.push(input_text.clone());
-                                        app.prompt_history_index = None;
-                                        app.input = TextArea::default();
-                                        app.screen = Screen::Session;
-                                        app.is_generating = true;
-                                        let orchestrator = app.orchestrator.clone();
-                                        let mut history = app.history.clone();
-                                        let model = app.current_model.clone();
-                                        let tx = app.tx.clone();
-                                        let task = tokio::spawn(async move {
-                                            let _ = orchestrator.run(&mut history, &model, Some(tx)).await;
-                                        });
-                                        app.current_task = Some(task);
+                                    app.pending_account_id = None;
+                                    app.pending_gateway_id = None;
+                                } else if app.is_generating {
+                                    if let Some(handle) = app.current_task.take() { handle.abort(); }
+                                    app.is_generating = false;
+                                    app.active_tool = None;
+                                } else {
+                                    if !app.history.is_empty() {
+                                        let session = routecode_sdk::utils::storage::Session {
+                                            messages: app.history.clone(),
+                                            model: app.current_model.clone(),
+                                            usage: app.orchestrator.usage.lock().await.clone(),
+                                            timestamp: chrono::Utc::now().timestamp(),
+                                        };
+                                        let _ = routecode_sdk::utils::storage::save_session("last_session", &session);
                                     }
-                                    app.input = TextArea::default();
+                                    return Ok(());
                                 }
                             }
-                        }
-                        KeyCode::Esc => {
-                            if app.show_menu { app.show_menu = false; }
-                            else if app.show_provider_menu { app.show_provider_menu = false; }
-                            else if app.show_model_menu { app.show_model_menu = false; }
-                            else if app.is_inputting_api_key {
-                                app.is_inputting_api_key = false;
-                                app.api_key_input_stage = ApiKeyInputStage::None;
-                                app.pending_account_id = None;
-                                app.pending_gateway_id = None;
-                            } else if app.is_generating {
-                                if let Some(handle) = app.current_task.take() { handle.abort(); }
-                                app.is_generating = false;
-                                app.active_tool = None;
-                            } else {
-                                if !app.history.is_empty() {
-                                    let session = routecode_sdk::utils::storage::Session {
-                                        messages: app.history.clone(),
-                                        model: app.current_model.clone(),
-                                        usage: app.orchestrator.usage.lock().await.clone(),
-                                        timestamp: chrono::Utc::now().timestamp(),
-                                    };
-                                    let _ = routecode_sdk::utils::storage::save_session("last_session", &session);
-                                }
-                                return Ok(());
-                            }
-                        }
-                        KeyCode::Up => {
-                            if app.show_menu || app.show_provider_menu || app.show_model_menu {
-                                let items_len = if app.show_menu { app.filtered_commands.len() }
-                                               else if app.show_provider_menu { PROVIDERS.len() }
-                                               else { app.filtered_models.len() };
-                                if items_len > 0 {
-                                    let selected = app.menu_state.selected().unwrap_or(0);
-                                    let mut new_selected = if selected == 0 { items_len - 1 } else { selected - 1 };
-                                    if app.show_model_menu {
-                                        while let Some(ModelMenuItem::Header(_)) = app.filtered_models.get(new_selected) {
-                                            new_selected = if new_selected == 0 { items_len - 1 } else { new_selected - 1 };
-                                            if new_selected == selected { break; }
+                            KeyCode::Up => {
+                                if app.show_menu || app.show_provider_menu || app.show_model_menu {
+                                    let items_len = if app.show_menu { app.filtered_commands.len() }
+                                                   else if app.show_provider_menu { PROVIDERS.len() }
+                                                   else { app.filtered_models.len() };
+                                    if items_len > 0 {
+                                        let selected = app.menu_state.selected().unwrap_or(0);
+                                        let mut new_selected = if selected == 0 { items_len - 1 } else { selected - 1 };
+                                        if app.show_model_menu {
+                                            while let Some(ModelMenuItem::Header(_)) = app.filtered_models.get(new_selected) {
+                                                new_selected = if new_selected == 0 { items_len - 1 } else { new_selected - 1 };
+                                                if new_selected == selected { break; }
+                                            }
                                         }
+                                        app.menu_state.select(Some(new_selected));
                                     }
-                                    app.menu_state.select(Some(new_selected));
-                                }
-                            } else if key.modifiers.contains(event::KeyModifiers::SHIFT) {
-                                app.history_scroll = app.history_scroll.saturating_sub(1);
-                            } else {
-                                let (row, _) = app.input.cursor();
-                                if row == 0 && !app.prompt_history.is_empty() {
-                                    let idx = match app.prompt_history_index {
-                                        Some(i) => if i == 0 { 0 } else { i - 1 },
-                                        None => app.prompt_history.len() - 1,
-                                    };
-                                    app.prompt_history_index = Some(idx);
-                                    let prev = app.prompt_history[idx].clone();
-                                    app.input = TextArea::from(prev.lines().map(|s| s.to_string()));
-                                    app.input.move_cursor(tui_textarea::CursorMove::End);
-                                } else { app.input.input(key); }
-                            }
-                        }
-                        KeyCode::Down => {
-                            if app.show_menu || app.show_provider_menu || app.show_model_menu {
-                                let items_len = if app.show_menu { app.filtered_commands.len() }
-                                               else if app.show_provider_menu { PROVIDERS.len() }
-                                               else { app.filtered_models.len() };
-                                if items_len > 0 {
-                                    let selected = app.menu_state.selected().unwrap_or(0);
-                                    let mut new_selected = if selected >= items_len - 1 { 0 } else { selected + 1 };
-                                    if app.show_model_menu {
-                                        while let Some(ModelMenuItem::Header(_)) = app.filtered_models.get(new_selected) {
-                                            new_selected = if new_selected >= items_len - 1 { 0 } else { new_selected + 1 };
-                                            if new_selected == selected { break; }
-                                        }
-                                    }
-                                    app.menu_state.select(Some(new_selected));
-                                }
-                            } else if key.modifiers.contains(event::KeyModifiers::SHIFT) {
-                                app.history_scroll = app.history_scroll.saturating_add(1);
-                            } else {
-                                let (row, _) = app.input.cursor();
-                                let lines_len = app.input.lines().len();
-                                if row >= lines_len - 1 && app.prompt_history_index.is_some() {
-                                    let idx = app.prompt_history_index.unwrap();
-                                    if idx >= app.prompt_history.len() - 1 {
-                                        app.prompt_history_index = None;
-                                        app.input = TextArea::default();
-                                    } else {
-                                        let new_idx = idx + 1;
-                                        app.prompt_history_index = Some(new_idx);
-                                        let next = app.prompt_history[new_idx].clone();
-                                        app.input = TextArea::from(next.lines().map(|s| s.to_string()));
+                                } else if key.modifiers.contains(event::KeyModifiers::SHIFT) {
+                                    app.history_scroll = app.history_scroll.saturating_sub(1);
+                                } else {
+                                    let (row, _) = app.input.cursor();
+                                    if row == 0 && !app.prompt_history.is_empty() {
+                                        let idx = match app.prompt_history_index {
+                                            Some(i) => if i == 0 { 0 } else { i - 1 },
+                                            None => app.prompt_history.len() - 1,
+                                        };
+                                        app.prompt_history_index = Some(idx);
+                                        let prev = app.prompt_history[idx].clone();
+                                        app.input = TextArea::from(prev.lines().map(|s| s.to_string()));
                                         app.input.move_cursor(tui_textarea::CursorMove::End);
-                                    }
-                                } else { app.input.input(key); }
-                            }
-                        }
-                        KeyCode::Right if app.show_model_menu => {
-                            let len = app.filtered_models.len();
-                            if len > 0 {
-                                let current = app.menu_state.selected().unwrap_or(0);
-                                let mut next_header_idx = None;
-                                for i in (current + 1)..len {
-                                    if let Some(ModelMenuItem::Header(_)) = app.filtered_models.get(i) {
-                                        next_header_idx = Some(i); break;
-                                    }
+                                    } else { app.input.input(key); }
                                 }
-                                if next_header_idx.is_none() {
-                                    for i in 0..current {
+                            }
+                            KeyCode::Down => {
+                                if app.show_menu || app.show_provider_menu || app.show_model_menu {
+                                    let items_len = if app.show_menu { app.filtered_commands.len() }
+                                                   else if app.show_provider_menu { PROVIDERS.len() }
+                                                   else { app.filtered_models.len() };
+                                    if items_len > 0 {
+                                        let selected = app.menu_state.selected().unwrap_or(0);
+                                        let mut new_selected = if selected >= items_len - 1 { 0 } else { selected + 1 };
+                                        if app.show_model_menu {
+                                            while let Some(ModelMenuItem::Header(_)) = app.filtered_models.get(new_selected) {
+                                                new_selected = if new_selected >= items_len - 1 { 0 } else { new_selected + 1 };
+                                                if new_selected == selected { break; }
+                                            }
+                                        }
+                                        app.menu_state.select(Some(new_selected));
+                                    }
+                                } else if key.modifiers.contains(event::KeyModifiers::SHIFT) {
+                                    app.history_scroll = app.history_scroll.saturating_add(1);
+                                } else {
+                                    let (row, _) = app.input.cursor();
+                                    let lines_len = app.input.lines().len();
+                                    if row >= lines_len - 1 && app.prompt_history_index.is_some() {
+                                        let idx = app.prompt_history_index.unwrap();
+                                        if idx >= app.prompt_history.len() - 1 {
+                                            app.prompt_history_index = None;
+                                            app.input = TextArea::default();
+                                        } else {
+                                            let new_idx = idx + 1;
+                                            app.prompt_history_index = Some(new_idx);
+                                            let next = app.prompt_history[new_idx].clone();
+                                            app.input = TextArea::from(next.lines().map(|s| s.to_string()));
+                                            app.input.move_cursor(tui_textarea::CursorMove::End);
+                                        }
+                                    } else { app.input.input(key); }
+                                }
+                            }
+                            KeyCode::Right if app.show_model_menu => {
+                                let len = app.filtered_models.len();
+                                if len > 0 {
+                                    let current = app.menu_state.selected().unwrap_or(0);
+                                    let mut next_header_idx = None;
+                                    for i in (current + 1)..len {
                                         if let Some(ModelMenuItem::Header(_)) = app.filtered_models.get(i) {
                                             next_header_idx = Some(i); break;
                                         }
                                     }
-                                }
-                                if let Some(h_idx) = next_header_idx {
-                                    let mut target = (h_idx + 1) % len;
-                                    while let Some(ModelMenuItem::Header(_)) = app.filtered_models.get(target) {
-                                        target = (target + 1) % len;
-                                        if target == h_idx { break; }
+                                    if next_header_idx.is_none() {
+                                        for i in 0..current {
+                                            if let Some(ModelMenuItem::Header(_)) = app.filtered_models.get(i) {
+                                                next_header_idx = Some(i); break;
+                                            }
+                                        }
                                     }
-                                    app.menu_state.select(Some(target));
+                                    if let Some(h_idx) = next_header_idx {
+                                        let mut target = (h_idx + 1) % len;
+                                        while let Some(ModelMenuItem::Header(_)) = app.filtered_models.get(target) {
+                                            target = (target + 1) % len;
+                                            if target == h_idx { break; }
+                                        }
+                                        app.menu_state.select(Some(target));
+                                    }
                                 }
                             }
-                        }
-                        KeyCode::Left if app.show_model_menu => {
-                            let len = app.filtered_models.len();
-                            if len > 0 {
-                                let current = app.menu_state.selected().unwrap_or(0);
-                                let mut headers = Vec::new();
-                                for (i, item) in app.filtered_models.iter().enumerate() {
-                                    if let ModelMenuItem::Header(_) = item { headers.push(i); }
-                                }
-                                if !headers.is_empty() {
-                                    let current_header_idx_in_headers = headers.iter().enumerate().rev().find(|(_, &h_idx)| h_idx < current).map(|(i, _)| i);
-                                    let target_header_idx = match current_header_idx_in_headers {
-                                        Some(i) => if i == 0 { *headers.last().unwrap() } else { headers[i - 1] },
-                                        None => *headers.last().unwrap()
-                                    };
-                                    let mut target = (target_header_idx + 1) % len;
-                                    while let Some(ModelMenuItem::Header(_)) = app.filtered_models.get(target) {
-                                        target = (target + 1) % len;
-                                        if target == target_header_idx { break; }
+                            KeyCode::Left if app.show_model_menu => {
+                                let len = app.filtered_models.len();
+                                if len > 0 {
+                                    let current = app.menu_state.selected().unwrap_or(0);
+                                    let mut headers = Vec::new();
+                                    for (i, item) in app.filtered_models.iter().enumerate() {
+                                        if let ModelMenuItem::Header(_) = item { headers.push(i); }
                                     }
-                                    app.menu_state.select(Some(target));
+                                    if !headers.is_empty() {
+                                        let current_header_idx_in_headers = headers.iter().enumerate().rev().find(|(_, &h_idx)| h_idx < current).map(|(i, _)| i);
+                                        let target_header_idx = match current_header_idx_in_headers {
+                                            Some(i) => if i == 0 { *headers.last().unwrap() } else { headers[i - 1] },
+                                            None => *headers.last().unwrap()
+                                        };
+                                        let mut target = (target_header_idx + 1) % len;
+                                        while let Some(ModelMenuItem::Header(_)) = app.filtered_models.get(target) {
+                                            target = (target + 1) % len;
+                                            if target == target_header_idx { break; }
+                                        }
+                                        app.menu_state.select(Some(target));
+                                    }
                                 }
                             }
-                        }
-                        KeyCode::Char('f') if key.modifiers.contains(event::KeyModifiers::CONTROL) && app.show_model_menu => {
-                            if let Some(selected) = app.menu_state.selected() {
-                                if let Some(ModelMenuItem::Model(model_info)) = app.filtered_models.get(selected).cloned() {
-                                    let mut config = app.orchestrator.config.lock().await;
-                                    if config.favorites.iter().any(|m| m.name == model_info.name && m.provider_id == model_info.provider_id) {
-                                        config.favorites.retain(|m| m.name != model_info.name || m.provider_id != model_info.provider_id);
-                                        app.history.push(Message::system(format!("Removed {} from favorites", model_info.name)));
-                                    } else {
-                                        config.favorites.push(model_info.clone());
-                                        app.history.push(Message::system(format!("Added {} to favorites", model_info.name)));
+                            KeyCode::Char('f') if key.modifiers.contains(event::KeyModifiers::CONTROL) && app.show_model_menu => {
+                                if let Some(selected) = app.menu_state.selected() {
+                                    if let Some(ModelMenuItem::Model(model_info)) = app.filtered_models.get(selected).cloned() {
+                                        let mut config = app.orchestrator.config.lock().await;
+                                        if config.favorites.iter().any(|m| m.name == model_info.name && m.provider_id == model_info.provider_id) {
+                                            config.favorites.retain(|m| m.name != model_info.name || m.provider_id != model_info.provider_id);
+                                            app.history.push(Message::system(format!("Removed {} from favorites", model_info.name)));
+                                        } else {
+                                            config.favorites.push(model_info.clone());
+                                            app.history.push(Message::system(format!("Added {} to favorites", model_info.name)));
+                                        }
+                                        let _ = routecode_sdk::utils::storage::save_config(&config);
                                     }
-                                    let _ = routecode_sdk::utils::storage::save_config(&config);
                                 }
                             }
-                        }
-                        _ => {
-                            let event = event::Event::Key(key);
-                            if app.is_inputting_api_key {
-                                app.api_key_input.input(event);
-                            } else if app.show_model_menu {
-                                if app.model_search_input.input(event) {
-                                    let search = app.model_search_input.lines()[0].to_lowercase().trim().to_string();
-                                    handle_model_search(&mut app, &search, true).await;
+                            _ => {
+                                let event = event::Event::Key(key);
+                                if app.is_inputting_api_key {
+                                    app.api_key_input.input(event);
+                                } else if app.show_model_menu {
+                                    if app.model_search_input.input(event) {
+                                        let search = app.model_search_input.lines()[0].to_lowercase().trim().to_string();
+                                        handle_model_search(&mut app, &search, true).await;
+                                    }
+                                } else {
+                                    app.input.input(event);
+                                    app.update_filtered_commands();
                                 }
-                            } else {
-                                app.input.input(event);
-                                app.update_filtered_commands();
                             }
                         }
                     }
                 }
+                Event::Mouse(mouse) => {
+                    match mouse.kind {
+                        MouseEventKind::ScrollUp => { app.history_scroll = app.history_scroll.saturating_sub(2); }
+                        MouseEventKind::ScrollDown => { app.history_scroll = app.history_scroll.saturating_add(2); }
+                        _ => {}
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -1018,7 +1028,22 @@ fn ui_session(f: &mut Frame, app: &mut App, usage: &Usage, area: Rect) -> Rect {
         .constraints([Constraint::Min(1), Constraint::Length(input_height), Constraint::Length(1)])
         .split(area);
     
-    let history = render_history(app);
+    let history = render_history(&app.history);
+    
+    // 1. Auto-scroll logic
+    let mut total_height = 0;
+    let available_width = chunks[0].width.saturating_sub(4).max(1); // Account for some margin
+    for line in &history.lines {
+        let line_width: usize = line.spans.iter().map(|s| s.content.len()).sum();
+        let wrapped_height = (line_width as u16 / available_width) + 1;
+        total_height += wrapped_height;
+    }
+    
+    // Pin to bottom if generating
+    if app.is_generating {
+        app.history_scroll = total_height.saturating_sub(chunks[0].height);
+    }
+
     f.render_widget(Paragraph::new(history).wrap(Wrap { trim: false }).scroll((app.history_scroll, 0)), chunks[0]);
     f.render_widget(Block::default().style(Style::default().bg(COLOR_INPUT_BG)), chunks[1]);
     let inner_input_area = Rect::new(chunks[1].x + 1, chunks[1].y + 1, chunks[1].width.saturating_sub(2), chunks[1].height.saturating_sub(2));
@@ -1044,9 +1069,9 @@ fn ui_session(f: &mut Frame, app: &mut App, usage: &Usage, area: Rect) -> Rect {
     chunks[1]
 }
 
-fn render_history(app: &App) -> Text<'_> {
+fn render_history(history: &[Message]) -> Text<'_> {
     let mut lines = Vec::new();
-    for m in &app.history {
+    for m in history {
         match m.role {
             Role::User => {
                 lines.push(Line::from(vec![Span::styled(" ● User", Style::default().fg(COLOR_PRIMARY).add_modifier(Modifier::BOLD))]));
@@ -1061,7 +1086,18 @@ fn render_history(app: &App) -> Text<'_> {
                 }
                 if let Some(tool_calls) = &m.tool_calls {
                     for tc in tool_calls {
-                        lines.push(Line::from(vec![Span::styled("   🛠 ", Style::default().fg(COLOR_PRIMARY)), Span::styled(format!("Using {} ", tc.function.name), Style::default().fg(COLOR_TEXT)), Span::styled(format!("({})", tc.function.arguments), Style::default().fg(COLOR_SECONDARY).add_modifier(Modifier::DIM))]));
+                        let args: serde_json::Value = serde_json::from_str(&tc.function.arguments).unwrap_or(serde_json::json!({}));
+                        let arg_preview = if let Some(path) = args["path"].as_str() {
+                            format!("({})", path)
+                        } else {
+                            format!("({})", tc.function.name)
+                        };
+
+                        lines.push(Line::from(vec![
+                            Span::styled("   🛠 ", Style::default().fg(COLOR_PRIMARY)),
+                            Span::styled(format!("Using {} ", tc.function.name), Style::default().fg(COLOR_TEXT)),
+                            Span::styled(arg_preview, Style::default().fg(COLOR_SECONDARY).add_modifier(Modifier::DIM)),
+                        ]));
                     }
                 }
                 if let Some(content) = &m.content {
@@ -1074,8 +1110,28 @@ fn render_history(app: &App) -> Text<'_> {
             Role::Tool => {
                 lines.push(Line::from(vec![Span::styled(format!("   ✓ Tool ({})", m.name.as_deref().unwrap_or("result")), Style::default().fg(COLOR_SECONDARY))]));
                 if let Some(content) = &m.content {
-                    let preview = if content.len() > 100 { format!("{}...", &content[..100]) } else { content.clone() };
-                    lines.push(Line::from(vec![Span::styled(format!("     {}", preview), Style::default().fg(COLOR_DIM).add_modifier(Modifier::DIM))]));
+                    if let Ok(res) = serde_json::from_str::<routecode_sdk::core::ToolResult>(content) {
+                        if let Some(diff) = res.diff {
+                            for line in diff.lines() {
+                                let style = if line.starts_with('+') {
+                                    Style::default().fg(COLOR_SUCCESS)
+                                } else if line.starts_with('-') {
+                                    Style::default().fg(Color::Red)
+                                } else {
+                                    Style::default().fg(COLOR_DIM)
+                                };
+                                lines.push(Line::from(vec![Span::raw("     "), Span::styled(line.to_string(), style)]));
+                            }
+                        } else if let Some(out) = res.content {
+                            let preview = if out.len() > 100 { format!("{}...", &out[..100]) } else { out };
+                            lines.push(Line::from(vec![Span::styled(format!("     {}", preview), Style::default().fg(COLOR_DIM).add_modifier(Modifier::DIM))]));
+                        } else if let Some(err) = res.error {
+                            lines.push(Line::from(vec![Span::styled(format!("     Error: {}", err), Style::default().fg(Color::Red))]));
+                        }
+                    } else {
+                        let preview = if content.len() > 100 { format!("{}...", &content[..100]) } else { content.clone() };
+                        lines.push(Line::from(vec![Span::styled(format!("     {}", preview), Style::default().fg(COLOR_DIM).add_modifier(Modifier::DIM))]));
+                    }
                 }
             }
             Role::System => {
