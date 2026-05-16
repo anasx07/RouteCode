@@ -82,6 +82,8 @@ impl AgentOrchestrator {
         let tools = Some(self.tool_registry.get_all_schemas());
         let messages = self.prepare_messages(history).await;
 
+        log::debug!("Sending AI request to model: {} (messages: {})", model, messages.len());
+
         let stream = {
             let p = self.provider.lock().await;
             p.ask(messages, model, tools).await?
@@ -95,6 +97,7 @@ impl AgentOrchestrator {
 
         while let Some(chunk_res) = stream.next().await {
             let chunk = chunk_res?;
+            log::debug!("Received chunk: {:?}", chunk);
 
             if let Some(ref tx) = tx {
                 if let Err(e) = tx.send(chunk.clone()) {

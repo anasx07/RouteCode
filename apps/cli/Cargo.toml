@@ -18,3 +18,4 @@ futures = "0.3"
 log = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
 async-trait = "0.1"
+simplelog = "0.12"

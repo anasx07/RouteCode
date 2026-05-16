@@ -12,7 +12,7 @@ pub struct Session {
     pub timestamp: i64,
 }
 
-fn get_base_dir() -> PathBuf {
+pub fn get_base_dir() -> PathBuf {
     dirs::home_dir()
         .map(|p| p.join(".routecode"))
         .unwrap_or_else(|| PathBuf::from(".routecode"))
