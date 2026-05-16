@@ -1,6 +1,6 @@
 [package]
 name = "routecode-sdk"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 authors = ["SpeerX <anasrhnim07@gmail.com>"]
 description = "Core logic for RouteCode"
