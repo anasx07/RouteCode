@@ -8,7 +8,7 @@ pub struct Cli {
 
     #[arg(
         long,
-        help = "Provider (openrouter, openai, anthropic, google, deepseek)"
+        help = "Provider (openrouter, openai, anthropic, google, deepseek, nvidia, cloudflare-workers, cloudflare-gateway, opencode-zen, opencode-go)"
     )]
     pub provider: Option<String>,
 

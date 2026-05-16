@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/anasx07/routecode/actions/workflows/ci.yml/badge.svg)](https://github.com/anasx07/routecode/actions/workflows/ci.yml)
 [![Release](https://github.com/anasx07/routecode/actions/workflows/release.yml/badge.svg)](https://github.com/anasx07/routecode/actions/workflows/release.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
 ---
 
@@ -74,6 +74,8 @@ On first run, RouteCode will ask for your API key and save it to `~/.routecode/c
 | Anthropic    | `ANTHROPIC_API_KEY`    | -                    |
 | Google       | `GEMINI_API_KEY`       | -                    |
 | DeepSeek     | `DEEPSEEK_API_KEY`     | -                    |
+| Cloudflare Workers AI | `CLOUDFLARE_API_KEY` (or `account_id:token`) | - |
+| Cloudflare AI Gateway | `CLOUDFLARE_API_KEY` (or `account_id:gateway_id:token`) | - |
 
 ---
 
@@ -103,7 +105,8 @@ On first run, RouteCode will ask for your API key and save it to `~/.routecode/c
 ```sh
 git clone https://github.com/anasx07/routecode
 cd routecode
-cargo build --release
+cargo build --release -p routecode-cli
+# Binary is located at target/release/routecode-cli (or .exe on Windows)
 ./target/release/routecode-cli
 ```
 
@@ -141,4 +144,4 @@ cargo clippy          # lint
 
 ## License
 
-[MIT](LICENSE)
+[GPL v3.0](LICENSE)

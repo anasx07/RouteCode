@@ -189,3 +189,108 @@ impl AgentOrchestrator {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agents::types::StreamChunk;
+    use crate::core::{Message, Role, ToolCall, FunctionCall, ToolResult};
+    use crate::tools::traits::Tool;
+    use async_trait::async_trait;
+    use futures::stream;
+    use serde_json::json;
+
+    struct MockProvider {
+        responses: Mutex<Vec<Vec<StreamChunk>>>,
+    }
+
+    #[async_trait]
+    impl AIProvider for MockProvider {
+        fn name(&self) -> &str { "Mock" }
+        async fn list_models(&self) -> Result<Vec<String>, anyhow::Error> { Ok(vec!["mock".to_string()]) }
+        async fn ask(&self, _msgs: Vec<Message>, _model: &str, _tools: Option<Vec<serde_json::Value>>) -> Result<crate::agents::traits::StreamResponse, anyhow::Error> {
+            let mut resps = self.responses.lock().await;
+            if resps.is_empty() {
+                return Err(anyhow::anyhow!("No more mock responses"));
+            }
+            let chunks = resps.remove(0);
+            let s = stream::iter(chunks.into_iter().map(Ok));
+            Ok(Box::pin(s))
+        }
+    }
+
+    struct MockTool;
+    #[async_trait]
+    impl Tool for MockTool {
+        fn name(&self) -> &str { "mock_tool" }
+        fn description(&self) -> &str { "A mock tool" }
+        fn parameters(&self) -> serde_json::Value { json!({}) }
+        async fn execute(&self, _args: serde_json::Value) -> Result<ToolResult, anyhow::Error> {
+            Ok(ToolResult::success("success"))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_orchestrator_simple_chat() {
+        let provider = Arc::new(MockProvider {
+            responses: Mutex::new(vec![vec![
+                StreamChunk::Text { content: "Hello!".to_string() },
+                StreamChunk::Done,
+            ]]),
+        });
+        let tool_registry = ToolRegistry::new();
+        let config = Arc::new(Mutex::new(crate::core::Config::default()));
+        let orchestrator = AgentOrchestrator::new(provider, Arc::new(tool_registry), config);
+
+        let mut history = vec![Message::user("Hi")];
+        orchestrator.run(&mut history, "mock", None).await.unwrap();
+
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[1].role, Role::Assistant);
+        assert_eq!(history[1].content, Some("Hello!".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_orchestrator_tool_use() {
+        let provider = Arc::new(MockProvider {
+            responses: Mutex::new(vec![
+                // First response: call tool
+                vec![
+                    StreamChunk::ToolCall {
+                        tool_call: ToolCall {
+                            id: "call_1".to_string(),
+                            r#type: "function".to_string(),
+                            index: Some(0),
+                            function: FunctionCall {
+                                name: "mock_tool".to_string(),
+                                arguments: "{}".to_string(),
+                            },
+                        }
+                    },
+                    StreamChunk::Done,
+                ],
+                // Second response: finalize
+                vec![
+                    StreamChunk::Text { content: "Tool executed!".to_string() },
+                    StreamChunk::Done,
+                ]
+            ]),
+        });
+        
+        let mut tool_registry = ToolRegistry::new();
+        tool_registry.register(Arc::new(MockTool));
+        let config = Arc::new(Mutex::new(crate::core::Config::default()));
+        let orchestrator = AgentOrchestrator::new(provider, Arc::new(tool_registry), config);
+
+        let mut history = vec![Message::user("Run tool")];
+        orchestrator.run(&mut history, "mock", None).await.unwrap();
+
+        // History: User -> Assistant (ToolCall) -> ToolResult -> Assistant (Final)
+        assert_eq!(history.len(), 4);
+        assert_eq!(history[1].role, Role::Assistant);
+        assert!(history[1].tool_calls.is_some());
+        assert_eq!(history[2].role, Role::Tool);
+        assert_eq!(history[3].role, Role::Assistant);
+        assert_eq!(history[3].content, Some("Tool executed!".to_string()));
+    }
+}

@@ -1,6 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DynamicModelInfo {
+    pub name: String,
+    pub provider_id: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub model: String,
@@ -11,6 +17,10 @@ pub struct Config {
     pub allowlist: Vec<String>,
     #[serde(default)]
     pub last_update_check: f64,
+    #[serde(default)]
+    pub favorites: Vec<DynamicModelInfo>,
+    #[serde(default)]
+    pub recent_models: Vec<DynamicModelInfo>,
 }
 
 impl Default for Config {
@@ -22,6 +32,8 @@ impl Default for Config {
             api_keys: HashMap::new(),
             allowlist: Vec::new(),
             last_update_check: 0.0,
+            favorites: Vec::new(),
+            recent_models: Vec::new(),
         }
     }
 }

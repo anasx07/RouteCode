@@ -13,89 +13,61 @@ on:
 permissions:
   contents: write
 
-# ─────────────────────────────────────────────
-# Build a standalone binary on every platform
-# ─────────────────────────────────────────────
 jobs:
-  build-binaries:
-    name: Build — ${{ matrix.label }}
+  build:
+    name: Build - ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
-            label: Windows x86_64
-            artifact: routecode.exe
-            asset:   routecode-cli-windows-x86_64.exe
-
-          - os: macos-latest        # Apple Silicon (arm64)
-            label: macOS arm64
-            artifact: routecode
-            asset:   routecode-cli-macos-arm64
-
-          - os: macos-15-intel      # Intel (x86_64)
-            label: macOS x86_64
-            artifact: routecode
-            asset:   routecode-cli-macos-x86_64
-
           - os: ubuntu-latest
-            label: Linux x86_64
-            artifact: routecode
-            asset:   routecode-cli-linux-x86_64
-
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+            target: x86_64-unknown-linux-gnu
+            artifact_name: routecode
+            asset_name: routecode-linux-x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: routecode-cli.exe
+            asset_name: routecode-windows-x86_64.exe
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: routecode
+            asset_name: routecode-macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: routecode
+            asset_name: routecode-macos-arm64
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          fetch-depth: 0   # full history needed for setuptools-scm version tags
+          targets: ${{ matrix.target }}
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
 
-      - name: Install dependencies
-        run: |
-          pip install -e .
-          pip install pyinstaller
+      - name: Build
+        run: cargo build -p routecode-cli --release --target ${{ matrix.target }}
 
-      - name: Build binary (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: pyinstaller --clean routecode.spec
-
-      - name: Build binary (Unix)
-        if: runner.os != 'Windows'
-        run: pyinstaller --clean routecode.spec
-
-      - name: Stage artifact
+      - name: Prepare Assets
         shell: bash
         run: |
           mkdir -p release
-          if [ -f "dist/routecode.exe" ]; then
-            cp dist/routecode.exe release/${{ matrix.asset }}
-          else
-            cp dist/routecode release/${{ matrix.asset }}
-          fi
+          cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }} release/${{ matrix.asset_name }}
 
-      - name: Upload artifact
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset }}
-          path: release/${{ matrix.asset }}
-          retention-days: 1
+          name: ${{ matrix.asset_name }}
+          path: release/${{ matrix.asset_name }}
 
-  # ─────────────────────────────────────────────
-  # Create GitHub Release and attach all binaries
-  # ─────────────────────────────────────────────
-  publish-release:
-    name: Publish GitHub Release
-    needs: build-binaries
-    if: always() && !cancelled()
+  publish:
+    name: Publish Release
+    needs: build
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
@@ -103,75 +75,18 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: release/
+          merge-multiple: true
 
       - name: Generate checksums
         run: |
           cd release
-          find . -type f | sort | xargs sha256sum > checksums.txt
-          cat checksums.txt
+          sha256sum * > checksums.txt
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name || inputs.tag }}
           name: "RouteCode ${{ github.ref_name || inputs.tag }}"
-          draft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          generate_release_notes: true
           files: |
-            release/**/*
-          body: |
-            ## Install
-
-            **macOS / Linux — one-liner:**
-            ```sh
-            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh
-            ```
-
-            **Windows — one-liner (PowerShell):**
-            ```powershell
-            irm https://raw.githubusercontent.com/${{ github.repository }}/main/install.ps1 | iex
-            ```
-
-            **Python (pip / pipx):**
-            ```sh
-            pipx install routecode
-            ```
-
-            ---
-
-            | Platform | Binary |
-            |---|---|
-            | Windows x86_64 | `routecode-cli-windows-x86_64.exe` |
-            | macOS Apple Silicon | `routecode-cli-macos-arm64` |
-            | macOS Intel | `routecode-cli-macos-x86_64` |
-            | Linux x86_64 | `routecode-cli-linux-x86_64` |
-
-  # ─────────────────────────────────────────────
-  # Publish to PyPI (pipx install routecode)
-  # ─────────────────────────────────────────────
-  publish-pypi:
-    name: Publish to PyPI
-    needs: build-binaries
-    if: always() && !cancelled()
-    runs-on: ubuntu-latest
-    environment: pypi
-    permissions:
-      id-token: write   # required for OIDC trusted publishing
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Build wheel + sdist
-        run: |
-          pip install build setuptools-scm
-          python -m build
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+            release/*
+          generate_release_notes: true
