@@ -24,19 +24,19 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact_name: routecode-cli
-            asset_name: routecode-linux-x86_64
+            asset_name: RouteCode-cli-linux-x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact_name: routecode-cli.exe
-            asset_name: routecode-windows-x86_64.exe
+            asset_name: RouteCode-cli-windows-x86_64.exe
           - os: macos-latest
             target: x86_64-apple-darwin
             artifact_name: routecode-cli
-            asset_name: routecode-macos-x86_64
+            asset_name: RouteCode-cli-macos-x86_64
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact_name: routecode-cli
-            asset_name: routecode-macos-arm64
+            asset_name: RouteCode-cli-macos-arm64
 
     steps:
       - uses: actions/checkout@v4
@@ -126,6 +126,7 @@ jobs:
   publish:
     name: Publish Release
     needs: [build-cli, build-desktop]
+    if: always() && (needs.build-cli.result == 'success' || needs.build-desktop.result == 'success')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -136,10 +137,10 @@ jobs:
           path: release/
           merge-multiple: true
 
-      - name: Generate CLI Checksums
+      - name: Generate Checksums
         run: |
           cd release
-          for f in routecode-linux-* routecode-macos-* routecode-windows-*; do
+          for f in RouteCode-cli-* RouteCode-desktop-t*; do
             if [ -f "$f" ]; then
               sha256sum "$f" >> checksums.txt
             fi

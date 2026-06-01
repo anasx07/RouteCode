@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "desktop-t",
+  "productName": "RouteCode-desktop-t",
   "version": "0.1.0",
   "identifier": "com.routecode.desktop-t",
   "build": {
