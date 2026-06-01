@@ -2,7 +2,7 @@ $repo = "anasx07/routecode"
 $latestRelease = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/latest"
 $tag = $latestRelease.tag_name
 
-$assetName = "routecode-windows-x86_64.exe"
+$assetName = "RouteCode-cli-windows-x86_64.exe"
 $url = "https://github.com/$repo/releases/download/$tag/$assetName"
 
 $installDir = "$HOME\.routecode\bin"

@@ -7,13 +7,13 @@ ARCH=$(uname -m)
 
 case "$OS" in
   linux)
-    ASSET="routecode-linux-x86_64"
+    ASSET="RouteCode-cli-linux-x86_64"
     ;;
   darwin)
     if [ "$ARCH" = "arm64" ]; then
-      ASSET="routecode-macos-arm64"
+      ASSET="RouteCode-cli-macos-arm64"
     else
-      ASSET="routecode-macos-x86_64"
+      ASSET="RouteCode-cli-macos-x86_64"
     fi
     ;;
   *)
