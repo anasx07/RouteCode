@@ -20,23 +20,21 @@ pub fn ui_session(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
     app.thinking_hover_rendered = thinking_hovered;
     let is_collapsed = app.collapse_thinking && !app.temp_expand_thinking;
 
-    let last_msg_len = app.history.last().map(|m| {
-        m.content.as_ref().map(|s| s.len()).unwrap_or(0) +
-        m.thought.as_ref().map(|s| s.len()).unwrap_or(0) +
-        m.tool_calls.as_ref().map(|tc| tc.len()).unwrap_or(0)
-    }).unwrap_or(0);
-
     let hovered_msg_idx = crate::ui::compute_message_hover(app, chunks[0]);
 
-    let cache_valid = app.cached_text.is_some()
-        && app.history.len() == app.cached_history_len
-        && last_msg_len == app.cached_last_msg_len
-        && chunks[0].width == app.cached_width
-        && is_collapsed == app.cached_is_collapsed
-        && thinking_hovered == app.cached_thinking_hovered
-        && hovered_msg_idx == app.cached_hovered_msg_idx;
+    let needs_rebuild = app.render_dirty
+        || app.cached_text.is_none()
+        || app.history.len() != app.cached_history_len
+        || chunks[0].width != app.cached_width
+        || is_collapsed != app.cached_is_collapsed
+        || thinking_hovered != app.cached_thinking_hovered
+        || hovered_msg_idx != app.cached_hovered_msg_idx;
 
-    if !cache_valid {
+    let throttle_ok = app.last_cache_update.elapsed() >= std::time::Duration::from_millis(200);
+
+    if needs_rebuild && (throttle_ok || !app.is_generating) {
+        app.render_dirty = false;
+        app.last_cache_update = std::time::Instant::now();
         let history = render_history(&app.history, is_collapsed, thinking_hovered, hovered_msg_idx, 0);
         
         // 1. Auto-scroll logic
@@ -55,7 +53,6 @@ pub fn ui_session(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
         total_height += 2;
 
         app.cached_history_len = app.history.len();
-        app.cached_last_msg_len = last_msg_len;
         app.cached_width = chunks[0].width;
         app.cached_is_collapsed = is_collapsed;
         app.cached_thinking_hovered = thinking_hovered;
@@ -110,7 +107,7 @@ pub fn ui_session(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
 
     let cleaned_model = clean_model_name(&app.current_model, &app.current_provider_id);
     
-    let config_thinking = app.orchestrator.config.try_lock()
+    let config_thinking = crate::ui::try_lock_config(app)
         .map(|c| c.thinking_level.clone())
         .unwrap_or("default".to_string());
     
@@ -128,14 +125,20 @@ pub fn ui_session(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
         ])
         .split(chunks[2]);
 
-    let left_status = Line::from(vec![
-        Span::styled(format!(" {} ", cleaned_model), Style::default().fg(COLOR_PRIMARY).add_modifier(Modifier::BOLD)),
-        Span::styled(thinking_tag, Style::default().fg(COLOR_SYSTEM).add_modifier(Modifier::BOLD)),
-        Span::styled(format!(" • Tokens: {} • Cost: ${:.4} ", app.usage.total_tokens, app.usage.total_cost), Style::default().fg(COLOR_SECONDARY)),
-        Span::styled(format!(" • Scroll: {}/{} ", app.history_scroll, app.max_scroll), Style::default().fg(COLOR_SECONDARY).add_modifier(Modifier::DIM)),
-        Span::styled(generating_text, Style::default().fg(COLOR_SYSTEM)),
-        Span::styled(" • ctrl+o toggle thinking • ctrl+p help ", Style::default().fg(COLOR_SECONDARY).add_modifier(Modifier::DIM)),
-    ]);
+    let mut left_spans: Vec<Span> = Vec::new();
+    if !app.hide_model_info {
+        left_spans.push(Span::styled(format!(" {} ", cleaned_model), Style::default().fg(COLOR_PRIMARY).add_modifier(Modifier::BOLD)));
+        left_spans.push(Span::styled(thinking_tag, Style::default().fg(COLOR_SYSTEM).add_modifier(Modifier::BOLD)));
+    }
+    if !app.hide_context_summary {
+        left_spans.push(Span::styled(format!(" • Tokens: {} • Cost: ${:.4} ", app.usage.total_tokens, app.usage.total_cost), Style::default().fg(COLOR_SECONDARY)));
+        left_spans.push(Span::styled(format!(" • Scroll: {}/{} ", app.history_scroll, app.max_scroll), Style::default().fg(COLOR_SECONDARY).add_modifier(Modifier::DIM)));
+    }
+    left_spans.push(Span::styled(generating_text, Style::default().fg(COLOR_SYSTEM)));
+    if !app.hide_context_summary {
+        left_spans.push(Span::styled(" • ctrl+o toggle thinking • ctrl+p help ", Style::default().fg(COLOR_SECONDARY).add_modifier(Modifier::DIM)));
+    }
+    let left_status = Line::from(left_spans);
 
     let right_status = Paragraph::new(Span::styled(
         format!(" {} ", app.provider_name),
@@ -366,7 +369,7 @@ pub fn render_history(
     Text::from(lines)
 }
 
-fn parse_markdown_line<'a>(line: &'a str, in_code_block: bool) -> Vec<Span<'static>> {
+fn parse_markdown_line(line: &str, in_code_block: bool) -> Vec<Span<'static>> {
     if in_code_block {
         return vec![Span::styled(line.to_string(), Style::default().fg(COLOR_SECONDARY))];
     }

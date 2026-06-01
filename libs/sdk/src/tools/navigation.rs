@@ -184,10 +184,8 @@ impl Tool for GrepTool {
                                     }
                                 }
                             }
-                            if !matches {
-                                if glob_pat.matches_path(&path) {
-                                    matches = true;
-                                }
+                            if !matches && glob_pat.matches_path(&path) {
+                                matches = true;
                             }
                             if !matches {
                                 continue;

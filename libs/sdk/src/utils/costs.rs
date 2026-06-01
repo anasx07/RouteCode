@@ -115,12 +115,10 @@ async fn get_model_rates(model: &str) -> ModelRates {
         cache.is_empty()
     };
 
-    if cache_is_empty {
-        if !REFRESH_TRIGGERED.swap(true, Ordering::SeqCst) {
-            tokio::spawn(async {
-                let _ = refresh_rates().await;
-            });
-        }
+    if cache_is_empty && !REFRESH_TRIGGERED.swap(true, Ordering::SeqCst) {
+        tokio::spawn(async {
+            let _ = refresh_rates().await;
+        });
     }
 
     // 3. Fallback to hardcoded defaults for common models if API fails or model is missing

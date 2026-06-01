@@ -30,6 +30,14 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": ["https://github.com/anasx07/routecode/releases/latest/download/latest.json"],
+      "pubkey": "REPLACE_WITH_YOUR_GENERATED_PUBLIC_KEY"
+    }
   }
 }

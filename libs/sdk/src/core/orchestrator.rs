@@ -180,6 +180,7 @@ impl AgentOrchestrator {
                 StreamChunk::Models { .. } => {}
                 StreamChunk::ModelsDone => {}
                 StreamChunk::RequestConfirmation { .. } => {}
+                StreamChunk::UpdateAvailable { .. } => {}
             }
         }
 
@@ -261,45 +262,45 @@ impl AgentOrchestrator {
                                 }
                             }
                         }
-                    } else if ["file_read", "file_write", "file_edit", "ls", "tree", "grep"].contains(&tc.function.name.as_str()) {
-                        if !self.allow_session_outside_access.load(Ordering::SeqCst) {
-                            let path_str = args["path"].as_str().unwrap_or(".");
-                            if crate::utils::storage::is_path_outside_workspace(path_str) {
-                                if let Some(ref sender) = tx {
-                                    let (oneshot_tx, oneshot_rx) = tokio::sync::oneshot::channel();
-                                    let tx_wrapped = Arc::new(tokio::sync::Mutex::new(Some(oneshot_tx)));
-                                    
-                                    if let Err(e) = sender.send(StreamChunk::RequestConfirmation {
-                                        message: "The AI agent wants to access a path OUTSIDE the current workspace:".to_string(),
-                                        target: path_str.to_string(),
-                                        tx: Some(tx_wrapped),
-                                    }) {
-                                        log::error!("Failed to send RequestConfirmation to UI: {}", e);
-                                    }
+                    } else if ["file_read", "file_write", "file_edit", "ls", "tree", "grep"].contains(&tc.function.name.as_str())
+                        && !self.allow_session_outside_access.load(Ordering::SeqCst)
+                    {
+                        let path_str = args["path"].as_str().unwrap_or(".");
+                        if crate::utils::storage::is_path_outside_workspace(path_str) {
+                            if let Some(ref sender) = tx {
+                                let (oneshot_tx, oneshot_rx) = tokio::sync::oneshot::channel();
+                                let tx_wrapped = Arc::new(tokio::sync::Mutex::new(Some(oneshot_tx)));
 
-                                    match oneshot_rx.await {
-                                        Ok(crate::agents::types::ConfirmationResponse::AllowOnce) => {}
-                                        Ok(crate::agents::types::ConfirmationResponse::AllowSession) | Ok(crate::agents::types::ConfirmationResponse::AllowWorkspace) => {
-                                            self.allow_session_outside_access.store(true, Ordering::SeqCst);
-                                        }
-                                        Ok(crate::agents::types::ConfirmationResponse::Deny) => {
-                                            execute_allowed = false;
-                                            custom_error_msg = Some(format!("Access to outside path '{}' denied by user.", path_str));
-                                        }
-                                        Ok(crate::agents::types::ConfirmationResponse::Feedback(msg)) => {
-                                            execute_allowed = false;
-                                            custom_error_msg = Some(format!("Access to outside path '{}' denied by user with feedback: {}", path_str, msg));
-                                        }
-                                        Err(_) => {
-                                            execute_allowed = false;
-                                            custom_error_msg = Some("Access cancelled (confirmation channel closed).".to_string());
-                                        }
-                                    }
-                                } else {
-                                    // If there's no UI (headless), just block it by default.
-                                    execute_allowed = false;
-                                    custom_error_msg = Some(format!("Access to outside path '{}' denied (no UI confirmation available).", path_str));
+                                if let Err(e) = sender.send(StreamChunk::RequestConfirmation {
+                                    message: "The AI agent wants to access a path OUTSIDE the current workspace:".to_string(),
+                                    target: path_str.to_string(),
+                                    tx: Some(tx_wrapped),
+                                }) {
+                                    log::error!("Failed to send RequestConfirmation to UI: {}", e);
                                 }
+
+                                match oneshot_rx.await {
+                                    Ok(crate::agents::types::ConfirmationResponse::AllowOnce) => {}
+                                    Ok(crate::agents::types::ConfirmationResponse::AllowSession) | Ok(crate::agents::types::ConfirmationResponse::AllowWorkspace) => {
+                                        self.allow_session_outside_access.store(true, Ordering::SeqCst);
+                                    }
+                                    Ok(crate::agents::types::ConfirmationResponse::Deny) => {
+                                        execute_allowed = false;
+                                        custom_error_msg = Some(format!("Access to outside path '{}' denied by user.", path_str));
+                                    }
+                                    Ok(crate::agents::types::ConfirmationResponse::Feedback(msg)) => {
+                                        execute_allowed = false;
+                                        custom_error_msg = Some(format!("Access to outside path '{}' denied by user with feedback: {}", path_str, msg));
+                                    }
+                                    Err(_) => {
+                                        execute_allowed = false;
+                                        custom_error_msg = Some("Access cancelled (confirmation channel closed).".to_string());
+                                    }
+                                }
+                            } else {
+                                // If there's no UI (headless), just block it by default.
+                                execute_allowed = false;
+                                custom_error_msg = Some(format!("Access to outside path '{}' denied (no UI confirmation available).", path_str));
                             }
                         }
                     }

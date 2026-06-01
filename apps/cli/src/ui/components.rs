@@ -15,10 +15,10 @@ pub const COLOR_TEXT: Color = Color::White;              // Primary Text
 pub const COLOR_DIM: Color = Color::Rgb(50, 50, 50);      // Very Dim Text/Lines
 
 pub fn clean_model_name(name: &str, provider_id: &str) -> String {
-    if provider_id.starts_with("cloudflare") && name.starts_with("@cf/") {
-        name.split('/').last().unwrap_or(name).to_string()
-    } else if (provider_id == "openrouter" || provider_id == "nvidia") && name.contains('/') {
-        name.split('/').last().unwrap_or(name).to_string()
+    if (provider_id.starts_with("cloudflare") && name.starts_with("@cf/"))
+        || ((provider_id == "openrouter" || provider_id == "nvidia") && name.contains('/'))
+    {
+        name.split('/').next_back().unwrap_or(name).to_string()
     } else {
         name.to_string()
     }

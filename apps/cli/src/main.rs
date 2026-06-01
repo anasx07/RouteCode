@@ -15,9 +15,6 @@ pub struct Cli {
     #[arg(short, long, help = "Resume a saved session by name")]
     pub resume: Option<String>,
 
-    #[arg(long, help = "Run a single query and print the result (headless)")]
-    pub print: bool,
-
     #[arg(long, help = "Check for and install the latest version of RouteCode")]
     pub update: bool,
 
@@ -27,6 +24,12 @@ pub struct Cli {
         help = "Development mode: opens log window at DEBUG level"
     )]
     pub debug: bool,
+
+    #[arg(long, help = "Export a session to a portable JSON file")]
+    pub export: Option<String>,
+
+    #[arg(long, help = "Import a session from a JSON file")]
+    pub import: Option<String>,
 
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -41,9 +44,8 @@ pub enum Commands {
 mod ui;
 
 use crossterm::{
-    event::{EnableBracketedPaste, DisableBracketedPaste},
+    event::{EnableBracketedPaste, DisableBracketedPaste, EnableMouseCapture, DisableMouseCapture},
     execute,
-    style::Print,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
@@ -57,8 +59,19 @@ use std::process::Command;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use ui::{run_app, App};
-use simplelog::*;
-use std::fs::File;
+use simplelog::{CombinedLogger, ConfigBuilder, LevelFilter, SharedLogger, WriteLogger};
+
+
+fn restore_terminal() {
+    use crossterm::terminal::disable_raw_mode;
+    let _ = disable_raw_mode();
+    let _ = execute!(
+        std::io::stdout(),
+        LeaveAlternateScreen,
+        DisableMouseCapture,
+        DisableBracketedPaste
+    );
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -72,54 +85,55 @@ async fn main() -> anyhow::Result<()> {
     let log_path = base_dir.join("routecode.log");
 
     let log_level = if cli.debug { LevelFilter::Debug } else { LevelFilter::Info };
-    
+
     let loggers: Vec<Box<dyn SharedLogger>> = vec![
         WriteLogger::new(
             log_level,
-            ConfigBuilder::new().set_time_format_rfc3339().build(),
-            File::create(&log_path)?,
+            ConfigBuilder::default().set_time_format_rfc3339().build(),
+            std::fs::OpenOptions::new().create(true).append(true).open(&log_path)?,
         ),
     ];
 
-    // Only use TermLogger if we are NOT about to enter TUI mode immediately, 
-    // or if it's a headless run. But for now, let's just use it for the very beginning.
-    // Actually, simplelog doesn't support easy removal, so we'll just use WriteLogger
-    // and manual printlns for the very early stages if needed.
-    
     CombinedLogger::init(loggers)?;
 
     log::info!("Starting RouteCode v{}", env!("CARGO_PKG_VERSION"));
 
+    // Install panic hook to restore terminal on crash
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        restore_terminal();
+        original_hook(panic_info);
+    }));
+
     if cli.debug {
         log::debug!("Debug mode active. Spawning log window...");
-        // Spawn a new terminal window to tail the log file
-        #[cfg(target_os = "windows")]
-        {
-            if let Err(e) = Command::new("cmd")
-                .args(["/C", "start", "powershell", "-NoExit", "-Command", &format!("Get-Content -Path \"{}\" -Wait", log_path.display())])
-                .spawn()
+        let spawn_result = {
+            #[cfg(target_os = "windows")]
             {
-                log::warn!("Failed to spawn debug log window: {}", e);
+                Command::new("cmd")
+                    .args(["/C", "start", "powershell", "-NoExit", "-Command", &format!("Get-Content -Path \"{}\" -Wait", log_path.display())])
+                    .spawn()
+                    .map(|_| ())
             }
-        }
-        #[cfg(target_os = "macos")]
-        {
-            if let Err(e) = Command::new("osascript")
-                .args(["-e", &format!("tell application \"Terminal\" to do script \"tail -f '{}'\"", log_path.display())])
-                .spawn()
+            #[cfg(target_os = "macos")]
             {
-                log::warn!("Failed to spawn debug log window: {}", e);
+                Command::new("osascript")
+                    .args(["-e", &format!("tell application \"Terminal\" to do script \"tail -f '{}'\"", log_path.display())])
+                    .spawn()
+                    .map(|_| ())
             }
-        }
-        #[cfg(target_os = "linux")]
-        {
-            // Try common terminal emulators
-            if let Err(e) = Command::new("x-terminal-emulator")
-                .args(["-e", "tail", "-f", &log_path.display().to_string()])
-                .spawn()
+            #[cfg(not(any(target_os = "windows", target_os = "macos")))]
             {
-                log::warn!("Failed to spawn debug log window: {}", e);
+                Command::new("x-terminal-emulator")
+                    .args(["-e", "tail", "-f", &log_path.display().to_string()])
+                    .spawn()
+                    .map(|_| ())
             }
+        };
+        if let Err(e) = spawn_result {
+            let msg = format!("Warning: Failed to open debug log window: {}", e);
+            log::warn!("{}", msg);
+            eprintln!("{}", msg);
         }
     }
 
@@ -129,10 +143,35 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    if let Some(session_name) = &cli.export {
+        let session = routecode_sdk::utils::storage::load_session(session_name)
+            .map_err(|e| anyhow::anyhow!("Failed to load session '{}': {}", session_name, e))?;
+        let path = std::env::current_dir()?.join(format!("{}.routecode-session", session_name));
+        let json = serde_json::to_string_pretty(&session)?;
+        std::fs::write(&path, json)?;
+        println!("Session '{}' exported to {}", session_name, path.display());
+        return Ok(());
+    }
+
+    if let Some(path_str) = &cli.import {
+        let path = std::path::Path::new(path_str);
+        let json = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("Failed to read '{}': {}", path.display(), e))?;
+        let session: routecode_sdk::utils::storage::Session = serde_json::from_str(&json)?;
+        let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("imported");
+        routecode_sdk::utils::storage::save_session(name, &session)?;
+        if let Ok(mut config) = routecode_sdk::utils::storage::load_session_config(name) {
+            config.allow_all_commands = false;
+            config.allow_all_outside_access = false;
+            let _ = routecode_sdk::utils::storage::save_session_config(name, &config);
+        }
+        println!("Session imported as '{}'", name);
+        return Ok(());
+    }
+
     // Initialize logic
     let mut config = routecode_sdk::utils::storage::load_config().unwrap_or_default();
 
-    // Override from CLI
     if let Some(m) = &cli.model {
         config.model = m.clone();
     }
@@ -158,8 +197,16 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    // Choose provider
-    let provider = routecode_sdk::agents::resolve_provider(&provider_name, api_key);
+    let provider = if provider_name == "vertex" {
+        routecode_sdk::agents::resolve_provider_with_config(
+            &provider_name,
+            api_key,
+            &config.vertex_project,
+            &config.vertex_location,
+        )
+    } else {
+        routecode_sdk::agents::resolve_provider(&provider_name, api_key)
+    };
 
     let mut tool_registry = ToolRegistry::new();
     tool_registry.register(Arc::new(FileReadTool));
@@ -181,16 +228,39 @@ async fn main() -> anyhow::Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, Print("\x1b[?1003h\x1b[?1006h"), EnableBracketedPaste)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture, EnableBracketedPaste)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
     // Create app and run it
-    let mut app = App::new(orchestrator, config.provider.clone());
+    let mut app = App::new(orchestrator, config.provider.clone(), config.model.clone());
+
+    let tx = app.tx.clone();
+    let current_version = env!("CARGO_PKG_VERSION").to_string();
+    let mut config_clone = config.clone();
+    let update_handle = tokio::spawn(async move {
+        if routecode_sdk::update::should_check(config_clone.last_update_check, 24) {
+            match routecode_sdk::update::check_for_update(&current_version, "anasx07/routecode").await {
+                Ok(info) => {
+                    config_clone.last_update_check = routecode_sdk::update::now_timestamp();
+                    let _ = routecode_sdk::utils::storage::save_config(&config_clone);
+                    if info.is_update_available {
+                        let _ = tx.send(routecode_sdk::agents::types::StreamChunk::UpdateAvailable {
+                            version: info.version,
+                            changelog: info.changelog,
+                            published_at: info.published_at,
+                        });
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Update check failed: {}", e);
+                }
+            }
+        }
+    });
     app.current_model = config.model;
 
     if let Some(resume_name) = cli.resume {
-        // Automatically handle resume if specified
         match routecode_sdk::utils::storage::load_session(&resume_name) {
             Ok(session) => {
                 app.history = session.messages;
@@ -206,28 +276,91 @@ async fn main() -> anyhow::Result<()> {
             Err(e) => app.history.push(routecode_sdk::core::Message::system(format!("Failed to resume session '{}': {}", resume_name, e))),
         }
     }
-    
+
     if let Ok(workspace_config) = routecode_sdk::utils::storage::load_workspace_config() {
         if workspace_config.allow_all_outside_access {
             app.orchestrator.allow_session_outside_access.store(true, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
-    let res = run_app(&mut terminal, app).await;
+    // Signal handling: gracefully exit on SIGINT/SIGTERM
+    let (sig_tx, mut sig_rx) = tokio::sync::mpsc::channel(1);
+    tokio::spawn(async move {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix;
+            let mut term = unix::signal(unix::SignalKind::terminate()).ok();
+            let mut int = unix::signal(unix::SignalKind::interrupt()).ok();
+            tokio::select! {
+                _ = async { if let Some(ref mut s) = term { s.recv().await; } } => {}
+                _ = async { if let Some(ref mut s) = int { s.recv().await; } } => {}
+            }
+        }
+        #[cfg(windows)]
+        {
+            let _ = tokio::signal::ctrl_c().await;
+        }
+        let _ = sig_tx.try_send(());
+    });
+
+    let res = tokio::select! {
+        res = run_app(&mut terminal, app) => res,
+        _ = sig_rx.recv() => {
+            // Signal received, exit gracefully
+            Ok(false)
+        }
+    };
 
     // Restore terminal
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        Print("\x1b[?1003l\x1b[?1006l"),
+        DisableMouseCapture,
         DisableBracketedPaste
     )?;
     terminal.show_cursor()?;
 
-    if let Err(err) = res {
-        eprintln!("{:?}", err)
+    match res {
+        Ok(true) => {
+            println!("Starting update process...");
+            #[cfg(target_os = "windows")]
+            {
+                match std::process::Command::new("powershell")
+                    .args(["-NoProfile", "-Command", "irm https://raw.githubusercontent.com/anasx07/routecode/main/install.ps1 | iex"])
+                    .status()
+                {
+                    Ok(status) => {
+                        if !status.success() {
+                            eprintln!("Update command failed with exit code: {:?}", status.code());
+                        }
+                    }
+                    Err(e) => eprintln!("Failed to run update command: {}", e),
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                match std::process::Command::new("sh")
+                    .args(["-c", "curl -fsSL https://raw.githubusercontent.com/anasx07/routecode/main/install.sh | sh"])
+                    .status()
+                {
+                    Ok(status) => {
+                        if !status.success() {
+                            eprintln!("Update command failed with exit code: {:?}", status.code());
+                        }
+                    }
+                    Err(e) => eprintln!("Failed to run update command: {}", e),
+                }
+            }
+        }
+        Err(err) => {
+            eprintln!("{:?}", err);
+        }
+        _ => {}
     }
+
+    // Don't block shutdown on slow update checks — timeout after 1 second
+    tokio::time::timeout(std::time::Duration::from_secs(1), update_handle).await.ok();
 
     Ok(())
 }

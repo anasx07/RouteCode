@@ -47,6 +47,11 @@ pub enum StreamChunk {
         #[serde(skip)]
         tx: Option<Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<ConfirmationResponse>>>>>,
     },
+    UpdateAvailable {
+        version: String,
+        changelog: String,
+        published_at: String,
+    },
     Done,
 }
 

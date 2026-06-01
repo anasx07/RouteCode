@@ -27,6 +27,10 @@ pub struct Config {
     pub logo_animation: String,
     #[serde(default = "default_logo_animation_color")]
     pub logo_animation_color: String,
+    #[serde(default)]
+    pub vertex_project: String,
+    #[serde(default)]
+    pub vertex_location: String,
 }
 
 fn default_thinking_level() -> String {
@@ -55,6 +59,8 @@ impl Default for Config {
             thinking_level: "default".to_string(),
             logo_animation: "always".to_string(),
             logo_animation_color: "rainbow".to_string(),
+            vertex_project: String::new(),
+            vertex_location: "us-central1".to_string(),
         }
     }
 }
