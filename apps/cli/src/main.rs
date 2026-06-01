@@ -187,14 +187,7 @@ async fn main() -> anyhow::Result<()> {
 
     let api_key = match api_key {
         Some(key) => key,
-        None => {
-            if cli.debug {
-                "your-api-key-here".to_string()
-            } else {
-                anyhow::bail!("API Key for {} not found. Set {}_API_KEY environment variable or configure it in ~/.routecode/config.json", 
-                    provider_name, provider_name.to_uppercase());
-            }
-        }
+        None => "".to_string(),
     };
 
     let provider = if provider_name == "vertex" {
