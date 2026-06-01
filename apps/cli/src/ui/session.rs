@@ -35,20 +35,37 @@ pub fn ui_session(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
     if needs_rebuild && (throttle_ok || !app.is_generating) {
         app.render_dirty = false;
         app.last_cache_update = std::time::Instant::now();
-        let history = render_history(&app.history, is_collapsed, thinking_hovered, hovered_msg_idx, 0);
-        
-        // 1. Auto-scroll logic
+        let mut lines = Vec::new();
         let mut total_height: usize = 0;
+        let mut layout = Vec::new();
         let available_width = chunks[0].width.max(1) as usize;
-        for line in &history.lines {
-            let line_width: usize = line.spans.iter().map(|s| s.content.width()).sum();
-            let wrapped_height = if line_width == 0 { 1 } else { 
-                // Use a slightly smaller width for calculation to account for word wrapping
-                let calc_width = (available_width as f32 * 0.95).floor() as usize;
-                (line_width + calc_width - 1) / calc_width.max(1)
-            };
-            total_height += wrapped_height;
+        let calc_width = (available_width as f32 * 0.95).floor().max(1.0) as usize;
+
+        for (msg_idx, m) in app.history.iter().enumerate() {
+            let msg_slice = std::slice::from_ref(m);
+            let msg_text = render_history(msg_slice, is_collapsed, thinking_hovered, hovered_msg_idx, msg_idx);
+            
+            for line in msg_text.lines {
+                let line_width: usize = line.spans.iter().map(|s| s.content.width()).sum();
+                let wrapped_height = if line_width == 0 { 1 } else { 
+                    (line_width + calc_width - 1) / calc_width.max(1)
+                };
+                
+                let is_thinking = line.spans.iter().any(|span| {
+                    span.content.contains('\u{2502}') || span.content.contains('\u{2503}') || span.content.contains("Thinking...")
+                });
+
+                for _ in 0..wrapped_height {
+                    layout.push((msg_idx, is_thinking));
+                }
+                
+                total_height += wrapped_height;
+                lines.push(line);
+            }
         }
+        
+        let history = Text::from(lines);
+        app.cached_layout = layout;
         // Safety buffer
         total_height += 2;
 

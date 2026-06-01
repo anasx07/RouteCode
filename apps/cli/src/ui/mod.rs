@@ -180,6 +180,7 @@ pub struct App {
     pub cached_thinking_hovered: bool,
     pub cached_total_height: usize,
     pub cached_text: Option<ratatui::text::Text<'static>>,
+    pub cached_layout: Vec<(usize, bool)>,
     pub pending_command_confirmation: Option<(String, String, ConfirmationSender)>,
     pub inputting_command_feedback: bool,
     pub show_user_msg_modal: Option<usize>,
@@ -275,6 +276,7 @@ impl App {
             cached_thinking_hovered: false,
             cached_total_height: 0,
             cached_text: None,
+            cached_layout: Vec::new(),
             pending_command_confirmation: None,
             inputting_command_feedback: false,
             show_user_msg_modal: None,
@@ -378,27 +380,8 @@ pub fn compute_thinking_hover(app: &App, size: ratatui::layout::Rect) -> bool {
     // The absolute visual row including scroll
     let target_visual_row = viewport_row as usize + app.history_scroll as usize;
 
-    // Build the history text and compute wrapping to find which logical line the target row maps to
-    let is_collapsed = app.collapse_thinking && !app.temp_expand_thinking;
-    let history_text = render_history(&app.history, is_collapsed, app.thinking_hover_rendered, None, 0);
-    let available_width = size.width.max(1) as usize;
-    let calc_width = (available_width as f32 * 0.95).floor().max(1.0) as usize;
-
-    let mut cumulative_visual_row: usize = 0;
-    for line in &history_text.lines {
-        let line_width: usize = line.spans.iter().map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref())).sum();
-        let wrapped_height = if line_width == 0 { 1 } else {
-            line_width.div_ceil(calc_width)
-        };
-
-        // Check if target_visual_row falls within this logical line's visual rows
-        if target_visual_row >= cumulative_visual_row && target_visual_row < cumulative_visual_row + wrapped_height {
-            // Found the line - check if it's a thinking line
-            return line.spans.iter().any(|span| {
-                span.content.contains('\u{2502}') || span.content.contains('\u{2503}') || span.content.contains("Thinking...")
-            });
-        }
-        cumulative_visual_row += wrapped_height;
+    if let Some(&(_, is_thinking)) = app.cached_layout.get(target_visual_row) {
+        return is_thinking;
     }
     false
 }
@@ -421,29 +404,8 @@ pub fn compute_message_hover(app: &App, size: ratatui::layout::Rect) -> Option<u
     let viewport_row = mouse_row - 1;
     let target_visual_row = viewport_row as usize + app.history_scroll as usize;
 
-    let is_collapsed = app.collapse_thinking && !app.temp_expand_thinking;
-    let available_width = size.width.max(1) as usize;
-    let calc_width = (available_width as f32 * 0.95).floor().max(1.0) as usize;
-
-    let mut cumulative_visual_row: usize = 0;
-
-    for (msg_idx, m) in app.history.iter().enumerate() {
-        let msg_slice = std::slice::from_ref(m);
-        let msg_text = session::render_history(msg_slice, is_collapsed, app.thinking_hover_rendered, None, msg_idx);
-
-        let mut msg_height: usize = 0;
-        for line in &msg_text.lines {
-            let line_width: usize = line.spans.iter().map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref())).sum();
-            let wrapped_height = if line_width == 0 { 1 } else {
-                line_width.div_ceil(calc_width)
-            };
-            msg_height += wrapped_height;
-        }
-
-        if target_visual_row >= cumulative_visual_row && target_visual_row < cumulative_visual_row + msg_height {
-            return Some(msg_idx);
-        }
-        cumulative_visual_row += msg_height;
+    if let Some(&(msg_idx, _)) = app.cached_layout.get(target_visual_row) {
+        return Some(msg_idx);
     }
 
     None
@@ -889,6 +851,31 @@ async fn handle_key_event(
                         app.history.push(Message::system(format!("Queued: {}", input_text)));
                         app.input = TextArea::default();
                     } else {
+                        let provider_id = &app.current_provider_id;
+                        let env_key = format!("{}_API_KEY", provider_id.to_uppercase().replace("-", "_"));
+                        let mut api_key = std::env::var(&env_key).ok();
+                        if api_key.is_none() && provider_id.starts_with("cloudflare") {
+                            api_key = std::env::var("CLOUDFLARE_API_KEY").ok();
+                        }
+                        if api_key.is_none() {
+                            let config = app.orchestrator.config.lock().await;
+                            api_key = config.api_keys.get(provider_id).cloned();
+                        }
+                        
+                        let has_valid_key = api_key.map_or(false, |k| !k.trim().is_empty());
+                        
+                        if !has_valid_key && provider_id != "opencode-zen" && provider_id != "opencode-go" {
+                            app.history.push(Message::system(format!("No API key found for {}. Please enter it to continue.", provider_id)));
+                            app.show_provider_menu = true;
+                            if let Some(pos) = PROVIDERS.iter().position(|p| p.id == *provider_id) {
+                                app.menu_state.select(Some(pos));
+                            } else {
+                                app.menu_state.select(Some(0));
+                            }
+                            app.input = TextArea::default();
+                            return Ok(KeyEventResult::Continue);
+                        }
+
                         app.history.push(Message::user(input_text.clone()));
                         app.prompt_history.push(input_text.clone());
                         app.prompt_history.truncate(100);

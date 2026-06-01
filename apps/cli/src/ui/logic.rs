@@ -135,10 +135,18 @@ pub async fn handle_command(app: &mut App, input: &str) {
                     }
                     app.history.push(Message::system(format!("Session resumed: {}", name)));
                     app.screen = Screen::Session;
+                } else {
+                    app.history.push(Message::system(format!("Error: Session '{}' not found", name)));
                 }
+            } else {
+                app.history.push(Message::system("Usage: /resume <session_name>"));
             }
         }
         "/export" => {
+            if app.history.is_empty() {
+                app.history.push(Message::system("No messages to export in current session."));
+                return;
+            }
             let name = args.first().map(|s| s.to_string()).unwrap_or_else(|| app.session_id.clone());
             let session = routecode_sdk::utils::storage::Session {
                 messages: app.history.clone(),
