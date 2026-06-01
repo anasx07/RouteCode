@@ -13,10 +13,18 @@ use routecode_sdk::utils::storage::{
     find_project_root, get_base_dir
 };
 
+type PendingConfirmation = Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<ConfirmationResponse>>>>;
+
 // Define the Shared Application State
 pub struct AppState {
     pub orchestrator: Mutex<Option<Arc<AgentOrchestrator>>>,
-    pub pending_confirmation: Mutex<Option<Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<ConfirmationResponse>>>>>>,
+    pub pending_confirmation: Mutex<Option<PendingConfirmation>>,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AppState {
@@ -136,7 +144,14 @@ async fn init_engine(
     };
 
     // Resolve Provider Agent interface
-    let provider = routecode_sdk::agents::resolve_provider(&provider_name, api_key);
+    let provider = if provider_name == "vertex" {
+        routecode_sdk::agents::resolve_provider_with_config(
+            &provider_name, api_key,
+            &config.vertex_project, &config.vertex_location,
+        )
+    } else {
+        routecode_sdk::agents::resolve_provider(&provider_name, api_key)
+    };
 
     // Register Secure Tools into Registry
     let mut tool_registry = ToolRegistry::new();
@@ -244,7 +259,7 @@ async fn respond_confirmation(
             } else {
                 ConfirmationResponse::Deny
             };
-            
+
             let _ = tx.send(response);
             return Ok("Permission response sent to agent".to_string());
         }
@@ -253,11 +268,77 @@ async fn respond_confirmation(
     Err("No pending confirmation request found".to_string())
 }
 
+// 10. Check for updates
+#[tauri::command]
+async fn check_update(app: AppHandle) -> Result<String, String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let current_version = env!("CARGO_PKG_VERSION");
+    let updater = app.updater().map_err(|e| e.to_string())?;
+
+    match updater.check().await {
+        Ok(Some(update)) => {
+            let update_version = update.version.clone();
+            let body = update.body.clone().unwrap_or_default();
+            let date = update.date
+                .map(|d| d.to_string())
+                .unwrap_or_default();
+
+            let info = routecode_sdk::update::types::UpdateInfo {
+                version: update_version.clone(),
+                current_version: current_version.to_string(),
+                changelog: body,
+                download_url: String::new(),
+                checksum_url: String::new(),
+                published_at: date,
+                is_update_available: true,
+            };
+
+            serde_json::to_string(&info)
+                .map_err(|e| format!("Failed to serialize update info: {}", e))
+        }
+        Ok(None) => {
+            let info = routecode_sdk::update::types::UpdateInfo {
+                version: current_version.to_string(),
+                current_version: current_version.to_string(),
+                changelog: String::new(),
+                download_url: String::new(),
+                checksum_url: String::new(),
+                published_at: String::new(),
+                is_update_available: false,
+            };
+            serde_json::to_string(&info)
+                .map_err(|e| format!("Failed to serialize update info: {}", e))
+        }
+        Err(e) => Err(format!("Update check failed: {}", e)),
+    }
+}
+
+// 11. Download and install update
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Result<String, String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let updater = app.updater().map_err(|e| e.to_string())?;
+
+    match updater.check().await {
+        Ok(Some(update)) => {
+            match update.download_and_install(|_, _| {}, || {}).await {
+                Ok(()) => Ok("Update installed. Please restart the application.".to_string()),
+                Err(e) => Err(format!("Update installation failed: {}", e)),
+            }
+        }
+        Ok(None) => Err("No update available".to_string()),
+        Err(e) => Err(format!("Update check failed: {}", e)),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .manage(AppState::new()) // Register AppState in Tauri
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             init_engine,
             send_message,
@@ -267,7 +348,9 @@ pub fn run() {
             list_saved_sessions,
             load_saved_session,
             save_saved_session,
-            delete_session
+            delete_session,
+            check_update,
+            install_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

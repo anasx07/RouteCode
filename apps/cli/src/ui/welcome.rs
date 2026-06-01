@@ -26,8 +26,8 @@ pub fn ui_welcome(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
         .split(area);
 
     if logo_height > 0 {
-        let config_guard = app.orchestrator.config.try_lock();
-        let (animation_mode, animation_color) = if let Ok(ref config) = config_guard {
+        let config_guard = crate::ui::try_lock_config(app);
+        let (animation_mode, animation_color) = if let Some(ref config) = config_guard {
             (config.logo_animation.clone(), config.logo_animation_color.clone())
         } else {
             ("always".to_string(), "rainbow".to_string())
@@ -143,7 +143,7 @@ pub fn ui_welcome(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
     let tip_text = if app.is_generating {
         format!(" {} AI is working... ", frame)
     } else {
-        "ctrl+p help | esc exit".to_string()
+        "ctrl+p help | esc show exit prompt".to_string()
     };
     f.render_widget(Paragraph::new(tip_text).alignment(ratatui::layout::Alignment::Center).style(Style::default().fg(COLOR_SECONDARY).add_modifier(Modifier::DIM)), chunks[6]);
 

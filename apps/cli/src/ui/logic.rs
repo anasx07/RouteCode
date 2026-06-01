@@ -84,7 +84,14 @@ pub async fn handle_command(app: &mut App, input: &str) {
                     if api_key.is_none() && p_info.id.starts_with("cloudflare") { api_key = std::env::var("CLOUDFLARE_API_KEY").ok(); }
                     if let Some(key) = api_key {
                         let provider_id = p_info.id.to_string();
-                        let provider = routecode_sdk::agents::resolve_provider(&provider_id, key);
+                        let provider = if provider_id == "vertex" {
+                            routecode_sdk::agents::resolve_provider_with_config(
+                                &provider_id, key,
+                                &config.vertex_project, &config.vertex_location,
+                            )
+                        } else {
+                            routecode_sdk::agents::resolve_provider(&provider_id, key)
+                        };
                         set.spawn(async move {
                             match provider.list_models().await {
                                 Ok(models) => {
@@ -93,12 +100,19 @@ pub async fn handle_command(app: &mut App, input: &str) {
                                         .collect();
                                     Ok(dynamic_models)
                                 }
-                                Err(e) => Err(e),
+                                Err(e) => {
+                                    log::error!("Failed to list models for {}: {}", provider_id, e);
+                                    Err(e)
+                                },
                             }
                         });
                     }
                 }
-                while let Some(res) = set.join_next().await { if let Ok(Ok(models)) = res { let _ = tx.send(StreamChunk::Models { models }); } }
+                while let Some(res) = set.join_next().await {
+                    if let Ok(Ok(models)) = res {
+                        let _ = tx.send(StreamChunk::Models { models });
+                    }
+                }
                 let _ = tx.send(StreamChunk::ModelsDone);
             });
         }
@@ -124,6 +138,37 @@ pub async fn handle_command(app: &mut App, input: &str) {
                 }
             }
         }
+        "/export" => {
+            let name = args.first().map(|s| s.to_string()).unwrap_or_else(|| app.session_id.clone());
+            let session = routecode_sdk::utils::storage::Session {
+                messages: app.history.clone(),
+                model: app.current_model.clone(),
+                usage: app.orchestrator.usage.lock().await.clone(),
+                timestamp: chrono::Utc::now().timestamp(),
+            };
+            match routecode_sdk::utils::storage::save_session(&name, &session) {
+                Ok(_) => app.history.push(Message::system(format!("Session exported as '{}'", name))),
+                Err(e) => app.history.push(Message::system(format!("Export failed: {}", e))),
+            }
+        }
+        "/import" => {
+            if let Some(path) = args.first() {
+                match routecode_sdk::utils::storage::load_session(path) {
+                    Ok(session) => {
+                        app.history = session.messages;
+                        app.current_model = session.model;
+                        let mut u = app.orchestrator.usage.lock().await;
+                        *u = session.usage;
+                        app.session_id = path.to_string();
+                        app.screen = Screen::Session;
+                        app.history.push(Message::system(format!("Session imported from '{}'", path)));
+                    }
+                    Err(e) => app.history.push(Message::system(format!("Import failed: {}", e))),
+                }
+            } else {
+                app.history.push(Message::system("Usage: /import <path>"));
+            }
+        }
         "/sessions" => {
             if let Ok(sessions) = routecode_sdk::utils::storage::list_sessions() {
                 if sessions.is_empty() { app.history.push(Message::system("No saved sessions found.")); }
@@ -135,14 +180,14 @@ pub async fn handle_command(app: &mut App, input: &str) {
         }
         "/stop" => {
             if app.is_generating {
-                if let Some(handle) = app.current_task.take() { handle.abort(); }
+                app.tasks.abort_all();
                 app.is_generating = false;
                 app.active_tool = None;
                 app.history.push(Message::system("Generation cancelled."));
             }
         }
         "/help" => {
-            app.history.push(Message::system("Available commands:\n  /model           - Select model\n  /thinking <lvl>  - Set level (low/max)\n  /provider        - Manage connections\n  /settings        - Manage settings\n  /resume <name>   - Resume session\n  /sessions        - List sessions\n  /clear           - Clear history\n  /help            - Show help\n  /exit            - Use Esc to exit"));
+            app.history.push(Message::system("Available commands:\n  /model           - Select model\n  /thinking <lvl>  - Set level (low/max)\n  /provider        - Manage connections\n  /settings        - Manage settings\n  /plan            - Read-only (auto-deny tools)\n  /export <name>   - Export session to JSON\n  /import <path>   - Import session from JSON\n  /resume <name>   - Resume a saved session\n  /sessions        - List saved sessions\n  /clear           - Clear history\n  /stop            - Stop AI generation\n  /help            - Show help\n  /exit            - Show exit prompt\n\nMode cycling: Shift+Tab cycles Normal → Plan → YOLO → Shell\n  Plan: auto-denies all tool calls (read-only review)\n  YOLO: auto-approves all tool calls\n  Shell: auto-approves and shows shell commands first"));
         }
         "/thinking" => {
             if let Some(level) = args.first() {
@@ -151,7 +196,9 @@ pub async fn handle_command(app: &mut App, input: &str) {
                 if valid.contains(&level.as_str()) {
                     let mut config = app.orchestrator.config.lock().await;
                     config.thinking_level = level.clone();
-                    let _ = routecode_sdk::utils::storage::save_config(&config);
+                    if let Err(e) = routecode_sdk::utils::storage::save_config(&config) {
+    log::error!("Failed to save config: {}", e);
+}
                     app.history.push(Message::system(format!("Thinking level set to: {}", level)));
                 } else { app.history.push(Message::system(format!("Invalid level. Valid: {}", valid.join(", ")))); }
             } else {

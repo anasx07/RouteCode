@@ -7,6 +7,7 @@ pub mod openrouter;
 pub mod traits;
 pub mod types;
 pub mod utils;
+pub mod vertex;
 
 pub use anthropic::AnthropicProvider;
 pub use cloudflare::{CloudflareAIGateway, CloudflareWorkersAI};
@@ -16,8 +17,18 @@ pub use openai::OpenAIProvider;
 pub use openrouter::OpenRouter;
 pub use traits::AIProvider;
 pub use types::{StreamChunk, Usage};
+pub use vertex::VertexAIProvider;
 
 pub fn resolve_provider(provider_name: &str, api_key: String) -> std::sync::Arc<dyn AIProvider> {
+    resolve_provider_with_config(provider_name, api_key, "", "")
+}
+
+pub fn resolve_provider_with_config(
+    provider_name: &str,
+    api_key: String,
+    vertex_project: &str,
+    vertex_location: &str,
+) -> std::sync::Arc<dyn AIProvider> {
     match provider_name.to_lowercase().as_str() {
         "openrouter" => std::sync::Arc::new(OpenRouter::new(api_key)),
         "anthropic" => std::sync::Arc::new(AnthropicProvider::new(api_key)),
@@ -69,6 +80,11 @@ pub fn resolve_provider(provider_name: &str, api_key: String) -> std::sync::Arc<
             api_key,
             "https://api.openai.com/v1".to_string(),
             "OpenAI".to_string(),
+        )),
+        "vertex" => std::sync::Arc::new(VertexAIProvider::new(
+            api_key,
+            vertex_project.to_string(),
+            vertex_location.to_string(),
         )),
         _ => {
             if provider_name.starts_with("http") {

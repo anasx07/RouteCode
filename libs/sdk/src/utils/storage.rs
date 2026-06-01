@@ -14,7 +14,7 @@ pub struct Session {
     pub timestamp: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SessionConfig {
     #[serde(default)]
     pub allow_all_commands: bool,
@@ -24,31 +24,12 @@ pub struct SessionConfig {
     pub allow_all_outside_access: bool,
 }
 
-impl Default for SessionConfig {
-    fn default() -> Self {
-        Self {
-            allow_all_commands: false,
-            allowed_commands: Vec::new(),
-            allow_all_outside_access: false,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorkspaceConfig {
     #[serde(default)]
     pub allow_all_outside_access: bool,
     #[serde(default)]
     pub allowed_outside_paths: Vec<String>,
-}
-
-impl Default for WorkspaceConfig {
-    fn default() -> Self {
-        Self {
-            allow_all_outside_access: false,
-            allowed_outside_paths: Vec::new(),
-        }
-    }
 }
 
 pub fn load_workspace_config() -> anyhow::Result<WorkspaceConfig> {

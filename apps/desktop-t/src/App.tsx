@@ -13,6 +13,7 @@ import SettingsModal from "./components/SettingsModal";
 import ConfirmationModal from "./components/ConfirmationModal";
 import ChatArea from "./components/ChatArea";
 import ChatInput from "./components/ChatInput";
+import UpdateModal from "./components/UpdateModal";
 
 interface Message {
   id: string;
@@ -63,6 +64,11 @@ export default function App() {
   const [inputValue, setInputValue] = useState<string>("");
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
+
+  const [showUpdateModal, setShowUpdateModal] = useState<boolean>(false);
+  const [updateInfo, setUpdateInfo] = useState<any>(null);
+  const [isInstalling, setIsInstalling] = useState<boolean>(false);
+  const [installComplete, setInstallComplete] = useState<boolean>(false);
 
   const [expandedThoughts, setExpandedThoughts] = useState<Record<string, boolean>>({
     welcome: true
@@ -121,6 +127,24 @@ export default function App() {
     } else {
       // Mock sessions for Web preview
       setSessions(["default_session", "code_refactor_sandbox", "dependency_hardening"]);
+    }
+  }, [isTauri]);
+
+  useEffect(() => {
+    if (isTauri) {
+      const timer = setTimeout(() => {
+        invoke("check_update")
+          .then((result: any) => {
+            const info = typeof result === "string" ? JSON.parse(result) : result;
+            if (info && info.is_update_available) {
+              setUpdateInfo(info);
+              setShowUpdateModal(true);
+            }
+          })
+          .catch(err => console.error("Update check failed:", err));
+      }, 5000);
+
+      return () => clearTimeout(timer);
     }
   }, [isTauri]);
 
@@ -523,6 +547,24 @@ export default function App() {
     }
   };
 
+  const handleInstallUpdate = () => {
+    setIsInstalling(true);
+    invoke("install_update")
+      .then(() => {
+        setIsInstalling(false);
+        setInstallComplete(true);
+      })
+      .catch(err => {
+        console.error("Install error:", err);
+        setIsInstalling(false);
+        alert("Update installation failed: " + err);
+      });
+  };
+
+  const handleCloseUpdate = () => {
+    setShowUpdateModal(false);
+  };
+
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#030407] text-[#e2e8f0] font-sans">
       
@@ -622,6 +664,15 @@ export default function App() {
           onChangeModel={setActiveModel}
           onChangeApiKeys={setApiKeys}
           onSave={handleSaveSettings}
+        />
+
+        <UpdateModal
+          isOpen={showUpdateModal}
+          updateInfo={updateInfo}
+          onClose={handleCloseUpdate}
+          onInstall={handleInstallUpdate}
+          isInstalling={isInstalling}
+          installComplete={installComplete}
         />
       </main>
     </div>

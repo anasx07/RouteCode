@@ -1,16 +1,18 @@
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, MouseEventKind, MouseButton};
 use ratatui::{
     layout::{Constraint, Direction, Layout},
-    style::{Modifier, Style},
-    text::Span,
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, ListState, Paragraph},
     Frame, Terminal,
 };
+use routecode_sdk::agents::types::ConfirmationResponse;
 use routecode_sdk::agents::StreamChunk;
 use routecode_sdk::core::{AgentOrchestrator, Message, Role, DynamicModelInfo};
 use routecode_sdk::utils::costs::Usage;
 use std::io;
 use std::sync::Arc;
+use tokio::task::JoinSet;
 use tui_textarea::TextArea;
 
 pub mod components;
@@ -24,6 +26,8 @@ pub use logic::*;
 pub use menus::*;
 pub use session::*;
 pub use welcome::*;
+
+type ConfirmationSender = std::sync::Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<routecode_sdk::agents::types::ConfirmationResponse>>>>;
 
 pub struct ProviderInfo {
     pub id: &'static str,
@@ -41,6 +45,7 @@ pub const PROVIDERS: &[ProviderInfo] = &[
     ProviderInfo { id: "deepseek", name: "DeepSeek" },
     ProviderInfo { id: "cloudflare-workers", name: "Cloudflare Workers AI" },
     ProviderInfo { id: "cloudflare-gateway", name: "Cloudflare AI Gateway" },
+    ProviderInfo { id: "vertex", name: "Google Vertex AI" },
 ];
 
 #[derive(Clone, Debug)]
@@ -67,6 +72,35 @@ pub const COMMANDS: &[Command] = &[
     Command { name: "/exit", description: "Exit application" },
 ];
 
+#[derive(Debug, PartialEq, Clone, Copy)]
+#[allow(clippy::upper_case_acronyms)]
+pub enum ApprovalMode {
+    Normal,
+    Plan,
+    YOLO,
+    Shell,
+}
+
+impl ApprovalMode {
+    pub fn next(&self) -> Self {
+        match self {
+            ApprovalMode::Normal => ApprovalMode::Plan,
+            ApprovalMode::Plan => ApprovalMode::YOLO,
+            ApprovalMode::YOLO => ApprovalMode::Shell,
+            ApprovalMode::Shell => ApprovalMode::Normal,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            ApprovalMode::Normal => "NORMAL",
+            ApprovalMode::Plan => "PLAN",
+            ApprovalMode::YOLO => "YOLO",
+            ApprovalMode::Shell => "SHELL",
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum Screen {
     Welcome,
@@ -77,6 +111,8 @@ pub enum Screen {
 pub enum ApiKeyInputStage {
     None,
     ApiKey,
+    VertexProject,
+    VertexLocation,
     CloudflareAccountId,
     CloudflareGatewayId,
     CloudflareApiKey,
@@ -110,7 +146,7 @@ pub struct App {
     pub is_generating: bool,
     pub tick_count: u64,
     pub active_tool: Option<String>,
-    pub current_task: Option<tokio::task::JoinHandle<()>>,
+    pub tasks: JoinSet<()>,
     pub prompt_history: Vec<String>,
     pub prompt_history_index: Option<usize>,
     pub api_key_input: TextArea<'static>,
@@ -139,22 +175,34 @@ pub struct App {
     pub thinking_hover_rendered: bool,
     pub usage: Usage,
     pub cached_history_len: usize,
-    pub cached_last_msg_len: usize,
     pub cached_width: u16,
     pub cached_is_collapsed: bool,
     pub cached_thinking_hovered: bool,
     pub cached_total_height: usize,
     pub cached_text: Option<ratatui::text::Text<'static>>,
-    pub pending_command_confirmation: Option<(String, String, std::sync::Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<routecode_sdk::agents::types::ConfirmationResponse>>>>)>,
+    pub pending_command_confirmation: Option<(String, String, ConfirmationSender)>,
     pub inputting_command_feedback: bool,
     pub show_user_msg_modal: Option<usize>,
     pub user_msg_modal_selected: usize,
     pub cached_hovered_msg_idx: Option<usize>,
     pub session_id: String,
+    pub pending_update: Option<String>,
+    pub pending_update_changelog: String,
+    pub pending_update_published_at: String,
+    pub update_modal_selected: usize,
+    pub pending_update_install: bool,
+    pub render_dirty: bool,
+    pub last_cache_update: std::time::Instant,
+    pub approval_mode: ApprovalMode,
+    pub startup_input_buffer: Vec<String>,
+    pub startup_ready: bool,
+    pub hide_cwd: bool,
+    pub hide_model_info: bool,
+    pub hide_context_summary: bool,
 }
 
 impl App {
-    pub fn new(orchestrator: Arc<AgentOrchestrator>, provider_name: String) -> Self {
+    pub fn new(orchestrator: Arc<AgentOrchestrator>, provider_name: String, default_model: String) -> Self {
         let mut input = TextArea::default();
         input.set_cursor_line_style(Style::default());
         input.set_placeholder_style(Style::default().fg(COLOR_SECONDARY));
@@ -176,7 +224,7 @@ impl App {
             input,
             history: Vec::new(),
             orchestrator,
-            current_model: "gpt-4o".to_string(),
+            current_model: default_model,
             current_provider_id: provider_name.clone(),
             provider_name,
             show_menu: false,
@@ -194,7 +242,7 @@ impl App {
             is_generating: false,
             tick_count: 0,
             active_tool: None,
-            current_task: None,
+            tasks: JoinSet::new(),
             prompt_history: Vec::new(),
             prompt_history_index: None,
             api_key_input,
@@ -222,7 +270,6 @@ impl App {
             last_toggle_time: None,
             thinking_hover_rendered: false,
             cached_history_len: 0,
-            cached_last_msg_len: 0,
             cached_width: 0,
             cached_is_collapsed: false,
             cached_thinking_hovered: false,
@@ -233,7 +280,20 @@ impl App {
             show_user_msg_modal: None,
             user_msg_modal_selected: 0,
             cached_hovered_msg_idx: None,
-            session_id: format!("session_{}", chrono::Utc::now().format("%Y%m%d_%H%M%S")),
+            session_id: format!("session_{}", uuid::Uuid::new_v4()),
+            pending_update: None,
+            pending_update_changelog: String::new(),
+            pending_update_published_at: String::new(),
+            update_modal_selected: 1,
+            pending_update_install: false,
+            render_dirty: true,
+            last_cache_update: std::time::Instant::now(),
+            approval_mode: ApprovalMode::Normal,
+            startup_input_buffer: Vec::new(),
+            startup_ready: false,
+            hide_cwd: false,
+            hide_model_info: false,
+            hide_context_summary: false,
         }
     }
 
@@ -251,11 +311,27 @@ impl App {
                 val: config.logo_animation_color.clone(),
                 key: "logo_animation_color".to_string(),
             },
+            SettingsMenuItem::Header("Footer".to_string()),
+            SettingsMenuItem::Option {
+                name: "Show Model Info".to_string(),
+                val: if self.hide_model_info { "hide" } else { "show" }.to_string(),
+                key: "hide_model_info".to_string(),
+            },
+            SettingsMenuItem::Option {
+                name: "Show Context Summary".to_string(),
+                val: if self.hide_context_summary { "hide" } else { "show" }.to_string(),
+                key: "hide_context_summary".to_string(),
+            },
+            SettingsMenuItem::Option {
+                name: "Show Directory".to_string(),
+                val: if self.hide_cwd { "hide" } else { "show" }.to_string(),
+                key: "hide_cwd".to_string(),
+            },
         ];
     }
 
     pub fn update_filtered_commands(&mut self) {
-        let input_line = self.input.lines()[0].to_lowercase();
+        let input_line = self.input.lines().first().map(|l| l.to_lowercase()).unwrap_or_default();
         if input_line.starts_with('/') {
             self.filtered_commands = COMMANDS
                 .iter()
@@ -293,7 +369,7 @@ pub fn compute_thinking_hover(app: &App, size: ratatui::layout::Rect) -> bool {
     let history_height = area_height.saturating_sub(input_height).saturating_sub(1);
 
     // Check mouse is in history area (row 1 to 1+history_height exclusive)
-    if mouse_row < 1 || mouse_row >= 1 + history_height {
+    if mouse_row < 1 || mouse_row > history_height {
         return false;
     }
 
@@ -312,7 +388,7 @@ pub fn compute_thinking_hover(app: &App, size: ratatui::layout::Rect) -> bool {
     for line in &history_text.lines {
         let line_width: usize = line.spans.iter().map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref())).sum();
         let wrapped_height = if line_width == 0 { 1 } else {
-            (line_width + calc_width - 1) / calc_width
+            line_width.div_ceil(calc_width)
         };
 
         // Check if target_visual_row falls within this logical line's visual rows
@@ -329,10 +405,7 @@ pub fn compute_thinking_hover(app: &App, size: ratatui::layout::Rect) -> bool {
 
 /// Compute which message is hovered by the mouse.
 pub fn compute_message_hover(app: &App, size: ratatui::layout::Rect) -> Option<usize> {
-    let mouse_row = match app.mouse_row {
-        Some(r) => r,
-        None => return None,
-    };
+    let mouse_row = app.mouse_row?;
     if app.screen != Screen::Session {
         return None;
     }
@@ -341,7 +414,7 @@ pub fn compute_message_hover(app: &App, size: ratatui::layout::Rect) -> Option<u
     let area_height = size.height.saturating_sub(1);
     let history_height = area_height.saturating_sub(input_height).saturating_sub(1);
 
-    if mouse_row < 1 || mouse_row >= 1 + history_height {
+    if mouse_row < 1 || mouse_row > history_height {
         return None;
     }
 
@@ -362,7 +435,7 @@ pub fn compute_message_hover(app: &App, size: ratatui::layout::Rect) -> Option<u
         for line in &msg_text.lines {
             let line_width: usize = line.spans.iter().map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref())).sum();
             let wrapped_height = if line_width == 0 { 1 } else {
-                (line_width + calc_width - 1) / calc_width
+                line_width.div_ceil(calc_width)
             };
             msg_height += wrapped_height;
         }
@@ -387,6 +460,29 @@ async fn handle_key_event(
     key: event::KeyEvent,
     is_burst: bool,
 ) -> io::Result<KeyEventResult> {
+    if app.pending_update.is_some() {
+        match key.code {
+            KeyCode::Right | KeyCode::Char('l') | KeyCode::Tab => {
+                app.update_modal_selected = if app.update_modal_selected == 0 { 1 } else { 0 };
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                app.update_modal_selected = if app.update_modal_selected == 1 { 0 } else { 1 };
+            }
+            KeyCode::Enter => {
+                if app.update_modal_selected == 1 {
+                    app.pending_update_install = true;
+                    return Ok(KeyEventResult::Exit);
+                } else {
+                    app.pending_update = None;
+                }
+            }
+            KeyCode::Esc => {
+                app.pending_update = None;
+            }
+            _ => {}
+        }
+        return Ok(KeyEventResult::Continue);
+    }
     if let Some(msg_idx) = app.show_user_msg_modal {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
@@ -398,7 +494,12 @@ async fn handle_key_event(
             KeyCode::Enter => {
                 let text = app.history[msg_idx].content.as_ref().map(|s| s.to_string()).unwrap_or_default();
                 if app.user_msg_modal_selected == 0 {
-                    let _ = copy_to_clipboard(&text);
+                    let text_clone = text.clone();
+                    tokio::task::spawn_blocking(move || {
+                        if let Err(e) = copy_to_clipboard(&text_clone) {
+                            log::error!("Clipboard copy failed: {}", e);
+                        }
+                    });
                     app.history.push(Message::system("Message copied to clipboard!".to_string()));
                 } else {
                     app.history.truncate(msg_idx);
@@ -439,12 +540,10 @@ async fn handle_key_event(
                         let msg = lines.join("\n").trim().to_string();
                         let feedback = if msg.is_empty() { "Command cancelled.".to_string() } else { msg };
                         
-                        tokio::spawn(async move {
-                            let mut tx_opt = tx_mutex.lock().await;
-                            if let Some(tx) = tx_opt.take() {
-                                let _ = tx.send(routecode_sdk::agents::types::ConfirmationResponse::Feedback(feedback));
-                            }
-                        });
+                        let mut tx_opt = tx_mutex.lock().await;
+                        if let Some(tx) = tx_opt.take() {
+                            let _ = tx.send(routecode_sdk::agents::types::ConfirmationResponse::Feedback(feedback));
+                        }
                     }
                     app.inputting_command_feedback = false;
                 }
@@ -456,12 +555,10 @@ async fn handle_key_event(
             match key.code {
                 KeyCode::Char('y') | KeyCode::Char('Y') => {
                     if let Some((_, _, tx_mutex)) = app.pending_command_confirmation.take() {
-                        tokio::spawn(async move {
-                            let mut tx_opt = tx_mutex.lock().await;
-                            if let Some(tx) = tx_opt.take() {
-                                let _ = tx.send(routecode_sdk::agents::types::ConfirmationResponse::AllowOnce);
-                            }
-                        });
+                        let mut tx_opt = tx_mutex.lock().await;
+                        if let Some(tx) = tx_opt.take() {
+                            let _ = tx.send(routecode_sdk::agents::types::ConfirmationResponse::AllowOnce);
+                        }
                     }
                 }
                 KeyCode::Char('s') | KeyCode::Char('S') => {
@@ -470,12 +567,10 @@ async fn handle_key_event(
                     let _ = routecode_sdk::utils::storage::save_session_config(&app.session_id, &config);
                     
                     if let Some((_, _, tx_mutex)) = app.pending_command_confirmation.take() {
-                        tokio::spawn(async move {
-                            let mut tx_opt = tx_mutex.lock().await;
-                            if let Some(tx) = tx_opt.take() {
-                                let _ = tx.send(routecode_sdk::agents::types::ConfirmationResponse::AllowSession);
-                            }
-                        });
+                        let mut tx_opt = tx_mutex.lock().await;
+                        if let Some(tx) = tx_opt.take() {
+                            let _ = tx.send(routecode_sdk::agents::types::ConfirmationResponse::AllowSession);
+                        }
                     }
                 }
                 KeyCode::Char('w') | KeyCode::Char('W') => {
@@ -484,22 +579,18 @@ async fn handle_key_event(
                     let _ = routecode_sdk::utils::storage::save_workspace_config(&config);
                     
                     if let Some((_, _, tx_mutex)) = app.pending_command_confirmation.take() {
-                        tokio::spawn(async move {
-                            let mut tx_opt = tx_mutex.lock().await;
-                            if let Some(tx) = tx_opt.take() {
-                                let _ = tx.send(routecode_sdk::agents::types::ConfirmationResponse::AllowWorkspace);
-                            }
-                        });
+                        let mut tx_opt = tx_mutex.lock().await;
+                        if let Some(tx) = tx_opt.take() {
+                            let _ = tx.send(routecode_sdk::agents::types::ConfirmationResponse::AllowWorkspace);
+                        }
                     }
                 }
                 KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Esc => {
                     if let Some((_, _, tx_mutex)) = app.pending_command_confirmation.take() {
-                        tokio::spawn(async move {
-                            let mut tx_opt = tx_mutex.lock().await;
-                            if let Some(tx) = tx_opt.take() {
-                                let _ = tx.send(routecode_sdk::agents::types::ConfirmationResponse::Deny);
-                            }
-                        });
+                        let mut tx_opt = tx_mutex.lock().await;
+                        if let Some(tx) = tx_opt.take() {
+                            let _ = tx.send(routecode_sdk::agents::types::ConfirmationResponse::Deny);
+                        }
                     }
                 }
                 KeyCode::Char('f') | KeyCode::Char('F') => {
@@ -530,6 +621,9 @@ async fn handle_key_event(
     if app.pending_exit {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                app.tasks.abort_all();
+                app.is_generating = false;
+                app.active_tool = None;
                 if !app.history.is_empty() {
                     let session = routecode_sdk::utils::storage::Session {
                         messages: app.history.clone(),
@@ -561,7 +655,7 @@ async fn handle_key_event(
         }
         KeyCode::Char('c') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
             if app.is_generating {
-                if let Some(handle) = app.current_task.take() { handle.abort(); }
+                app.tasks.abort_all();
                 app.is_generating = false;
                 app.active_tool = None;
             }
@@ -589,165 +683,231 @@ async fn handle_key_event(
 
             if !should_send {
                 app.input.insert_newline();
-            } else {
-                if app.show_menu {
-                    if let Some(selected) = app.menu_state.selected() {
-                        if let Some(cmd) = app.filtered_commands.get(selected) {
-                            let name = cmd.name.to_string();
-                            app.show_menu = false;
-                            app.input = TextArea::default();
-                            handle_command(app, &name).await;
+            } else if app.show_menu {
+                if let Some(selected) = app.menu_state.selected() {
+                    if let Some(cmd) = app.filtered_commands.get(selected) {
+                        let name = cmd.name.to_string();
+                        app.show_menu = false;
+                        app.input = TextArea::default();
+                        handle_command(app, &name).await;
+                    }
+                }
+            } else if app.show_provider_menu {
+                if let Some(selected) = app.menu_state.selected() {
+                    if let Some(p) = PROVIDERS.get(selected) {
+                        app.pending_provider_id = Some(p.id.to_string());
+                        app.is_inputting_api_key = true;
+                        app.api_key_input = TextArea::default();
+                        app.show_provider_menu = false;
+                        if p.id == "cloudflare-workers" || p.id == "cloudflare-gateway" {
+                            app.api_key_input_stage = ApiKeyInputStage::CloudflareAccountId;
+                        } else {
+                            app.api_key_input_stage = ApiKeyInputStage::ApiKey;
                         }
                     }
-                } else if app.show_provider_menu {
-                    if let Some(selected) = app.menu_state.selected() {
-                        if let Some(p) = PROVIDERS.get(selected) {
-                            app.pending_provider_id = Some(p.id.to_string());
-                            app.is_inputting_api_key = true;
-                            app.api_key_input = TextArea::default();
-                            app.show_provider_menu = false;
-                            if p.id == "cloudflare-workers" || p.id == "cloudflare-gateway" {
-                                app.api_key_input_stage = ApiKeyInputStage::CloudflareAccountId;
-                            } else {
-                                app.api_key_input_stage = ApiKeyInputStage::ApiKey;
-                            }
-                        }
-                    }
-                } else if app.show_settings_menu {
-                    if let Some(selected) = app.menu_state.selected() {
-                        if let Some(SettingsMenuItem::Option { key, val, .. }) = app.settings_items.get(selected) {
-                            if key == "logo_animation" {
-                                let next_val = match val.as_str() {
+                }
+            } else if app.show_settings_menu {
+                if let Some(selected) = app.menu_state.selected() {
+                    if let Some(SettingsMenuItem::Option { key, val: _, .. }) = app.settings_items.get(selected) {
+                        if key == "logo_animation" {
+                            let next_val = {
+                                let config = app.orchestrator.config.lock().await;
+                                match config.logo_animation.as_str() {
                                     "always" => "hover",
                                     "hover" => "click",
                                     _ => "always",
-                                };
+                                }
+                            };
+                            {
                                 let mut config = app.orchestrator.config.lock().await;
                                 config.logo_animation = next_val.to_string();
-                                let _ = routecode_sdk::utils::storage::save_config(&config);
-                                drop(config);
-                                app.populate_settings().await;
-                            } else if key == "logo_animation_color" {
-                                let next_val = match val.as_str() {
+                                if let Err(e) = routecode_sdk::utils::storage::save_config(&config) {
+    log::error!("Failed to save config: {}", e);
+}
+                            }
+                            app.populate_settings().await;
+                        } else if key == "logo_animation_color" {
+                            let next_val = {
+                                let config = app.orchestrator.config.lock().await;
+                                match config.logo_animation_color.as_str() {
                                     "rainbow" => "neon",
                                     "neon" => "cyberpunk",
                                     "cyberpunk" => "sunset",
                                     "sunset" => "mono",
                                     _ => "rainbow",
-                                };
+                                }
+                            };
+                            {
                                 let mut config = app.orchestrator.config.lock().await;
                                 config.logo_animation_color = next_val.to_string();
-                                let _ = routecode_sdk::utils::storage::save_config(&config);
+                                if let Err(e) = routecode_sdk::utils::storage::save_config(&config) {
+    log::error!("Failed to save config: {}", e);
+}
+                            }
+                            app.populate_settings().await;
+                        } else if key == "hide_cwd" {
+                            app.hide_cwd = !app.hide_cwd;
+                            app.populate_settings().await;
+                        } else if key == "hide_model_info" {
+                            app.hide_model_info = !app.hide_model_info;
+                            app.populate_settings().await;
+                        } else if key == "hide_context_summary" {
+                            app.hide_context_summary = !app.hide_context_summary;
+                            app.populate_settings().await;
+                        }
+                    }
+                }
+            } else if app.show_model_menu {
+                if let Some(selected) = app.menu_state.selected() {
+                    if let Some(ModelMenuItem::Model(model_info)) = app.filtered_models.get(selected) {
+                        let model_info = model_info.clone();
+                        let provider_id = &model_info.provider_id;
+                        let model_name = &model_info.name;
+                        let mut config = app.orchestrator.config.lock().await;
+                        let env_key = format!("{}_API_KEY", provider_id.to_uppercase().replace("-", "_"));
+                        let api_key = std::env::var(env_key).ok().or_else(|| config.api_keys.get(provider_id).cloned());
+                        if let Some(key) = api_key {
+                            config.model = model_name.clone();
+                            config.provider = provider_id.clone();
+                            config.recent_models.retain(|m| m.name != *model_name || m.provider_id != *provider_id);
+                            config.recent_models.insert(0, model_info.clone());
+                            config.recent_models.truncate(3);
+                            if let Err(e) = routecode_sdk::utils::storage::save_config(&config) {
+    log::error!("Failed to save config: {}", e);
+}
+                            if app.provider_name.to_lowercase() != *provider_id {
+                                let vertex_project = config.vertex_project.clone();
+                                let vertex_location = config.vertex_location.clone();
                                 drop(config);
-                                app.populate_settings().await;
-                            }
-                        }
-                    }
-                } else if app.show_model_menu {
-                    if let Some(selected) = app.menu_state.selected() {
-                        match app.filtered_models.get(selected) {
-                            Some(ModelMenuItem::Model(model_info)) => {
-                                let model_info = model_info.clone();
-                                let provider_id = &model_info.provider_id;
-                                let model_name = &model_info.name;
-                                let mut config = app.orchestrator.config.lock().await;
-                                let env_key = format!("{}_API_KEY", provider_id.to_uppercase().replace("-", "_"));
-                                let api_key = std::env::var(env_key).ok().or_else(|| config.api_keys.get(provider_id).cloned());
-                                if let Some(key) = api_key {
-                                    config.model = model_name.clone();
-                                    config.provider = provider_id.clone();
-                                    config.recent_models.retain(|m| m.name != *model_name || m.provider_id != *provider_id);
-                                    config.recent_models.insert(0, model_info.clone());
-                                    config.recent_models.truncate(3);
-                                    let _ = routecode_sdk::utils::storage::save_config(&config);
-                                    if app.provider_name.to_lowercase() != *provider_id {
-                                        let provider = routecode_sdk::agents::resolve_provider(provider_id, key);
-                                        app.provider_name = provider.name().to_string();
-                                        app.current_provider_id = provider_id.clone();
-                                        drop(config);
-                                        app.orchestrator.change_provider(provider).await;
-                                    } else { drop(config); }
-                                    app.current_model = model_name.clone();
-                                    app.history.push(Message::system(format!("Switched to {} on {}", model_name, app.provider_name)));
-                                    app.show_model_menu = false;
+                                let provider = if provider_id == "vertex" {
+                                    routecode_sdk::agents::resolve_provider_with_config(provider_id, key, &vertex_project, &vertex_location)
                                 } else {
-                                    app.history.push(Message::system(format!("Error: No API key for {}", provider_id)));
-                                }
-                            }
-                            _ => {}
+                                    routecode_sdk::agents::resolve_provider(provider_id, key)
+                                };
+                                app.provider_name = provider.name().to_string();
+                                app.current_provider_id = provider_id.clone();
+                                app.orchestrator.change_provider(provider).await;
+                            } else { drop(config); }
+                            app.current_model = model_name.clone();
+                            app.history.push(Message::system(format!("Switched to {} on {}", model_name, app.provider_name)));
+                            app.show_model_menu = false;
+                        } else {
+                            app.history.push(Message::system(format!("Error: No API key for {}", provider_id)));
                         }
                     }
-                } else if app.is_inputting_api_key {
-                    let input_value = app.api_key_input.lines().join("\n").trim().to_string();
-                    if !input_value.is_empty() {
-                        match app.api_key_input_stage {
-                            ApiKeyInputStage::ApiKey => {
-                                if let Some(provider_id) = app.pending_provider_id.take() {
+                }
+            } else if app.is_inputting_api_key {
+                let input_value = app.api_key_input.lines().join("\n").trim().to_string();
+                if !input_value.is_empty() {
+                    match app.api_key_input_stage {
+                        ApiKeyInputStage::ApiKey => {
+                            if let Some(provider_id) = app.pending_provider_id.clone() {
+                                if provider_id == "vertex" {
+                                    app.api_key_input_stage = ApiKeyInputStage::VertexProject;
+                                    app.api_key_input = TextArea::default();
+                                    app.api_key_input.set_placeholder_text(" Your GCP project ID...");
+                                } else {
+                                    app.pending_provider_id.take();
                                     let mut config = app.orchestrator.config.lock().await;
-                                    config.api_keys.insert(provider_id.clone(), input_value);
-                                    let _ = routecode_sdk::utils::storage::save_config(&config);
-                                    app.history.push(Message::system(format!("API Key saved for {}", provider_id)));
+                                    config.api_keys.insert(provider_id, input_value);
+                                    if let Err(e) = routecode_sdk::utils::storage::save_config(&config) {
+    log::error!("Failed to save config: {}", e);
+}
+                                    app.history.push(Message::system("API Key saved"));
+                                    app.is_inputting_api_key = false;
+                                    app.api_key_input_stage = ApiKeyInputStage::None;
                                 }
+                            } else {
                                 app.is_inputting_api_key = false;
                                 app.api_key_input_stage = ApiKeyInputStage::None;
                             }
-                            ApiKeyInputStage::CloudflareAccountId => {
-                                app.pending_account_id = Some(input_value);
-                                app.api_key_input = TextArea::default();
-                                if app.pending_provider_id.as_deref() == Some("cloudflare-gateway") {
-                                    app.api_key_input_stage = ApiKeyInputStage::CloudflareGatewayId;
-                                } else { app.api_key_input_stage = ApiKeyInputStage::CloudflareApiKey; }
-                            }
-                            ApiKeyInputStage::CloudflareGatewayId => {
-                                app.pending_gateway_id = Some(input_value);
-                                app.api_key_input = TextArea::default();
-                                app.api_key_input_stage = ApiKeyInputStage::CloudflareApiKey;
-                            }
-                            ApiKeyInputStage::CloudflareApiKey => {
-                                if let Some(provider_id) = app.pending_provider_id.take() {
-                                    let account_id = app.pending_account_id.take().unwrap_or_default();
-                                    let final_key = if provider_id == "cloudflare-gateway" {
-                                        let gateway_id = app.pending_gateway_id.take().unwrap_or_default();
-                                        format!("{}:{}:{}", account_id, gateway_id, input_value)
-                                    } else { format!("{}:{}", account_id, input_value) };
-                                    let mut config = app.orchestrator.config.lock().await;
-                                    config.api_keys.insert(provider_id.clone(), final_key);
-                                    let _ = routecode_sdk::utils::storage::save_config(&config);
-                                    app.history.push(Message::system(format!("Credentials saved for {}", provider_id)));
-                                }
-                                app.is_inputting_api_key = false;
-                                app.api_key_input_stage = ApiKeyInputStage::None;
-                            }
-                            _ => { app.is_inputting_api_key = false; }
                         }
-                    } else {
-                        app.is_inputting_api_key = false;
-                        app.api_key_input_stage = ApiKeyInputStage::None;
+                        ApiKeyInputStage::VertexProject => {
+                            app.pending_account_id = Some(input_value);
+                            app.api_key_input = TextArea::default();
+                            app.api_key_input_stage = ApiKeyInputStage::VertexLocation;
+                        }
+                        ApiKeyInputStage::VertexLocation => {
+                            if let Some(provider_id) = app.pending_provider_id.take() {
+                                let project = app.pending_account_id.take().unwrap_or_default();
+                                let location = input_value;
+                                let api_key = app.api_key_input.lines().join("\n").trim().to_string();
+                                let mut config = app.orchestrator.config.lock().await;
+                                config.vertex_project = project;
+                                config.vertex_location = location;
+                                config.api_keys.insert(provider_id, api_key);
+                                if let Err(e) = routecode_sdk::utils::storage::save_config(&config) {
+    log::error!("Failed to save config: {}", e);
+}
+                                app.history.push(Message::system("Vertex AI credentials saved"));
+                            }
+                            app.is_inputting_api_key = false;
+                            app.api_key_input_stage = ApiKeyInputStage::None;
+                        }
+                        ApiKeyInputStage::CloudflareAccountId => {
+                            app.pending_account_id = Some(input_value);
+                            app.api_key_input = TextArea::default();
+                            if app.pending_provider_id.as_deref() == Some("cloudflare-gateway") {
+                                app.api_key_input_stage = ApiKeyInputStage::CloudflareGatewayId;
+                            } else { app.api_key_input_stage = ApiKeyInputStage::CloudflareApiKey; }
+                        }
+                        ApiKeyInputStage::CloudflareGatewayId => {
+                            app.pending_gateway_id = Some(input_value);
+                            app.api_key_input = TextArea::default();
+                            app.api_key_input_stage = ApiKeyInputStage::CloudflareApiKey;
+                        }
+                        ApiKeyInputStage::CloudflareApiKey => {
+                            if let Some(provider_id) = app.pending_provider_id.take() {
+                                let account_id = app.pending_account_id.take().unwrap_or_default();
+                                let final_key = if provider_id == "cloudflare-gateway" {
+                                    let gateway_id = app.pending_gateway_id.take().unwrap_or_default();
+                                    format!("{}:{}:{}", account_id, gateway_id, input_value)
+                                } else { format!("{}:{}", account_id, input_value) };
+                                let mut config = app.orchestrator.config.lock().await;
+                                config.api_keys.insert(provider_id.clone(), final_key);
+                                if let Err(e) = routecode_sdk::utils::storage::save_config(&config) {
+    log::error!("Failed to save config: {}", e);
+}
+                                app.history.push(Message::system(format!("Credentials saved for {}", provider_id)));
+                            }
+                            app.is_inputting_api_key = false;
+                            app.api_key_input_stage = ApiKeyInputStage::None;
+                        }
+                        _ => { app.is_inputting_api_key = false; }
                     }
                 } else {
-                    let input_text = app.input.lines().join("\n");
-                    if !input_text.trim().is_empty() {
-                        if input_text.starts_with('/') {
-                            handle_command(app, &input_text).await;
-                        } else {
-                            app.history.push(Message::user(input_text.clone()));
-                            app.prompt_history.push(input_text.clone());
-                            app.prompt_history_index = None;
-                            app.input = TextArea::default();
-                            app.screen = Screen::Session;
-                            app.is_generating = true;
-                            app.auto_scroll = true;
-                            let orchestrator = app.orchestrator.clone();
-                            let mut history = app.history.clone();
-                            let model = app.current_model.clone();
-                            let tx = app.tx.clone();
-                            let task = tokio::spawn(async move {
-                                let _ = orchestrator.run(&mut history, &model, Some(tx)).await;
-                            });
-                            app.current_task = Some(task);
-                        }
+                    app.is_inputting_api_key = false;
+                    app.api_key_input_stage = ApiKeyInputStage::None;
+                }
+            } else {
+                let input_text = app.input.lines().join("\n");
+                if !input_text.trim().is_empty() {
+                    if input_text.starts_with('/') {
+                        handle_command(app, &input_text).await;
+                    } else if !app.startup_ready {
+                        app.startup_input_buffer.push(input_text.clone());
+                        app.history.push(Message::system(format!("Queued: {}", input_text)));
                         app.input = TextArea::default();
+                    } else {
+                        app.history.push(Message::user(input_text.clone()));
+                        app.prompt_history.push(input_text.clone());
+                        app.prompt_history.truncate(100);
+                        app.prompt_history_index = None;
+                        app.input = TextArea::default();
+                        app.screen = Screen::Session;
+                        app.is_generating = true;
+                        app.auto_scroll = true;
+                        let orchestrator = app.orchestrator.clone();
+                        let mut history = app.history.clone();
+                        let model = app.current_model.clone();
+                        let tx = app.tx.clone();
+                        app.tasks.spawn(async move {
+                            if let Err(e) = orchestrator.run(&mut history, &model, Some(tx)).await {
+                                log::error!("Orchestrator run failed: {}", e);
+                            }
+                        });
                     }
+                    app.input = TextArea::default();
                 }
             }
         }
@@ -762,7 +922,7 @@ async fn handle_key_event(
                 app.pending_account_id = None;
                 app.pending_gateway_id = None;
             } else if app.is_generating {
-                if let Some(handle) = app.current_task.take() { handle.abort(); }
+                app.tasks.abort_all();
                 app.is_generating = false;
                 app.active_tool = None;
             } else {
@@ -832,13 +992,11 @@ async fn handle_key_event(
                     }
                     app.menu_state.select(Some(new_selected));
                 }
+            } else if app.input.lines().len() == 1 && app.input.lines()[0].is_empty() || app.history_scroll > 0 || app.is_generating || key.modifiers.contains(event::KeyModifiers::SHIFT) {
+                app.history_scroll = app.history_scroll.saturating_sub(15);
+                app.auto_scroll = false;
             } else {
-                if app.input.lines().len() == 1 && app.input.lines()[0].is_empty() || app.history_scroll > 0 || app.is_generating || key.modifiers.contains(event::KeyModifiers::SHIFT) {
-                    app.history_scroll = app.history_scroll.saturating_sub(15);
-                    app.auto_scroll = false;
-                } else {
-                    app.input.input(Event::Key(key));
-                }
+                app.input.input(Event::Key(key));
             }
         }
         KeyCode::Down => {
@@ -863,13 +1021,11 @@ async fn handle_key_event(
                     }
                     app.menu_state.select(Some(new_selected));
                 }
+            } else if app.input.lines().len() == 1 && app.input.lines()[0].is_empty() || app.history_scroll < app.max_scroll || app.is_generating || key.modifiers.contains(event::KeyModifiers::SHIFT) {
+                app.history_scroll = app.history_scroll.saturating_add(15);
+                if app.history_scroll >= app.max_scroll { app.auto_scroll = true; }
             } else {
-                if app.input.lines().len() == 1 && app.input.lines()[0].is_empty() || app.history_scroll < app.max_scroll || app.is_generating || key.modifiers.contains(event::KeyModifiers::SHIFT) {
-                    app.history_scroll = app.history_scroll.saturating_add(15);
-                    if app.history_scroll >= app.max_scroll { app.auto_scroll = true; }
-                } else {
-                    app.input.input(Event::Key(key));
-                }
+                app.input.input(Event::Key(key));
             }
         }
         KeyCode::Right if app.show_model_menu => {
@@ -903,22 +1059,31 @@ async fn handle_key_event(
         }
         KeyCode::Char('f') if key.modifiers.contains(event::KeyModifiers::CONTROL) && app.show_model_menu => {
             if let Some(selected) = app.menu_state.selected() {
-                match app.filtered_models.get(selected) {
-                    Some(ModelMenuItem::Model(model_info)) => {
-                        let model_info = model_info.clone();
-                        let mut config = app.orchestrator.config.lock().await;
-                        if config.favorites.iter().any(|m| m.name == model_info.name && m.provider_id == model_info.provider_id) { config.favorites.retain(|m| m.name != model_info.name || m.provider_id != model_info.provider_id); app.history.push(Message::system(format!("Removed {} from favorites", model_info.name))); }
-                        else { config.favorites.push(model_info.clone()); app.history.push(Message::system(format!("Added {} to favorites", model_info.name))); }
-                        let _ = routecode_sdk::utils::storage::save_config(&config);
-                    }
-                    _ => {}
+                if let Some(ModelMenuItem::Model(model_info)) = app.filtered_models.get(selected) {
+                    let model_info = model_info.clone();
+                    let mut config = app.orchestrator.config.lock().await;
+                    if config.favorites.iter().any(|m| m.name == model_info.name && m.provider_id == model_info.provider_id) { config.favorites.retain(|m| m.name != model_info.name || m.provider_id != model_info.provider_id); app.history.push(Message::system(format!("Removed {} from favorites", model_info.name))); }
+                    else { config.favorites.push(model_info.clone()); app.history.push(Message::system(format!("Added {} to favorites", model_info.name))); }
+                    if let Err(e) = routecode_sdk::utils::storage::save_config(&config) {
+    log::error!("Failed to save config: {}", e);
+}
                 }
             }
+        }
+        KeyCode::BackTab => {
+            app.approval_mode = app.approval_mode.next();
+            let info = match app.approval_mode {
+                ApprovalMode::YOLO => "YOLO — commands will auto-approve",
+                ApprovalMode::Plan => "PLAN — tool calls will be denied (read-only review)",
+                ApprovalMode::Shell => "SHELL — shell commands shown first, auto-approved",
+                ApprovalMode::Normal => "Normal mode — confirm each tool call",
+            };
+            app.history.push(Message::system(format!("Mode: {}", info)));
         }
         _ => {
             let event = Event::Key(key);
             if app.is_inputting_api_key { app.api_key_input.input(event); }
-            else if app.show_model_menu { if app.model_search_input.input(event) { let search = app.model_search_input.lines()[0].to_lowercase().trim().to_string(); handle_model_search(app, &search, true).await; } }
+            else if app.show_model_menu { if app.model_search_input.input(event) { let search = app.model_search_input.lines().first().map(|l| l.trim().to_lowercase()).unwrap_or_default(); handle_model_search(app, &search, true).await; } }
             else { app.input.input(event); app.update_filtered_commands(); }
         }
     }
@@ -1004,7 +1169,12 @@ async fn handle_mouse_event<B: ratatui::backend::Backend>(
                         if click_row == modal_y + 2 {
                             app.user_msg_modal_selected = 0;
                             let text = app.history[msg_idx].content.as_ref().map(|s| s.to_string()).unwrap_or_default();
-                            let _ = copy_to_clipboard(&text);
+                            let text_clone = text.clone();
+                            tokio::task::spawn_blocking(move || {
+                                if let Err(e) = copy_to_clipboard(&text_clone) {
+                                    log::error!("Clipboard copy failed: {}", e);
+                                }
+                            });
                             app.history.push(Message::system("Message copied to clipboard!".to_string()));
                             app.show_user_msg_modal = None;
                         } else if click_row == modal_y + 3 {
@@ -1016,6 +1186,28 @@ async fn handle_mouse_event<B: ratatui::backend::Backend>(
                             app.show_user_msg_modal = None;
                         }
                     }
+                }
+            } else if app.pending_update.is_some() {
+                if let Ok(size) = terminal.size() {
+                    let width = (size.width as f32 * 0.50) as u16;
+                    let height = 8;
+                    let modal_x = (size.width.saturating_sub(width)) / 2;
+                    let modal_y = (size.height.saturating_sub(height)) / 2;
+                    
+                    let is_outside = mouse.column < modal_x || mouse.column >= modal_x + width || mouse.row < modal_y || mouse.row >= modal_y + height;
+                    
+                    if is_outside {
+                        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+                            app.pending_update = None;
+                        }
+                    } else if matches!(mouse.kind, MouseEventKind::Up(MouseButton::Left))
+                        && mouse.row == modal_y + height.saturating_sub(2) {
+                            if mouse.column >= modal_x + width.saturating_sub(25) && mouse.column < modal_x + width.saturating_sub(15) {
+                                app.pending_update = None;
+                            } else if mouse.column >= modal_x + width.saturating_sub(15) && mouse.column < modal_x + width {
+                                app.pending_update_install = true;
+                            }
+                        }
                 }
             } else if app.show_menu || app.show_provider_menu || app.show_model_menu || app.show_settings_menu {
                 if let Ok(size) = terminal.size() {
@@ -1033,47 +1225,67 @@ async fn handle_mouse_event<B: ratatui::backend::Backend>(
                     
                     let is_outside = mouse.column < modal_x || mouse.column >= modal_x + width || mouse.row < modal_y || mouse.row >= modal_y + height;
                     let is_esc = mouse.row <= modal_y + 2 && mouse.column >= modal_x + width.saturating_sub(10) && mouse.column <= modal_x + width;
-                    let is_inside_list = mouse.row >= modal_y + 2 && mouse.row < modal_y + height - 1 && mouse.column >= modal_x + 1 && mouse.column < modal_x + width - 1;
+                    let is_inside_list = mouse.row >= modal_y + 2 && mouse.row < modal_y + height - 1 && mouse.column > modal_x && mouse.column < modal_x + width - 1;
                     
                     if is_outside || is_esc {
                         app.show_menu = false;
                         app.show_provider_menu = false;
                         app.show_model_menu = false;
                         app.show_settings_menu = false;
-                    } else if is_inside_list && matches!(mouse.kind, MouseEventKind::Up(MouseButton::Left)) {
-                        if app.show_settings_menu {
+                    } else if is_inside_list && matches!(mouse.kind, MouseEventKind::Up(MouseButton::Left))
+                        && app.show_settings_menu {
                             let idx = (mouse.row - (modal_y + 2)) as usize + app.menu_state.offset();
                             if idx < app.settings_items.len() {
-                                if let Some(SettingsMenuItem::Option { key, val, .. }) = app.settings_items.get(idx) {
+                                if let Some(SettingsMenuItem::Option { key, val: _, .. }) = app.settings_items.get(idx) {
                                     if key == "logo_animation" {
-                                        let next_val = match val.as_str() {
-                                            "always" => "hover",
-                                            "hover" => "click",
-                                            _ => "always",
+                                        let next_val = {
+                                            let config = app.orchestrator.config.lock().await;
+                                            match config.logo_animation.as_str() {
+                                                "always" => "hover",
+                                                "hover" => "click",
+                                                _ => "always",
+                                            }
                                         };
-                                        let mut config = app.orchestrator.config.lock().await;
-                                        config.logo_animation = next_val.to_string();
-                                        let _ = routecode_sdk::utils::storage::save_config(&config);
-                                        drop(config);
+                                        {
+                                            let mut config = app.orchestrator.config.lock().await;
+                                            config.logo_animation = next_val.to_string();
+                                            if let Err(e) = routecode_sdk::utils::storage::save_config(&config) {
+    log::error!("Failed to save config: {}", e);
+}
+                                        }
                                         app.populate_settings().await;
                                     } else if key == "logo_animation_color" {
-                                        let next_val = match val.as_str() {
-                                            "rainbow" => "neon",
-                                            "neon" => "cyberpunk",
-                                            "cyberpunk" => "sunset",
-                                            "sunset" => "mono",
-                                            _ => "rainbow",
+                                        let next_val = {
+                                            let config = app.orchestrator.config.lock().await;
+                                            match config.logo_animation_color.as_str() {
+                                                "rainbow" => "neon",
+                                                "neon" => "cyberpunk",
+                                                "cyberpunk" => "sunset",
+                                                "sunset" => "mono",
+                                                _ => "rainbow",
+                                            }
                                         };
-                                        let mut config = app.orchestrator.config.lock().await;
-                                        config.logo_animation_color = next_val.to_string();
-                                        let _ = routecode_sdk::utils::storage::save_config(&config);
-                                        drop(config);
+                                        {
+                                            let mut config = app.orchestrator.config.lock().await;
+                                            config.logo_animation_color = next_val.to_string();
+                                            if let Err(e) = routecode_sdk::utils::storage::save_config(&config) {
+    log::error!("Failed to save config: {}", e);
+}
+                                        }
+                                        app.populate_settings().await;
+                                    } else if key == "hide_cwd" {
+                                        app.hide_cwd = !app.hide_cwd;
+                                        app.populate_settings().await;
+                                    } else if key == "hide_model_info" {
+                                        app.hide_model_info = !app.hide_model_info;
+                                        app.populate_settings().await;
+                                    } else if key == "hide_context_summary" {
+                                        app.hide_context_summary = !app.hide_context_summary;
                                         app.populate_settings().await;
                                     }
                                 }
                             }
                         }
-                    }
                 }
             } else if app.screen == Screen::Session {
                 let has_thinking = app.history.iter().any(|m| m.thought.is_some());
@@ -1090,7 +1302,7 @@ async fn handle_mouse_event<B: ratatui::backend::Backend>(
                 }
                 
                 if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
-                    let in_cooldown = app.last_toggle_time.map_or(false, |t| t.elapsed() < std::time::Duration::from_millis(400));
+                    let in_cooldown = app.last_toggle_time.is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(400));
                     
                     if !in_cooldown && has_thinking {
                         let is_double_click = if let Some((last_time, col, row)) = app.last_click_up {
@@ -1138,7 +1350,18 @@ async fn handle_mouse_event<B: ratatui::backend::Backend>(
 }
 
 async fn handle_stream_chunks(app: &mut App) {
-    while let Ok(chunk) = app.rx.try_recv() {
+    let max_per_frame: u32 = 50;
+    let mut processed: u32 = 0;
+    while processed < max_per_frame {
+        let chunk = match app.rx.try_recv() {
+            Ok(c) => c,
+            Err(_) => break,
+        };
+        processed += 1;
+        // Throttle cache invalidation: mark dirty only once per burst
+        if processed <= 1 {
+            app.render_dirty = true;
+        }
         match chunk {
             StreamChunk::Text { content } => {
                 if let Some(last) = app.history.last_mut() {
@@ -1164,21 +1387,37 @@ async fn handle_stream_chunks(app: &mut App) {
                     if last.role == Role::Assistant {
                         let mut calls = last.tool_calls.clone().unwrap_or_default();
                         if let Some(idx) = tool_call.index { if let Some(existing) = calls.iter_mut().find(|tc| tc.index == Some(idx)) { *existing = tool_call; } else { calls.push(tool_call); } }
-                        else { if !calls.iter().any(|tc| tc.id == tool_call.id && !tc.id.is_empty()) { calls.push(tool_call); } }
+                        else if !calls.iter().any(|tc| tc.id == tool_call.id && !tc.id.is_empty()) { calls.push(tool_call); }
                         last.tool_calls = Some(calls);
                     } else { app.history.push(Message::assistant(None, None, Some(vec![tool_call]))); }
                 } else { app.history.push(Message::assistant(None, None, Some(vec![tool_call]))); }
             }
             StreamChunk::ToolResult { name, content, tool_call_id } => { app.active_tool = None; app.history.push(Message::tool(tool_call_id, name, content)); }
-            StreamChunk::Done => { app.is_generating = false; app.active_tool = None; }
+            StreamChunk::Done => {
+                app.is_generating = false;
+                app.active_tool = None;
+                if !app.history.is_empty() {
+                    let session = routecode_sdk::utils::storage::Session {
+                        messages: app.history.clone(),
+                        model: app.current_model.clone(),
+                        usage: app.orchestrator.usage.lock().await.clone(),
+                        timestamp: chrono::Utc::now().timestamp(),
+                    };
+                    if let Err(e) = routecode_sdk::utils::storage::save_session(&app.session_id, &session) {
+                        log::error!("Failed to auto-save session: {}", e);
+                    }
+                }
+            }
             StreamChunk::Error { content } => {
                 let mut display_error = content.clone();
                 let json_part = if let Some(idx) = content.find('{') { &content[idx..] } else { &content };
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_part) {
-                    if let Some(msg) = val["error"]["message"].as_str() { display_error = msg.to_string(); }
-                    else if let Some(error_obj) = val["error"].as_object() { if let Some(msg) = error_obj["message"].as_str() { display_error = msg.to_string(); } }
-                    else if let Some(msg) = val["message"].as_str() { display_error = msg.to_string(); }
-                    else if let Some(errors) = val["errors"].as_array() { if let Some(msg) = errors.get(0).and_then(|e| e["message"].as_str()) { display_error = msg.to_string(); } }
+                if json_part.len() > 10 && json_part.starts_with('{') {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_part) {
+                        if let Some(msg) = val["error"]["message"].as_str() { display_error = msg.to_string(); }
+                        else if let Some(error_obj) = val["error"].as_object() { if let Some(msg) = error_obj["message"].as_str() { display_error = msg.to_string(); } }
+                        else if let Some(msg) = val["message"].as_str() { display_error = msg.to_string(); }
+                        else if let Some(errors) = val["errors"].as_array() { if let Some(msg) = errors.first().and_then(|e| e["message"].as_str()) { display_error = msg.to_string(); } }
+                    }
                 }
                 app.history.push(Message::system(format!("Error: {}", display_error)));
                 app.is_generating = false;
@@ -1186,13 +1425,67 @@ async fn handle_stream_chunks(app: &mut App) {
             }
             StreamChunk::Models { models } => { 
                 app.all_available_models.extend(models); 
-                let search = app.model_search_input.lines()[0].to_lowercase().trim().to_string();
+                let search = app.model_search_input.lines().first().map(|l| l.trim().to_lowercase()).unwrap_or_default();
                 handle_model_search(app, &search, false).await;
             }
-            StreamChunk::ModelsDone => { app.is_fetching_models = false; }
+            StreamChunk::ModelsDone => {
+                app.is_fetching_models = false;
+                if !app.startup_ready {
+                    app.startup_ready = true;
+                    let buffered = app.startup_input_buffer.drain(..).collect::<Vec<_>>();
+                    for msg in buffered {
+                        app.history.push(Message::user(msg));
+                        app.screen = Screen::Session;
+                        app.prompt_history.truncate(100);
+                        app.prompt_history_index = None;
+                        app.input = TextArea::default();
+                        app.is_generating = true;
+                        app.auto_scroll = true;
+                        let orchestrator = app.orchestrator.clone();
+                        let mut history = app.history.clone();
+                        let model = app.current_model.clone();
+                        let tx = app.tx.clone();
+                        app.tasks.spawn(async move {
+                            if let Err(e) = orchestrator.run(&mut history, &model, Some(tx)).await {
+                                log::error!("Orchestrator run failed: {}", e);
+                            }
+                        });
+                    }
+                }
+            }
             StreamChunk::FinalHistory { history } => { app.history = history; }
             StreamChunk::RequestConfirmation { message, target, tx } => {
-                app.pending_command_confirmation = Some((message, target, tx.unwrap()));
+                match app.approval_mode {
+                    ApprovalMode::YOLO | ApprovalMode::Shell => {
+                        if let Some(sender) = tx {
+                            let mut tx_opt = sender.lock().await;
+                            if let Some(tx) = tx_opt.take() {
+                                let _ = tx.send(ConfirmationResponse::AllowOnce);
+                            }
+                        }
+                    }
+                    ApprovalMode::Plan => {
+                        if let Some(sender) = tx {
+                            let mut tx_opt = sender.lock().await;
+                            if let Some(tx) = tx_opt.take() {
+                                let _ = tx.send(ConfirmationResponse::Deny);
+                            }
+                        }
+                    }
+                    ApprovalMode::Normal => {
+                        if let Some(sender) = tx {
+                            app.pending_command_confirmation = Some((message, target, sender));
+                        } else {
+                            log::error!("RequestConfirmation received without a response channel");
+                        }
+                    }
+                }
+            }
+            StreamChunk::UpdateAvailable { version, changelog, published_at } => {
+                app.pending_update = Some(version);
+                app.pending_update_changelog = changelog;
+                app.pending_update_published_at = published_at;
+                app.update_modal_selected = 1;
             }
             _ => {}
         }
@@ -1202,7 +1495,7 @@ async fn handle_stream_chunks(app: &mut App) {
 pub async fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     mut app: App,
-) -> io::Result<()> {
+) -> io::Result<bool> {
     let mut last_tick = std::time::Instant::now();
     let tick_rate = std::time::Duration::from_millis(100);
     let render_rate = std::time::Duration::from_millis(16); // ~60 FPS for smooth rendering
@@ -1225,7 +1518,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
                     Event::Key(key) => {
                         if key.kind == KeyEventKind::Press {
                             match handle_key_event(&mut app, key, is_burst).await? {
-                                KeyEventResult::Exit => return Ok(()),
+                                KeyEventResult::Exit => return Ok(app.pending_update_install),
                                 KeyEventResult::Continue => {}
                             }
                         }
@@ -1233,6 +1526,9 @@ pub async fn run_app<B: ratatui::backend::Backend>(
                     Event::Paste(text) => { app.input.insert_str(&text); }
                     Event::Mouse(mouse) => {
                         handle_mouse_event(&mut app, mouse, terminal).await?;
+                    }
+                    Event::Resize(_, _) => {
+                        app.cached_text = None;
                     }
                     _ => {}
                 }
@@ -1245,17 +1541,19 @@ pub async fn run_app<B: ratatui::backend::Backend>(
             
             if app.screen == Screen::Session {
                 if let Some((start_time, _, _)) = app.mouse_down_start {
-                    if start_time.elapsed() >= std::time::Duration::from_millis(400) {
-                        if app.thinking_hover_rendered {
+                    if start_time.elapsed() >= std::time::Duration::from_millis(400)
+                        && app.thinking_hover_rendered {
                             app.temp_expand_thinking = true;
                         }
-                    }
                 }
             }
             
             last_tick = std::time::Instant::now();
         }
 
+        if app.pending_update_install {
+            return Ok(true);
+        }
         handle_stream_chunks(&mut app).await;
     }
 }
@@ -1265,11 +1563,34 @@ fn ui(f: &mut Frame, app: &mut App) {
     f.render_widget(Block::default().style(Style::default().bg(COLOR_BG)), area);
     let main_layout = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(1), Constraint::Min(0)]).split(area);
     let current_dir = std::env::current_dir().map(|p| p.file_name().unwrap_or_default().to_string_lossy().to_string()).unwrap_or_else(|_| "workspace".to_string());
-    let header_layout = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Min(0), Constraint::Length(25)]).split(main_layout[0]);
-    let version = env!("CARGO_PKG_VERSION");
-    let header_title = format!(" RouteCode v{} ", version);
-    f.render_widget(Paragraph::new(Span::styled(format!(" {} ", current_dir), Style::default().fg(COLOR_SECONDARY))), header_layout[0]);
-    f.render_widget(Paragraph::new(Span::styled(header_title, Style::default().fg(COLOR_PRIMARY).add_modifier(Modifier::BOLD))).alignment(ratatui::layout::Alignment::Right), header_layout[1]);
+
+    let mode_label = app.approval_mode.label();
+    let mode_style = match app.approval_mode {
+        ApprovalMode::Normal => Style::default().fg(COLOR_SECONDARY),
+        ApprovalMode::Plan => Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        ApprovalMode::YOLO => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ApprovalMode::Shell => Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+    };
+    let mode_indicator = format!("[{}]", mode_label);
+
+    let mut header_left = Vec::new();
+    if app.approval_mode != ApprovalMode::Normal {
+        header_left.push(Span::styled(mode_indicator, mode_style));
+        header_left.push(Span::raw(" "));
+    }
+    if !app.hide_cwd {
+        header_left.push(Span::styled(format!("{} ", current_dir), Style::default().fg(COLOR_SECONDARY)));
+    }
+
+    let header_right_len = if app.hide_model_info { 0u16 } else { 25u16 };
+    let header_layout = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Min(0), Constraint::Length(header_right_len)]).split(main_layout[0]);
+    f.render_widget(Paragraph::new(Line::from(header_left)), header_layout[0]);
+
+    if !app.hide_model_info {
+        let version = env!("CARGO_PKG_VERSION");
+        let header_title = format!(" RouteCode v{} ", version);
+        f.render_widget(Paragraph::new(Span::styled(header_title, Style::default().fg(COLOR_PRIMARY).add_modifier(Modifier::BOLD))).alignment(ratatui::layout::Alignment::Right), header_layout[1]);
+    }
     let input_area = match app.screen {
         Screen::Welcome => ui_welcome(f, app, main_layout[1]),
         Screen::Session => ui_session(f, app, main_layout[1]),
@@ -1283,6 +1604,8 @@ fn ui(f: &mut Frame, app: &mut App) {
     else if app.pending_exit { render_confirmation_dialog(f, "Are you sure you want to exit RouteCode? (y/n)"); }
     else if app.pending_command_confirmation.is_some() { render_command_confirmation_dialog(f, app); }
     else if app.show_user_msg_modal.is_some() { render_user_msg_modal(f, app); }
+    else if app.pending_update.is_some() { render_update_modal(f, app); }
+    app.mouse_moved = false;
 }
 
 fn render_command_confirmation_dialog(f: &mut Frame, app: &mut App) {
@@ -1390,48 +1713,24 @@ fn render_confirmation_dialog(f: &mut Frame, message: &str) {
 }
 
 fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
-    #[cfg(target_os = "windows")]
-    {
-        use std::io::Write;
-        use std::process::{Command, Stdio};
-        let mut child = Command::new("clip")
-            .stdin(Stdio::piped())
-            .spawn()?;
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(text.as_bytes())?;
-        }
-        let _ = child.wait();
-        Ok(())
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let (prog, args): (&str, &[&str]) = if cfg!(target_os = "windows") {
+        ("clip", &[])
+    } else if cfg!(target_os = "macos") {
+        ("pbcopy", &[])
+    } else {
+        ("xclip", &["-selection", "clipboard"])
+    };
+    let mut child = Command::new(prog).args(args).stdin(Stdio::piped()).spawn()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(text.as_bytes())?;
     }
-    #[cfg(target_os = "macos")]
-    {
-        use std::io::Write;
-        use std::process::{Command, Stdio};
-        let mut child = Command::new("pbcopy")
-            .stdin(Stdio::piped())
-            .spawn()?;
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(text.as_bytes())?;
-        }
-        let _ = child.wait();
-        Ok(())
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    {
-        use std::io::Write;
-        use std::process::{Command, Stdio};
-        if let Ok(mut child) = Command::new("xclip")
-            .arg("-selection")
-            .arg("clipboard")
-            .stdin(Stdio::piped())
-            .spawn()
-        {
-            if let Some(mut stdin) = child.stdin.take() {
-                let _ = stdin.write_all(text.as_bytes());
-            }
-            let _ = child.wait();
-        }
-        Ok(())
+    let result = child.wait();
+    match result {
+        Ok(status) if status.success() => Ok(()),
+        Ok(_) => Err(std::io::Error::other("clipboard command failed")),
+        Err(e) => Err(e),
     }
 }
 
@@ -1463,7 +1762,7 @@ fn render_user_msg_modal(f: &mut Frame, app: &mut App) {
         .border_style(Style::default().fg(COLOR_PRIMARY))
         .style(Style::default().bg(COLOR_BG));
 
-    let options = vec!["Copy Message", "Rewind & Edit"];
+    let options = ["Copy Message", "Rewind & Edit"];
     let mut lines = vec![
         ratatui::text::Line::from(vec![Span::styled(" Choose an action:", Style::default().fg(COLOR_SECONDARY))]),
         ratatui::text::Line::from(""),
@@ -1489,6 +1788,98 @@ fn render_user_msg_modal(f: &mut Frame, app: &mut App) {
     let paragraph = Paragraph::new(lines).block(block);
     f.render_widget(ratatui::widgets::Clear, inner_area);
     f.render_widget(paragraph, inner_area);
+}
+
+fn render_update_modal(f: &mut Frame, app: &mut App) {
+    let version = app.pending_update.as_ref().unwrap();
+    let area = f.size();
+    
+    let modal_height = 12;
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(((area.height as f32 * 0.3) as u16).min(area.height.saturating_sub(modal_height + 2))),
+            Constraint::Length(modal_height),
+            Constraint::Percentage(((area.height as f32 * 0.3) as u16).min(area.height.saturating_sub(modal_height + 2))),
+        ])
+        .split(area);
+
+    let popup_horiz = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(15),
+            Constraint::Percentage(70),
+            Constraint::Percentage(15),
+        ])
+        .split(popup_layout[1]);
+
+    let inner_area = popup_horiz[1];
+    
+    f.render_widget(ratatui::widgets::Clear, inner_area);
+    
+    let block = Block::default()
+        .borders(ratatui::widgets::Borders::ALL)
+        .border_style(Style::default().fg(COLOR_PRIMARY))
+        .title(ratatui::widgets::block::Title::from(Span::styled(" Update Available ", Style::default().fg(COLOR_TEXT).add_modifier(Modifier::BOLD))).alignment(ratatui::layout::Alignment::Left))
+        .title(ratatui::widgets::block::Title::from(Span::styled(" esc ", Style::default().fg(COLOR_DIM))).alignment(ratatui::layout::Alignment::Right))
+        .style(Style::default().bg(COLOR_BG));
+
+    f.render_widget(block, inner_area);
+
+    let content_area = ratatui::layout::Rect {
+        x: inner_area.x + 2,
+        y: inner_area.y + 1,
+        width: inner_area.width.saturating_sub(4),
+        height: inner_area.height.saturating_sub(4),
+    };
+    
+    let mut lines = vec![
+        ratatui::text::Line::from(vec![Span::styled(format!("Version {} is available (current: {})", version, env!("CARGO_PKG_VERSION")), Style::default().fg(COLOR_TEXT))]),
+        ratatui::text::Line::from(""),
+    ];
+
+    if !app.pending_update_changelog.is_empty() {
+        let changelog_lines: Vec<&str> = app.pending_update_changelog.lines().take(5).collect();
+        for line in changelog_lines {
+            let trimmed = if line.len() > 60 { format!("{}...", &line[..57]) } else { line.to_string() };
+            lines.push(ratatui::text::Line::from(vec![Span::styled(trimmed.to_string(), Style::default().fg(COLOR_SECONDARY))]));
+        }
+    }
+    
+    let p = Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: true });
+    f.render_widget(p, content_area);
+    
+    let button_area = ratatui::layout::Rect {
+        x: inner_area.x + 2,
+        y: inner_area.y + inner_area.height.saturating_sub(2),
+        width: inner_area.width.saturating_sub(4),
+        height: 1,
+    };
+    
+    let skip_style = if app.update_modal_selected == 0 { Style::default().fg(ratatui::style::Color::Black).bg(COLOR_TEXT).add_modifier(Modifier::BOLD) } else { Style::default().fg(COLOR_DIM) };
+    let confirm_style = if app.update_modal_selected == 1 { Style::default().fg(ratatui::style::Color::Black).bg(ratatui::style::Color::Rgb(255, 179, 138)).add_modifier(Modifier::BOLD) } else { Style::default().fg(ratatui::style::Color::Rgb(255, 179, 138)) };
+    
+    let buttons = ratatui::text::Line::from(vec![
+        Span::styled("  Skip  ", skip_style),
+        Span::raw("   "),
+        Span::styled("  Confirm  ", confirm_style),
+    ]);
+    
+    let p_buttons = Paragraph::new(buttons).alignment(ratatui::layout::Alignment::Right);
+    f.render_widget(p_buttons, button_area);
+}
+
+/// Try to lock config with short retry loop for use in sync render paths.
+/// Rare contention from config saves resolves within microseconds; this avoids
+/// silently showing "Loading..." or stale fallbacks.
+pub fn try_lock_config(app: &App) -> Option<tokio::sync::MutexGuard<'_, routecode_sdk::core::Config>> {
+    for _ in 0..10 {
+        match app.orchestrator.config.try_lock() {
+            Ok(guard) => return Some(guard),
+            Err(_) => std::thread::sleep(std::time::Duration::from_micros(200)),
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -1517,7 +1908,7 @@ mod tests {
             Arc::new(ToolRegistry::new()),
             Arc::new(Mutex::new(Config::default())),
         ));
-        let app = App::new(orchestrator, "Mock".to_string());
+        let app = App::new(orchestrator, "Mock".to_string(), "gpt-4o".to_string());
         assert_eq!(app.screen, Screen::Welcome);
         assert!(app.history.is_empty());
         assert_eq!(app.current_model, "gpt-4o");
@@ -1530,7 +1921,7 @@ mod tests {
             Arc::new(ToolRegistry::new()),
             Arc::new(Mutex::new(Config::default())),
         ));
-        let mut app = App::new(orchestrator, "Mock".to_string());
+        let mut app = App::new(orchestrator, "Mock".to_string(), "gpt-4o".to_string());
         
         app.input.insert_str("/hel");
         app.update_filtered_commands();
@@ -1547,7 +1938,7 @@ mod tests {
             Arc::new(ToolRegistry::new()),
             Arc::new(Mutex::new(Config::default())),
         ));
-        let mut app = App::new(orchestrator, "Mock".to_string());
+        let mut app = App::new(orchestrator, "Mock".to_string(), "gpt-4o".to_string());
         
         app.input.insert_str("/nonexistent");
         app.update_filtered_commands();
@@ -1563,7 +1954,7 @@ mod tests {
             Arc::new(ToolRegistry::new()),
             Arc::new(Mutex::new(Config::default())),
         ));
-        let mut app = App::new(orchestrator, "Mock".to_string());
+        let mut app = App::new(orchestrator, "Mock".to_string(), "gpt-4o".to_string());
         
         app.history.push(Message::user("First message".to_string()));
         app.history.push(Message::assistant(Some("Assistant reply".into()), None, None));
@@ -1581,5 +1972,35 @@ mod tests {
         assert_eq!(app.history[0].role, Role::User);
         assert_eq!(app.history[1].role, Role::Assistant);
         assert_eq!(app.input.lines()[0], "Second message");
+    }
+
+    #[tokio::test]
+    async fn test_update_system_modal() {
+        let orchestrator = Arc::new(AgentOrchestrator::new(
+            Arc::new(MockProvider),
+            Arc::new(ToolRegistry::new()),
+            Arc::new(Mutex::new(Config::default())),
+        ));
+        let mut app = App::new(orchestrator, "Mock".to_string(), "gpt-4o".to_string());
+        
+        app.pending_update = Some("v1.15.4".to_string());
+        app.update_modal_selected = 1;
+        
+        let left_key = event::KeyEvent::new(event::KeyCode::Left, event::KeyModifiers::empty());
+        let res = handle_key_event(&mut app, left_key, false).await.unwrap();
+        assert_eq!(res, KeyEventResult::Continue);
+        assert_eq!(app.update_modal_selected, 0);
+        
+        let enter_key = event::KeyEvent::new(event::KeyCode::Enter, event::KeyModifiers::empty());
+        let res = handle_key_event(&mut app, enter_key, false).await.unwrap();
+        assert_eq!(res, KeyEventResult::Continue);
+        assert_eq!(app.pending_update, None);
+        assert!(!app.pending_update_install);
+        
+        app.pending_update = Some("v1.15.4".to_string());
+        app.update_modal_selected = 1;
+        let res = handle_key_event(&mut app, enter_key, false).await.unwrap();
+        assert_eq!(res, KeyEventResult::Exit);
+        assert!(app.pending_update_install);
     }
 }

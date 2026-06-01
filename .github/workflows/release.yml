@@ -14,8 +14,8 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    name: Build - ${{ matrix.target }}
+  build-cli:
+    name: Build CLI - ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -64,23 +64,87 @@ jobs:
           name: ${{ matrix.asset_name }}
           path: release/${{ matrix.asset_name }}
 
+  build-desktop:
+    name: Build Desktop - ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-latest
+            os: ubuntu-latest
+          - platform: windows-latest
+            os: windows-latest
+          - platform: macos-latest
+            os: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Frontend Dependencies
+        run: npm ci
+        working-directory: apps/desktop-t
+
+      - name: Install Linux Dependencies
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev
+
+      - name: Build Desktop App
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        with:
+          projectPath: apps/desktop-t
+          release: false
+
+      - name: Collect Desktop Artifacts
+        shell: bash
+        run: |
+          mkdir -p desktop-release
+          find apps/desktop-t/src-tauri/target/release/bundle -type f \( -name "*.msi" -o -name "*.exe" -o -name "*.dmg" -o -name "*.deb" -o -name "*.AppImage" -o -name "*.tar.gz" -o -name "*.zip" -o -name "*.sig" -o -name "latest.json" \) -exec cp {} desktop-release/ \; 2>/dev/null || true
+
+      - name: Upload Desktop Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.platform }}
+          path: desktop-release/
+
   publish:
     name: Publish Release
-    needs: build
+    needs: [build-cli, build-desktop]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download all artifacts
+      - name: Download CLI artifacts
         uses: actions/download-artifact@v4
         with:
           path: release/
           merge-multiple: true
 
-      - name: Generate checksums
+      - name: Generate CLI Checksums
         run: |
           cd release
-          sha256sum * > checksums.txt
+          for f in routecode-linux-* routecode-macos-* routecode-windows-*; do
+            if [ -f "$f" ]; then
+              sha256sum "$f" >> checksums.txt
+            fi
+          done
+        shell: bash
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
