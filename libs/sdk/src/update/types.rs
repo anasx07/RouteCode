@@ -29,15 +29,15 @@ pub struct GitHubAsset {
 
 pub fn get_platform_asset_name() -> Option<&'static str> {
     if cfg!(target_os = "windows") {
-        Some("routecode-windows-x86_64.exe")
+        Some("RouteCode-cli-windows-x86_64.exe")
     } else if cfg!(target_os = "macos") {
         if cfg!(target_arch = "aarch64") {
-            Some("routecode-macos-arm64")
+            Some("RouteCode-cli-macos-arm64")
         } else {
-            Some("routecode-macos-x86_64")
+            Some("RouteCode-cli-macos-x86_64")
         }
     } else if cfg!(target_os = "linux") {
-        Some("routecode-linux-x86_64")
+        Some("RouteCode-cli-linux-x86_64")
     } else {
         None
     }
@@ -45,15 +45,15 @@ pub fn get_platform_asset_name() -> Option<&'static str> {
 
 pub fn get_platform_checksum_asset_name() -> Option<&'static str> {
     if cfg!(target_os = "windows") {
-        Some("routecode-windows-x86_64.exe.sha256")
+        Some("RouteCode-cli-windows-x86_64.exe.sha256")
     } else if cfg!(target_os = "macos") {
         if cfg!(target_arch = "aarch64") {
-            Some("routecode-macos-arm64.sha256")
+            Some("RouteCode-cli-macos-arm64.sha256")
         } else {
-            Some("routecode-macos-x86_64.sha256")
+            Some("RouteCode-cli-macos-x86_64.sha256")
         }
     } else if cfg!(target_os = "linux") {
-        Some("routecode-linux-x86_64.sha256")
+        Some("RouteCode-cli-linux-x86_64.sha256")
     } else {
         None
     }
