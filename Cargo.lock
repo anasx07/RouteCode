@@ -3495,7 +3495,7 @@ dependencies = [
 
 [[package]]
 name = "routecode-cli"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3517,7 +3517,7 @@ dependencies = [
 
 [[package]]
 name = "routecode-sdk"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "async-stream",
