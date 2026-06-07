@@ -44,7 +44,8 @@ impl AIProvider for OpenAIProvider {
             format!("{}/models", self.base_url)
         };
 
-        let response = self.client
+        let response = self
+            .client
             .get(&url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .send()
@@ -83,7 +84,7 @@ impl AIProvider for OpenAIProvider {
         if let Some(t) = tools.as_ref() {
             body["tools"] = json!(t);
         }
-        
+
         if let Some(level) = thinking_level {
             if level != "default" {
                 body["thinking_level"] = json!(level);
@@ -111,21 +112,21 @@ impl AIProvider for OpenAIProvider {
         let mut active_tool_calls: HashMap<usize, ToolCall> = HashMap::new();
 
         let s = stream! {
-            while let Some(item) = bytes_stream.next().await {
-                match item {
-                    Ok(bytes) => {
-                        let chunks = parse_sse_buffer(&mut buffer, &mut active_tool_calls, &String::from_utf8_lossy(&bytes));
-                        for chunk in chunks {
-                            yield Ok(chunk);
-                        }
-                        }
-                        Err(e) => {
-                        yield Err(anyhow::Error::from(e));
-                        }
-                        }
-                        }
-                        yield Ok(StreamChunk::Done);
-                        };
+        while let Some(item) = bytes_stream.next().await {
+            match item {
+                Ok(bytes) => {
+                    let chunks = parse_sse_buffer(&mut buffer, &mut active_tool_calls, &String::from_utf8_lossy(&bytes));
+                    for chunk in chunks {
+                        yield Ok(chunk);
+                    }
+                    }
+                    Err(e) => {
+                    yield Err(anyhow::Error::from(e));
+                    }
+                    }
+                    }
+                    yield Ok(StreamChunk::Done);
+                    };
         Ok(Box::pin(s))
     }
 }

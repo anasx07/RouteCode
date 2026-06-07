@@ -1,25 +1,31 @@
-use super::types::{get_platform_asset_name, get_platform_checksum_asset_name, GitHubRelease, UpdateInfo};
+use super::types::{
+    get_platform_asset_name, get_platform_checksum_asset_name, GitHubRelease, UpdateInfo,
+};
 use anyhow::{Context, Result};
 use semver::Version;
 
-pub async fn check_for_update(
-    current_version: &str,
-    repo: &str,
-) -> Result<UpdateInfo> {
+pub async fn check_for_update(current_version: &str, repo: &str) -> Result<UpdateInfo> {
     let client = reqwest::Client::builder()
         .user_agent(format!("routecode-updater/{}", current_version))
         .build()?;
 
     let url = format!("https://api.github.com/repos/{}/releases/latest", repo);
     let resp = client.get(&url).send().await?;
-    let release: GitHubRelease = resp.json().await
+    let release: GitHubRelease = resp
+        .json()
+        .await
         .context("Failed to parse GitHub release JSON")?;
 
     let tag = release.tag_name.trim_start_matches('v');
     let latest_version = Version::parse(tag)
         .map_err(|e| anyhow::anyhow!("Failed to parse latest version '{}': {}", tag, e))?;
-    let current = Version::parse(current_version)
-        .map_err(|e| anyhow::anyhow!("Failed to parse current version '{}': {}", current_version, e))?;
+    let current = Version::parse(current_version).map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to parse current version '{}': {}",
+            current_version,
+            e
+        )
+    })?;
 
     let is_update_available = latest_version > current;
 
@@ -28,20 +34,32 @@ pub async fn check_for_update(
 
     let download_url = platform_asset
         .and_then(|name| {
-            release.assets.iter().find(|a| a.name == name)
-                .map(|a| a.browser_download_url.clone())
-        })
-        .unwrap_or_else(|| release.assets.first()
-            .map(|a| a.browser_download_url.clone())
-            .unwrap_or_default());
-
-    let checksum_url = checksum_asset
-        .and_then(|name| {
-            release.assets.iter().find(|a| a.name == name)
+            release
+                .assets
+                .iter()
+                .find(|a| a.name == name)
                 .map(|a| a.browser_download_url.clone())
         })
         .unwrap_or_else(|| {
-            release.assets.iter()
+            release
+                .assets
+                .first()
+                .map(|a| a.browser_download_url.clone())
+                .unwrap_or_default()
+        });
+
+    let checksum_url = checksum_asset
+        .and_then(|name| {
+            release
+                .assets
+                .iter()
+                .find(|a| a.name == name)
+                .map(|a| a.browser_download_url.clone())
+        })
+        .unwrap_or_else(|| {
+            release
+                .assets
+                .iter()
                 .find(|a| a.name == "checksums.txt")
                 .map(|a| a.browser_download_url.clone())
                 .unwrap_or_default()

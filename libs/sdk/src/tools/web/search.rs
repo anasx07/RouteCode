@@ -40,57 +40,63 @@ impl Tool for WebSearchTool {
             .timeout(std::time::Duration::from_secs(15))
             .build()?;
 
-        let response = client.post("https://lite.duckduckgo.com/lite/")
+        let response = client
+            .post("https://lite.duckduckgo.com/lite/")
             .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
             .form(&[("q", query)])
-            .send().await;
-            
+            .send()
+            .await;
+
         match response {
             Ok(resp) => {
                 if !resp.status().is_success() {
-                    return Ok(ToolResult::error(&format!("HTTP Error: {}", resp.status())));
+                    return Ok(ToolResult::error(format!("HTTP Error: {}", resp.status())));
                 }
-                
+
                 let html = resp.text().await?;
-                
+
                 let mut results = vec![];
-                
+
                 // Matches <a ... class='result-link' href='URL'>TITLE</a>
                 let re_link = Regex::new(r#"(?is)<a[^>]*class=['"]result-link['"][^>]*href=['"]([^'"]+)['"][^>]*>(.*?)</a>"#).unwrap();
-                
+                let re_tags = Regex::new(r"(?is)<[^>]+>").unwrap();
+
                 for cap in re_link.captures_iter(&html) {
                     let url = &cap[1];
                     let title = &cap[2];
-                    
-                    if url.starts_with("/") || url.contains("duckduckgo.com") || url.starts_with("?q=") {
+
+                    if url.starts_with("/")
+                        || url.contains("duckduckgo.com")
+                        || url.starts_with("?q=")
+                    {
                         continue;
                     }
-                    
-                    let re_tags = Regex::new(r"(?is)<[^>]+>").unwrap();
+
                     let clean_title = re_tags.replace_all(title, "").to_string();
-                    let clean_title = clean_title.replace("&quot;", "\"").replace("&#39;", "'").replace("&amp;", "&");
-                    
+                    let clean_title = clean_title
+                        .replace("&quot;", "\"")
+                        .replace("&#39;", "'")
+                        .replace("&amp;", "&");
+
                     if !clean_title.trim().is_empty() {
                         results.push(json!({
                             "title": clean_title.trim(),
                             "url": url,
                         }));
                     }
-                    
+
                     if results.len() >= 10 {
                         break;
                     }
                 }
-                
+
                 if results.is_empty() {
                     return Ok(ToolResult::success("No search results found.".to_string()));
                 }
-                
+
                 Ok(ToolResult::success(serde_json::to_string_pretty(&results)?))
             }
-            Err(e) => {
-                Ok(ToolResult::error(&format!("Search failed: {}", e)))
-            }
+            Err(e) => Ok(ToolResult::error(format!("Search failed: {}", e))),
         }
     }
 }

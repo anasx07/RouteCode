@@ -23,7 +23,8 @@ impl GeminiProvider {
                 .timeout(std::time::Duration::from_secs(60))
                 .build()
                 .unwrap_or_else(|_| Client::new()),
-            base_url: base_url.unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta".to_string()),
+            base_url: base_url
+                .unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta".to_string()),
         }
     }
 }
@@ -41,7 +42,8 @@ impl AIProvider for GeminiProvider {
 
         let url = format!(
             "{}/models?key={}",
-            self.base_url.trim_end_matches('/'), self.api_key
+            self.base_url.trim_end_matches('/'),
+            self.api_key
         );
 
         let response = self.client.get(&url).send().await?;
@@ -72,7 +74,9 @@ impl AIProvider for GeminiProvider {
     ) -> Result<StreamResponse, anyhow::Error> {
         let url = format!(
             "{}/models/{}:streamGenerateContent?key={}",
-            self.base_url.trim_end_matches('/'), model, self.api_key
+            self.base_url.trim_end_matches('/'),
+            model,
+            self.api_key
         );
 
         let mut contents = Vec::new();
@@ -98,7 +102,8 @@ impl AIProvider for GeminiProvider {
                     }
                     if let Some(calls) = &msg.tool_calls {
                         for tc in calls {
-                            let args: Value = serde_json::from_str(&tc.function.arguments).unwrap_or(json!({}));
+                            let args: Value =
+                                serde_json::from_str(&tc.function.arguments).unwrap_or(json!({}));
                             parts.push(json!({
                                 "functionCall": {
                                     "name": tc.function.name,
@@ -161,12 +166,7 @@ impl AIProvider for GeminiProvider {
             }
         }
 
-        let response = self
-            .client
-            .post(&url)
-            .json(&body)
-            .send()
-            .await?;
+        let response = self.client.post(&url).json(&body).send().await?;
 
         let response = crate::utils::error::check_status(response).await?;
 

@@ -94,10 +94,7 @@ pub fn classify_error(err: &anyhow::Error) -> RetryClass {
             if let Some(status) = reqwest_err.status() {
                 return classify_status(status);
             }
-            if reqwest_err.is_connect()
-                || reqwest_err.is_timeout()
-                || reqwest_err.is_request()
-            {
+            if reqwest_err.is_connect() || reqwest_err.is_timeout() || reqwest_err.is_request() {
                 return RetryClass::Transient;
             }
         }
@@ -112,27 +109,63 @@ mod tests {
 
     #[test]
     fn classify_status_4xx_permanent() {
-        assert_eq!(classify_status(StatusCode::BAD_REQUEST), RetryClass::Permanent);
-        assert_eq!(classify_status(StatusCode::UNAUTHORIZED), RetryClass::Permanent);
-        assert_eq!(classify_status(StatusCode::FORBIDDEN), RetryClass::Permanent);
-        assert_eq!(classify_status(StatusCode::NOT_FOUND), RetryClass::Permanent);
-        assert_eq!(classify_status(StatusCode::UNPROCESSABLE_ENTITY), RetryClass::Permanent);
+        assert_eq!(
+            classify_status(StatusCode::BAD_REQUEST),
+            RetryClass::Permanent
+        );
+        assert_eq!(
+            classify_status(StatusCode::UNAUTHORIZED),
+            RetryClass::Permanent
+        );
+        assert_eq!(
+            classify_status(StatusCode::FORBIDDEN),
+            RetryClass::Permanent
+        );
+        assert_eq!(
+            classify_status(StatusCode::NOT_FOUND),
+            RetryClass::Permanent
+        );
+        assert_eq!(
+            classify_status(StatusCode::UNPROCESSABLE_ENTITY),
+            RetryClass::Permanent
+        );
     }
 
     #[test]
     fn classify_status_4xx_transient() {
-        assert_eq!(classify_status(StatusCode::REQUEST_TIMEOUT), RetryClass::Transient);
+        assert_eq!(
+            classify_status(StatusCode::REQUEST_TIMEOUT),
+            RetryClass::Transient
+        );
         assert_eq!(classify_status(StatusCode::CONFLICT), RetryClass::Transient);
-        assert_eq!(classify_status(StatusCode::TOO_MANY_REQUESTS), RetryClass::Transient);
-        assert_eq!(classify_status(StatusCode::from_u16(425).unwrap()), RetryClass::Transient);
+        assert_eq!(
+            classify_status(StatusCode::TOO_MANY_REQUESTS),
+            RetryClass::Transient
+        );
+        assert_eq!(
+            classify_status(StatusCode::from_u16(425).unwrap()),
+            RetryClass::Transient
+        );
     }
 
     #[test]
     fn classify_status_5xx_transient() {
-        assert_eq!(classify_status(StatusCode::INTERNAL_SERVER_ERROR), RetryClass::Transient);
-        assert_eq!(classify_status(StatusCode::BAD_GATEWAY), RetryClass::Transient);
-        assert_eq!(classify_status(StatusCode::SERVICE_UNAVAILABLE), RetryClass::Transient);
-        assert_eq!(classify_status(StatusCode::GATEWAY_TIMEOUT), RetryClass::Transient);
+        assert_eq!(
+            classify_status(StatusCode::INTERNAL_SERVER_ERROR),
+            RetryClass::Transient
+        );
+        assert_eq!(
+            classify_status(StatusCode::BAD_GATEWAY),
+            RetryClass::Transient
+        );
+        assert_eq!(
+            classify_status(StatusCode::SERVICE_UNAVAILABLE),
+            RetryClass::Transient
+        );
+        assert_eq!(
+            classify_status(StatusCode::GATEWAY_TIMEOUT),
+            RetryClass::Transient
+        );
     }
 
     #[test]
@@ -155,8 +188,7 @@ mod tests {
 
     #[test]
     fn classify_error_walks_source_chain() {
-        let err = http_error(StatusCode::FORBIDDEN, "x".to_string())
-            .context("calling anthropic");
+        let err = http_error(StatusCode::FORBIDDEN, "x".to_string()).context("calling anthropic");
         assert_eq!(classify_error(&err), RetryClass::Permanent);
     }
 

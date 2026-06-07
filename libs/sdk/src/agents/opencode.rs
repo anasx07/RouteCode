@@ -1,6 +1,6 @@
 use crate::agents::traits::{AIProvider, StreamResponse};
-use crate::agents::utils::{parse_sse_buffer, parse_anthropic_sse};
-use crate::core::{Message, ToolCall, Role};
+use crate::agents::utils::{parse_anthropic_sse, parse_sse_buffer};
+use crate::core::{Message, Role, ToolCall};
 use async_stream::stream;
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -32,8 +32,8 @@ impl OpenCodeProvider {
     }
 
     fn get_prefixed_model(&self, model: &str) -> String {
-        // Based on documentation and error reports, the OpenCode API 
-        // expects the raw model ID (e.g. "gpt-5.5") because the 
+        // Based on documentation and error reports, the OpenCode API
+        // expects the raw model ID (e.g. "gpt-5.5") because the
         // provider (Zen/Go) is already determined by the base URL.
         model.to_string()
     }
@@ -48,7 +48,8 @@ impl AIProvider for OpenCodeProvider {
     async fn list_models(&self) -> Result<Vec<String>, anyhow::Error> {
         let url = format!("{}/models", self.base_url);
 
-        let response = self.client
+        let response = self
+            .client
             .get(&url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .send()
@@ -61,7 +62,10 @@ impl AIProvider for OpenCodeProvider {
                     if let Some(data) = val["data"].as_array() {
                         for model in data {
                             if let Some(id) = model["id"].as_str() {
-                                let clean_id = id.strip_prefix("opencode-zen/").or_else(|| id.strip_prefix("opencode-go/")).unwrap_or(id);
+                                let clean_id = id
+                                    .strip_prefix("opencode-zen/")
+                                    .or_else(|| id.strip_prefix("opencode-go/"))
+                                    .unwrap_or(id);
                                 models.push(clean_id.to_string());
                             }
                         }
@@ -144,7 +148,7 @@ impl AIProvider for OpenCodeProvider {
     ) -> Result<StreamResponse, anyhow::Error> {
         let prefixed_model = self.get_prefixed_model(model);
         let model_lower = model.to_lowercase();
-        
+
         // Routing logic based on documentation screenshots
         let endpoint = if model_lower.starts_with("claude") {
             format!("{}/messages", self.base_url)
@@ -152,7 +156,10 @@ impl AIProvider for OpenCodeProvider {
             format!("{}/responses", self.base_url)
         } else if model_lower.starts_with("gemini") {
             // Google style endpoint - append streaming suffix
-            format!("{}/models/{}:streamGenerateContent", self.base_url, prefixed_model)
+            format!(
+                "{}/models/{}:streamGenerateContent",
+                self.base_url, prefixed_model
+            )
         } else if !self.is_zen && model_lower.contains("minimax") {
             // MiniMax in Go uses /messages
             format!("{}/messages", self.base_url)
@@ -169,7 +176,9 @@ impl AIProvider for OpenCodeProvider {
             for msg in messages.iter() {
                 match msg.role {
                     Role::System => {
-                        if let Some(c) = &msg.content { global_system.push_str(c); }
+                        if let Some(c) = &msg.content {
+                            global_system.push_str(c);
+                        }
                     }
                     Role::User => {
                         anthropic_messages.push(json!({ "role": "user", "content": msg.content.as_deref().unwrap_or_default() }));
@@ -184,7 +193,8 @@ impl AIProvider for OpenCodeProvider {
                         }
                         if let Some(calls) = &msg.tool_calls {
                             for tc in calls {
-                                let input: Value = serde_json::from_str(&tc.function.arguments).unwrap_or(json!({}));
+                                let input: Value = serde_json::from_str(&tc.function.arguments)
+                                    .unwrap_or(json!({}));
                                 content.push(json!({
                                     "type": "tool_use",
                                     "id": tc.id,
@@ -209,10 +219,14 @@ impl AIProvider for OpenCodeProvider {
                 }
             }
             let mut body = json!({ "model": prefixed_model, "messages": anthropic_messages, "stream": true, "max_tokens": 16384 });
-            if !global_system.is_empty() { body["system"] = json!(global_system); }
-            
+            if !global_system.is_empty() {
+                body["system"] = json!(global_system);
+            }
+
             if let Some(level) = thinking_level {
-                if level != "default" { body["thinking_level"] = json!(level); }
+                if level != "default" {
+                    body["thinking_level"] = json!(level);
+                }
             }
 
             if let Some(t) = _tools.as_ref() {
@@ -229,7 +243,13 @@ impl AIProvider for OpenCodeProvider {
                 body["tools"] = json!(anthropic_tools);
             }
 
-            let response = self.client.post(&endpoint).header("Authorization", format!("Bearer {}", self.api_key)).json(&body).send().await?;
+            let response = self
+                .client
+                .post(&endpoint)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .json(&body)
+                .send()
+                .await?;
             let response = crate::utils::error::check_status(response).await?;
 
             let mut bytes_stream = response.bytes_stream();
@@ -254,13 +274,19 @@ impl AIProvider for OpenCodeProvider {
             // Gemini/Google Format
             let mut contents = Vec::new();
             for msg in messages.iter() {
-                let role = match msg.role { Role::User => "user", Role::Assistant => "model", _ => "user" };
+                let role = match msg.role {
+                    Role::User => "user",
+                    Role::Assistant => "model",
+                    _ => "user",
+                };
                 contents.push(json!({ "role": role, "parts": [{"text": msg.content.as_deref().unwrap_or_default()}] }));
             }
             let mut body = json!({ "contents": contents });
-            
+
             if let Some(level) = thinking_level {
-                if level != "default" { body["thinking_level"] = json!(level); }
+                if level != "default" {
+                    body["thinking_level"] = json!(level);
+                }
             }
 
             if let Some(t) = _tools.as_ref() {
@@ -277,7 +303,13 @@ impl AIProvider for OpenCodeProvider {
                 body["tools"] = json!([{ "function_declarations": gemini_tools }]);
             }
 
-            let response = self.client.post(&endpoint).header("Authorization", format!("Bearer {}", self.api_key)).json(&body).send().await?;
+            let response = self
+                .client
+                .post(&endpoint)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .json(&body)
+                .send()
+                .await?;
             let response = crate::utils::error::check_status(response).await?;
 
             let mut bytes_stream = response.bytes_stream();
@@ -307,13 +339,23 @@ impl AIProvider for OpenCodeProvider {
         } else {
             // OpenAI Format (Default + GPT /responses)
             let mut body = json!({ "model": prefixed_model, "messages": &*messages, "stream": true, "max_tokens": 16384 });
-            if let Some(t) = _tools.as_ref() { body["tools"] = json!(t); }
-            
-            if let Some(level) = thinking_level {
-                if level != "default" { body["thinking_level"] = json!(level); }
+            if let Some(t) = _tools.as_ref() {
+                body["tools"] = json!(t);
             }
 
-            let response = self.client.post(&endpoint).header("Authorization", format!("Bearer {}", self.api_key)).json(&body).send().await?;
+            if let Some(level) = thinking_level {
+                if level != "default" {
+                    body["thinking_level"] = json!(level);
+                }
+            }
+
+            let response = self
+                .client
+                .post(&endpoint)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .json(&body)
+                .send()
+                .await?;
             let response = crate::utils::error::check_status(response).await?;
 
             let mut bytes_stream = response.bytes_stream();

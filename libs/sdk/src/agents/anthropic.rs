@@ -85,7 +85,8 @@ impl AIProvider for AnthropicProvider {
                     }
                     if let Some(calls) = &msg.tool_calls {
                         for tc in calls {
-                            let input: Value = serde_json::from_str(&tc.function.arguments).unwrap_or(json!({}));
+                            let input: Value =
+                                serde_json::from_str(&tc.function.arguments).unwrap_or(json!({}));
                             content.push(json!({
                                 "type": "tool_use",
                                 "id": tc.id,
@@ -145,7 +146,7 @@ impl AIProvider for AnthropicProvider {
                 url = format!("{}/v1/messages", url.trim_end_matches('/'));
             }
         }
-        
+
         let response = self
             .client
             .post(&url)

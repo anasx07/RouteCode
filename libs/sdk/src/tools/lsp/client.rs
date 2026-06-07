@@ -22,10 +22,17 @@ impl LspClient {
             .stderr(Stdio::null())
             .spawn()?;
 
-        let mut stdin = child.stdin.take().ok_or_else(|| anyhow!("Failed to open stdin"))?;
-        let stdout = child.stdout.take().ok_or_else(|| anyhow!("Failed to open stdout"))?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| anyhow!("Failed to open stdin"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow!("Failed to open stdout"))?;
 
-        let (request_tx, mut request_rx) = mpsc::channel::<(Value, Option<oneshot::Sender<Value>>)>(32);
+        let (request_tx, mut request_rx) =
+            mpsc::channel::<(Value, Option<oneshot::Sender<Value>>)>(32);
 
         let pending_requests: Arc<Mutex<HashMap<usize, oneshot::Sender<Value>>>> =
             Arc::new(Mutex::new(HashMap::new()));
@@ -75,7 +82,10 @@ impl LspClient {
             while let Some((req, response_tx_opt)) = request_rx.recv().await {
                 if let Some(response_tx) = response_tx_opt {
                     if let Some(id) = req.get("id").and_then(|id| id.as_u64()) {
-                        pending_writer_clone.lock().await.insert(id as usize, response_tx);
+                        pending_writer_clone
+                            .lock()
+                            .await
+                            .insert(id as usize, response_tx);
                     }
                 }
 
@@ -110,7 +120,7 @@ impl LspClient {
         if let Some(error) = resp.get("error") {
             return Err(anyhow!("LSP Error: {}", error));
         }
-        
+
         Ok(resp.get("result").cloned().unwrap_or(Value::Null))
     }
 

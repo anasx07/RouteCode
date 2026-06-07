@@ -21,7 +21,11 @@ impl VertexAIProvider {
         Self {
             api_key,
             project,
-            location: if location.is_empty() { "us-central1".to_string() } else { location },
+            location: if location.is_empty() {
+                "us-central1".to_string()
+            } else {
+                location
+            },
             client: Client::builder()
                 .timeout(std::time::Duration::from_secs(120))
                 .build()
@@ -107,7 +111,8 @@ impl AIProvider for VertexAIProvider {
                     }
                     if let Some(calls) = &msg.tool_calls {
                         for tc in calls {
-                            let args: Value = serde_json::from_str(&tc.function.arguments).unwrap_or(json!({}));
+                            let args: Value =
+                                serde_json::from_str(&tc.function.arguments).unwrap_or(json!({}));
                             parts.push(json!({
                                 "functionCall": {
                                     "name": tc.function.name,

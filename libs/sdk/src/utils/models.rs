@@ -29,7 +29,7 @@ pub fn get_models_cache_path() -> PathBuf {
 pub async fn fetch_and_cache_models() -> anyhow::Result<()> {
     let url = std::env::var("ROUTECODE_MODELS_URL")
         .unwrap_or_else(|_| "https://models.dev/api.json".to_string());
-    
+
     // Check if cache is fresh enough (e.g., < 24 hours old)
     let cache_path = get_models_cache_path();
     if cache_path.exists() {
@@ -48,24 +48,24 @@ pub async fn fetch_and_cache_models() -> anyhow::Result<()> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()?;
-        
+
     let response = client.get(&url).send().await?;
-    
+
     if response.status().is_success() {
         let text = response.text().await?;
         // Verify it parses correctly before saving
         let _parsed: HashMap<String, ProviderInfo> = serde_json::from_str(&text)?;
-        
+
         let dir = crate::utils::storage::get_base_dir();
         if !dir.exists() {
             fs::create_dir_all(&dir)?;
         }
-        
+
         fs::write(cache_path, text)?;
     } else {
         anyhow::bail!("Failed to fetch models: HTTP {}", response.status());
     }
-    
+
     Ok(())
 }
 
@@ -74,10 +74,10 @@ pub fn get_models_for_provider(provider_id: &str) -> Option<Vec<String>> {
     if !cache_path.exists() {
         return None;
     }
-    
+
     let content = fs::read_to_string(cache_path).ok()?;
     let registry: HashMap<String, ProviderInfo> = serde_json::from_str(&content).ok()?;
-    
+
     // opencode sometimes uses provider ids like "google-vertex"
     // Let's find the provider that matches or contains the provider_id
     for (id, provider) in registry {
@@ -88,7 +88,7 @@ pub fn get_models_for_provider(provider_id: &str) -> Option<Vec<String>> {
             return Some(models);
         }
     }
-    
+
     None
 }
 
@@ -97,15 +97,15 @@ pub fn get_provider_info(provider_id: &str) -> Option<ProviderInfo> {
     if !cache_path.exists() {
         return None;
     }
-    
+
     let content = fs::read_to_string(cache_path).ok()?;
     let registry: HashMap<String, ProviderInfo> = serde_json::from_str(&content).ok()?;
-    
+
     for (id, provider) in registry {
         if id == provider_id || id.contains(provider_id) || provider_id.contains(&id) {
             return Some(provider);
         }
     }
-    
+
     None
 }

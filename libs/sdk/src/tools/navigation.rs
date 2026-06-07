@@ -67,17 +67,28 @@ impl Tool for TreeTool {
     async fn execute(&self, args: Value) -> Result<ToolResult, anyhow::Error> {
         let path_str = args["path"].as_str().unwrap_or(".");
         let max_depth = args["depth"].as_u64().unwrap_or(3) as usize;
-        
+
         let mut output = String::new();
         let path = std::path::Path::new(path_str);
-        
+
         if !path.exists() {
-            return Ok(ToolResult::error(format!("Path '{}' does not exist", path_str)));
+            return Ok(ToolResult::error(format!(
+                "Path '{}' does not exist",
+                path_str
+            )));
         }
 
-        fn walk(dir: &std::path::Path, prefix: &str, current_depth: usize, max_depth: usize, output: &mut String) -> std::io::Result<()> {
-            if current_depth > max_depth { return Ok(()); }
-            
+        fn walk(
+            dir: &std::path::Path,
+            prefix: &str,
+            current_depth: usize,
+            max_depth: usize,
+            output: &mut String,
+        ) -> std::io::Result<()> {
+            if current_depth > max_depth {
+                return Ok(());
+            }
+
             let entries: Vec<_> = fs::read_dir(dir)?
                 .flatten()
                 .filter(|entry| {
@@ -85,7 +96,7 @@ impl Tool for TreeTool {
                     name != ".git" && name != "node_modules" && name != "target"
                 })
                 .collect();
-            
+
             let count = entries.len();
             for (idx, entry) in entries.into_iter().enumerate() {
                 let is_last = idx == count - 1;
@@ -94,7 +105,7 @@ impl Tool for TreeTool {
 
                 let connector = if is_last { "└── " } else { "├── " };
                 output.push_str(&format!("{}{}{}\n", prefix, connector, name));
-                
+
                 if path.is_dir() {
                     let new_prefix = format!("{}{}", prefix, if is_last { "    " } else { "│   " });
                     walk(&path, &new_prefix, current_depth + 1, max_depth, output)?;
@@ -105,7 +116,10 @@ impl Tool for TreeTool {
 
         output.push_str(&format!("{}\n", path_str));
         if let Err(e) = walk(path, "", 1, max_depth, &mut output) {
-            return Ok(ToolResult::error(format!("Failed to walk directory: {}", e)));
+            return Ok(ToolResult::error(format!(
+                "Failed to walk directory: {}",
+                e
+            )));
         }
 
         Ok(ToolResult::success(output))
@@ -142,7 +156,10 @@ impl Tool for GrepTool {
         let include = args["include"].as_str();
 
         let glob_pattern = if let Some(inc) = include {
-            Some(glob::Pattern::new(inc).map_err(|e| anyhow::anyhow!("Invalid glob pattern '{}': {}", inc, e))?)
+            Some(
+                glob::Pattern::new(inc)
+                    .map_err(|e| anyhow::anyhow!("Invalid glob pattern '{}': {}", inc, e))?,
+            )
         } else {
             None
         };
@@ -168,7 +185,14 @@ impl Tool for GrepTool {
                         continue;
                     }
                     if path.is_dir() {
-                        walk_and_search(&path, search_root, pattern, regex_pattern, glob_pattern, results)?;
+                        walk_and_search(
+                            &path,
+                            search_root,
+                            pattern,
+                            regex_pattern,
+                            glob_pattern,
+                            results,
+                        )?;
                     } else {
                         if let Some(glob_pat) = glob_pattern {
                             let mut matches = false;
@@ -232,7 +256,14 @@ impl Tool for GrepTool {
 
         use std::io;
         let search_root = std::path::Path::new(path);
-        if let Err(e) = walk_and_search(search_root, search_root, pattern, regex_pattern.as_ref(), glob_pattern.as_ref(), &mut results) {
+        if let Err(e) = walk_and_search(
+            search_root,
+            search_root,
+            pattern,
+            regex_pattern.as_ref(),
+            glob_pattern.as_ref(),
+            &mut results,
+        ) {
             return Ok(ToolResult::error(format!("Search failed: {}", e)));
         }
 
@@ -283,14 +314,10 @@ mod tests {
         .unwrap();
 
         let file_path_rs = dir.path().join("test.rs");
-        fs::write(
-            &file_path_rs,
-            "line 1: hello in rust",
-        )
-        .unwrap();
+        fs::write(&file_path_rs, "line 1: hello in rust").unwrap();
 
         let tool = GrepTool;
-        
+
         // Test normal grep without include filter
         let args = json!({
             "pattern": "hello",

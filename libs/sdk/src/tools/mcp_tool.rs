@@ -54,8 +54,11 @@ impl Tool for DynamicMcpTool {
 
         match self.client.request("tools/call", Some(params)).await {
             Ok(res) => {
-                let is_error = res.get("isError").and_then(|e| e.as_bool()).unwrap_or(false);
-                
+                let is_error = res
+                    .get("isError")
+                    .and_then(|e| e.as_bool())
+                    .unwrap_or(false);
+
                 let mut output = String::new();
                 if let Some(content) = res.get("content").and_then(|c| c.as_array()) {
                     for item in content {
@@ -67,7 +70,7 @@ impl Tool for DynamicMcpTool {
                 } else {
                     output = serde_json::to_string_pretty(&res)?;
                 }
-                
+
                 let result_text = output.trim().to_string();
                 if is_error {
                     Ok(ToolResult::error(&result_text))
@@ -75,7 +78,10 @@ impl Tool for DynamicMcpTool {
                     Ok(ToolResult::success(result_text))
                 }
             }
-            Err(e) => Ok(ToolResult::error(&format!("MCP Tool Execution Failed: {}", e))),
+            Err(e) => Ok(ToolResult::error(format!(
+                "MCP Tool Execution Failed: {}",
+                e
+            ))),
         }
     }
 }

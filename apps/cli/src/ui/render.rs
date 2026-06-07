@@ -9,9 +9,12 @@ use ratatui::{
 use std::io;
 
 use super::app::App;
-use super::components::{COLOR_BG, COLOR_PRIMARY, COLOR_SECONDARY, COLOR_TEXT, COLOR_DIM};
+use super::components::{COLOR_BG, COLOR_DIM, COLOR_PRIMARY, COLOR_SECONDARY, COLOR_TEXT};
 use super::events::{handle_key_event, handle_mouse_event, KeyEventResult};
-use super::menus::{render_api_key_dialog, render_menu, render_model_menu, render_provider_menu, render_settings_menu};
+use super::menus::{
+    render_api_key_dialog, render_menu, render_model_menu, render_provider_menu,
+    render_settings_menu,
+};
 use super::streaming::handle_stream_chunks;
 use super::types::{ApprovalMode, Screen};
 use super::welcome::ui_welcome;
@@ -47,7 +50,9 @@ pub async fn run_app<B: ratatui::backend::Backend>(
                             }
                         }
                     }
-                    Event::Paste(text) => { app.input.insert_str(&text); }
+                    Event::Paste(text) => {
+                        app.input.insert_str(&text);
+                    }
                     Event::Mouse(mouse) => {
                         handle_mouse_event(&mut app, mouse, terminal).await?;
                     }
@@ -66,9 +71,10 @@ pub async fn run_app<B: ratatui::backend::Backend>(
             if app.screen == Screen::Session {
                 if let Some((start_time, _, _)) = app.mouse_down_start {
                     if start_time.elapsed() >= std::time::Duration::from_millis(400)
-                        && app.thinking_hover_rendered {
-                            app.temp_expand_thinking = true;
-                        }
+                        && app.thinking_hover_rendered
+                    {
+                        app.temp_expand_thinking = true;
+                    }
                 }
             }
 
@@ -85,15 +91,29 @@ pub async fn run_app<B: ratatui::backend::Backend>(
 fn ui(f: &mut Frame, app: &mut App) {
     let area = f.size();
     f.render_widget(Block::default().style(Style::default().bg(COLOR_BG)), area);
-    let main_layout = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(1), Constraint::Min(0)]).split(area);
-    let current_dir = std::env::current_dir().map(|p| p.file_name().unwrap_or_default().to_string_lossy().to_string()).unwrap_or_else(|_| "workspace".to_string());
+    let main_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .split(area);
+    let current_dir = std::env::current_dir()
+        .map(|p| {
+            p.file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string()
+        })
+        .unwrap_or_else(|_| "workspace".to_string());
 
     let mode_label = app.approval_mode.label();
     let mode_style = match app.approval_mode {
         ApprovalMode::Normal => Style::default().fg(COLOR_SECONDARY),
-        ApprovalMode::Plan => Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        ApprovalMode::Plan => Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
         ApprovalMode::YOLO => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-        ApprovalMode::Shell => Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+        ApprovalMode::Shell => Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD),
     };
     let mode_indicator = format!("[{}]", mode_label);
 
@@ -103,32 +123,58 @@ fn ui(f: &mut Frame, app: &mut App) {
         header_left.push(Span::raw(" "));
     }
     if !app.hide_cwd {
-        header_left.push(Span::styled(format!("{} ", current_dir), Style::default().fg(COLOR_SECONDARY)));
+        header_left.push(Span::styled(
+            format!("{} ", current_dir),
+            Style::default().fg(COLOR_SECONDARY),
+        ));
     }
 
     let header_right_len = if app.hide_model_info { 0u16 } else { 25u16 };
-    let header_layout = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Min(0), Constraint::Length(header_right_len)]).split(main_layout[0]);
+    let header_layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(0), Constraint::Length(header_right_len)])
+        .split(main_layout[0]);
     f.render_widget(Paragraph::new(Line::from(header_left)), header_layout[0]);
 
     if !app.hide_model_info {
         let version = env!("CARGO_PKG_VERSION");
         let header_title = format!(" RouteCode v{} ", version);
-        f.render_widget(Paragraph::new(Span::styled(header_title, Style::default().fg(COLOR_PRIMARY).add_modifier(Modifier::BOLD))).alignment(ratatui::layout::Alignment::Right), header_layout[1]);
+        f.render_widget(
+            Paragraph::new(Span::styled(
+                header_title,
+                Style::default()
+                    .fg(COLOR_PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            ))
+            .alignment(ratatui::layout::Alignment::Right),
+            header_layout[1],
+        );
     }
     let input_area = match app.screen {
         Screen::Welcome => ui_welcome(f, app, main_layout[1]),
         Screen::Session => super::session::ui_session(f, app, main_layout[1]),
     };
-    if app.show_menu { render_menu(f, app, input_area); }
-    else if app.show_provider_menu { render_provider_menu(f, app, input_area); }
-    else if app.show_model_menu { render_model_menu(f, app, input_area); }
-    else if app.show_settings_menu { render_settings_menu(f, app, input_area); }
-    else if app.is_inputting_api_key { render_api_key_dialog(f, app); }
-    else if app.pending_clear { render_confirmation_dialog(f, "Are you sure you want to clear all history? (y/n)"); }
-    else if app.pending_exit { render_confirmation_dialog(f, "Are you sure you want to exit RouteCode? (y/n)"); }
-    else if app.pending_command_confirmation.is_some() { render_command_confirmation_dialog(f, app); }
-    else if app.show_user_msg_modal.is_some() { render_user_msg_modal(f, app); }
-    else if app.pending_update.is_some() { render_update_modal(f, app); }
+    if app.show_menu {
+        render_menu(f, app, input_area);
+    } else if app.show_provider_menu {
+        render_provider_menu(f, app, input_area);
+    } else if app.show_model_menu {
+        render_model_menu(f, app, input_area);
+    } else if app.show_settings_menu {
+        render_settings_menu(f, app, input_area);
+    } else if app.is_inputting_api_key {
+        render_api_key_dialog(f, app);
+    } else if app.pending_clear {
+        render_confirmation_dialog(f, "Are you sure you want to clear all history? (y/n)");
+    } else if app.pending_exit {
+        render_confirmation_dialog(f, "Are you sure you want to exit RouteCode? (y/n)");
+    } else if app.pending_command_confirmation.is_some() {
+        render_command_confirmation_dialog(f, app);
+    } else if app.show_user_msg_modal.is_some() {
+        render_user_msg_modal(f, app);
+    } else if app.pending_update.is_some() {
+        render_update_modal(f, app);
+    }
     app.mouse_moved = false;
 }
 
@@ -164,28 +210,61 @@ fn render_command_confirmation_dialog(f: &mut Frame, app: &mut App) {
 
     let mut lines = vec![
         Line::from(vec![Span::styled(message, Style::default().fg(COLOR_TEXT))]),
-        Line::from(vec![Span::styled(format!("> {}", target), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))]),
+        Line::from(vec![Span::styled(
+            format!("> {}", target),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )]),
         Line::from(""),
     ];
 
     if app.inputting_command_feedback {
-        lines.push(Line::from(vec![Span::styled("Please type your feedback below and press Enter (Esc to cancel):", Style::default().fg(COLOR_SECONDARY))]));
+        lines.push(Line::from(vec![Span::styled(
+            "Please type your feedback below and press Enter (Esc to cancel):",
+            Style::default().fg(COLOR_SECONDARY),
+        )]));
     } else {
         lines.push(Line::from(vec![
-            Span::styled("[Y]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[Y]",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" Allow once  "),
-            Span::styled("[S]", Style::default().fg(COLOR_PRIMARY).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[S]",
+                Style::default()
+                    .fg(COLOR_PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" Allow for session  "),
-            Span::styled("[W]", Style::default().fg(COLOR_PRIMARY).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[W]",
+                Style::default()
+                    .fg(COLOR_PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" Allow for Workspace  "),
-            Span::styled("[F]", Style::default().fg(COLOR_SECONDARY).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[F]",
+                Style::default()
+                    .fg(COLOR_SECONDARY)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" Tell Agent something else  "),
-            Span::styled("[D] or [Esc]", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[D] or [Esc]",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" Deny"),
         ]));
     }
 
-    let paragraph = Paragraph::new(lines).block(block).wrap(ratatui::widgets::Wrap { trim: false });
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .wrap(ratatui::widgets::Wrap { trim: false });
     f.render_widget(ratatui::widgets::Clear, inner_area);
     f.render_widget(paragraph, inner_area);
 
@@ -196,10 +275,15 @@ fn render_command_confirmation_dialog(f: &mut Frame, app: &mut App) {
             width: inner_area.width.saturating_sub(4),
             height: 3,
         };
-        let input_block = Block::default().borders(ratatui::widgets::Borders::ALL).border_style(Style::default().fg(COLOR_PRIMARY));
+        let input_block = Block::default()
+            .borders(ratatui::widgets::Borders::ALL)
+            .border_style(Style::default().fg(COLOR_PRIMARY));
         app.input.set_block(input_block);
         f.render_widget(app.input.widget(), input_rect);
-        f.set_cursor(input_rect.x + app.input.cursor().1 as u16 + 1, input_rect.y + app.input.cursor().0 as u16 + 1);
+        f.set_cursor(
+            input_rect.x + app.input.cursor().1 as u16 + 1,
+            input_rect.y + app.input.cursor().0 as u16 + 1,
+        );
     }
 }
 
@@ -228,9 +312,12 @@ fn render_confirmation_dialog(f: &mut Frame, message: &str) {
         .borders(ratatui::widgets::Borders::ALL)
         .border_style(Style::default().fg(COLOR_PRIMARY));
 
-    let p = Paragraph::new(Span::styled(message, Style::default().fg(COLOR_TEXT).add_modifier(Modifier::BOLD)))
-        .alignment(ratatui::layout::Alignment::Center)
-        .block(block);
+    let p = Paragraph::new(Span::styled(
+        message,
+        Style::default().fg(COLOR_TEXT).add_modifier(Modifier::BOLD),
+    ))
+    .alignment(ratatui::layout::Alignment::Center)
+    .block(block);
 
     f.render_widget(ratatui::widgets::Clear, popup_horiz[1]);
     f.render_widget(p, popup_horiz[1]);
@@ -246,7 +333,10 @@ pub(crate) fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
     } else {
         ("xclip", &["-selection", "clipboard"])
     };
-    let mut child = Command::new(prog).args(args).stdin(Stdio::piped()).spawn()?;
+    let mut child = Command::new(prog)
+        .args(args)
+        .stdin(Stdio::piped())
+        .spawn()?;
     if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(text.as_bytes())?;
     }
@@ -288,7 +378,10 @@ fn render_user_msg_modal(f: &mut Frame, app: &mut App) {
 
     let options = ["Copy Message", "Rewind & Edit"];
     let mut lines = vec![
-        Line::from(vec![Span::styled(" Choose an action:", Style::default().fg(COLOR_SECONDARY))]),
+        Line::from(vec![Span::styled(
+            " Choose an action:",
+            Style::default().fg(COLOR_SECONDARY),
+        )]),
         Line::from(""),
     ];
 
@@ -296,7 +389,9 @@ fn render_user_msg_modal(f: &mut Frame, app: &mut App) {
         let is_selected = idx == app.user_msg_modal_selected;
         let prefix = if is_selected { " -> " } else { "   " };
         let style = if is_selected {
-            Style::default().fg(COLOR_PRIMARY).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(COLOR_PRIMARY)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(COLOR_TEXT)
         };
@@ -307,7 +402,10 @@ fn render_user_msg_modal(f: &mut Frame, app: &mut App) {
     }
 
     lines.push(Line::from(""));
-    lines.push(Line::from(vec![Span::styled(" Press Enter/Click to select, Esc to close", Style::default().fg(COLOR_DIM))]));
+    lines.push(Line::from(vec![Span::styled(
+        " Press Enter/Click to select, Esc to close",
+        Style::default().fg(COLOR_DIM),
+    )]));
 
     let paragraph = Paragraph::new(lines).block(block);
     f.render_widget(ratatui::widgets::Clear, inner_area);
@@ -322,9 +420,15 @@ fn render_update_modal(f: &mut Frame, app: &mut App) {
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(((area.height as f32 * 0.3) as u16).min(area.height.saturating_sub(modal_height + 2))),
+            Constraint::Percentage(
+                ((area.height as f32 * 0.3) as u16)
+                    .min(area.height.saturating_sub(modal_height + 2)),
+            ),
             Constraint::Length(modal_height),
-            Constraint::Percentage(((area.height as f32 * 0.3) as u16).min(area.height.saturating_sub(modal_height + 2))),
+            Constraint::Percentage(
+                ((area.height as f32 * 0.3) as u16)
+                    .min(area.height.saturating_sub(modal_height + 2)),
+            ),
         ])
         .split(area);
 
@@ -344,8 +448,20 @@ fn render_update_modal(f: &mut Frame, app: &mut App) {
     let block = Block::default()
         .borders(ratatui::widgets::Borders::ALL)
         .border_style(Style::default().fg(COLOR_PRIMARY))
-        .title(ratatui::widgets::block::Title::from(Span::styled(" Update Available ", Style::default().fg(COLOR_TEXT).add_modifier(Modifier::BOLD))).alignment(ratatui::layout::Alignment::Left))
-        .title(ratatui::widgets::block::Title::from(Span::styled(" esc ", Style::default().fg(COLOR_DIM))).alignment(ratatui::layout::Alignment::Right))
+        .title(
+            ratatui::widgets::block::Title::from(Span::styled(
+                " Update Available ",
+                Style::default().fg(COLOR_TEXT).add_modifier(Modifier::BOLD),
+            ))
+            .alignment(ratatui::layout::Alignment::Left),
+        )
+        .title(
+            ratatui::widgets::block::Title::from(Span::styled(
+                " esc ",
+                Style::default().fg(COLOR_DIM),
+            ))
+            .alignment(ratatui::layout::Alignment::Right),
+        )
         .style(Style::default().bg(COLOR_BG));
 
     f.render_widget(block, inner_area);
@@ -358,15 +474,29 @@ fn render_update_modal(f: &mut Frame, app: &mut App) {
     };
 
     let mut lines = vec![
-        Line::from(vec![Span::styled(format!("Version {} is available (current: {})", version, env!("CARGO_PKG_VERSION")), Style::default().fg(COLOR_TEXT))]),
+        Line::from(vec![Span::styled(
+            format!(
+                "Version {} is available (current: {})",
+                version,
+                env!("CARGO_PKG_VERSION")
+            ),
+            Style::default().fg(COLOR_TEXT),
+        )]),
         Line::from(""),
     ];
 
     if !app.pending_update_changelog.is_empty() {
         let changelog_lines: Vec<&str> = app.pending_update_changelog.lines().take(5).collect();
         for line in changelog_lines {
-            let trimmed = if line.len() > 60 { format!("{}...", &line[..57]) } else { line.to_string() };
-            lines.push(Line::from(vec![Span::styled(trimmed.to_string(), Style::default().fg(COLOR_SECONDARY))]));
+            let trimmed = if line.len() > 60 {
+                format!("{}...", &line[..57])
+            } else {
+                line.to_string()
+            };
+            lines.push(Line::from(vec![Span::styled(
+                trimmed.to_string(),
+                Style::default().fg(COLOR_SECONDARY),
+            )]));
         }
     }
 
@@ -380,8 +510,22 @@ fn render_update_modal(f: &mut Frame, app: &mut App) {
         height: 1,
     };
 
-    let skip_style = if app.update_modal_selected == 0 { Style::default().fg(Color::Black).bg(COLOR_TEXT).add_modifier(Modifier::BOLD) } else { Style::default().fg(COLOR_DIM) };
-    let confirm_style = if app.update_modal_selected == 1 { Style::default().fg(Color::Black).bg(Color::Rgb(255, 179, 138)).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::Rgb(255, 179, 138)) };
+    let skip_style = if app.update_modal_selected == 0 {
+        Style::default()
+            .fg(Color::Black)
+            .bg(COLOR_TEXT)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(COLOR_DIM)
+    };
+    let confirm_style = if app.update_modal_selected == 1 {
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Rgb(255, 179, 138))
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Rgb(255, 179, 138))
+    };
 
     let buttons = Line::from(vec![
         Span::styled("  Skip  ", skip_style),
@@ -396,7 +540,9 @@ fn render_update_modal(f: &mut Frame, app: &mut App) {
 /// Try to lock config with short retry loop for use in sync render paths.
 /// Rare contention from config saves resolves within microseconds; this avoids
 /// silently showing "Loading..." or stale fallbacks.
-pub fn try_lock_config(app: &App) -> Option<tokio::sync::MutexGuard<'_, routecode_sdk::core::Config>> {
+pub fn try_lock_config(
+    app: &App,
+) -> Option<tokio::sync::MutexGuard<'_, routecode_sdk::core::Config>> {
     for _ in 0..10 {
         match app.orchestrator.config.try_lock() {
             Ok(guard) => return Some(guard),

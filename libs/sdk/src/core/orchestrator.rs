@@ -121,7 +121,10 @@ impl AgentOrchestrator {
         tx: Option<tokio::sync::mpsc::UnboundedSender<StreamChunk>>,
         cancel: Option<CancellationToken>,
     ) -> Result<(), anyhow::Error> {
-        match self.run_with_depth(history, model, tx.clone(), 0, cancel.clone()).await {
+        match self
+            .run_with_depth(history, model, tx.clone(), 0, cancel.clone())
+            .await
+        {
             Ok(_) => Ok(()),
             Err(e) => {
                 let was_cancelled = cancel.as_ref().is_some_and(|c| c.is_cancelled());
@@ -131,7 +134,9 @@ impl AgentOrchestrator {
                             content: "Request cancelled by user".to_string(),
                         });
                     } else {
-                        let _ = tx.send(StreamChunk::Error { content: e.to_string() });
+                        let _ = tx.send(StreamChunk::Error {
+                            content: e.to_string(),
+                        });
                     }
                     let _ = tx.send(StreamChunk::Done);
                 }
@@ -149,7 +154,9 @@ impl AgentOrchestrator {
         cancel: Option<CancellationToken>,
     ) -> Result<(), anyhow::Error> {
         if depth >= 25 {
-            return Err(anyhow::anyhow!("Maximum tool recursion depth (25) reached. Aborting to prevent infinite loop."));
+            return Err(anyhow::anyhow!(
+                "Maximum tool recursion depth (25) reached. Aborting to prevent infinite loop."
+            ));
         }
         if cancel.as_ref().is_some_and(|c| c.is_cancelled()) {
             return Err(anyhow::anyhow!("Request cancelled by user"));
@@ -163,7 +170,11 @@ impl AgentOrchestrator {
             Arc::new(Some(self.tool_registry.get_all_schemas()));
         let messages: Arc<Vec<Message>> = Arc::new(self.prepare_messages(history).await);
 
-        log::debug!("Sending AI request to model: {} (messages: {})", model, messages.len());
+        log::debug!(
+            "Sending AI request to model: {} (messages: {})",
+            model,
+            messages.len()
+        );
 
         // Snapshot the retry policy, thinking-level, and provider at the start
         // of the run. A mid-request policy change is intentionally NOT honored
@@ -239,7 +250,8 @@ impl AgentOrchestrator {
                 // non-buffered flows too).
                 if let StreamChunk::Usage { usage } = &chunk {
                     let mut u = self.usage.lock().await;
-                    u.add(usage.prompt_tokens, usage.completion_tokens, model).await;
+                    u.add(usage.prompt_tokens, usage.completion_tokens, model)
+                        .await;
                 }
 
                 // Accumulate the final assistant message.
@@ -252,9 +264,8 @@ impl AgentOrchestrator {
                     }
                     StreamChunk::ToolCall { tool_call } => {
                         if let Some(idx) = tool_call.index {
-                            if let Some(existing) = local_tool_calls
-                                .iter_mut()
-                                .find(|tc| tc.index == Some(idx))
+                            if let Some(existing) =
+                                local_tool_calls.iter_mut().find(|tc| tc.index == Some(idx))
                             {
                                 *existing = tool_call.clone();
                             } else {
@@ -334,7 +345,8 @@ impl AgentOrchestrator {
         if !tool_calls.is_empty() {
             for tc in tool_calls {
                 if let Some(tool) = self.tool_registry.get(&tc.function.name) {
-                    let args: serde_json::Value = match serde_json::from_str(&tc.function.arguments) {
+                    let args: serde_json::Value = match serde_json::from_str(&tc.function.arguments)
+                    {
                         Ok(a) => a,
                         Err(e) => {
                             return Err(anyhow::anyhow!(
@@ -347,18 +359,22 @@ impl AgentOrchestrator {
                     };
                     let mut execute_allowed = true;
                     let mut custom_error_msg = None;
-                    
+
                     use std::sync::atomic::Ordering;
 
                     if tc.function.name == "bash" {
                         if !self.allow_session_commands.load(Ordering::SeqCst) {
                             if let Some(ref sender) = tx {
-                                let command_str = args["command"].as_str().unwrap_or("").to_string();
+                                let command_str =
+                                    args["command"].as_str().unwrap_or("").to_string();
                                 let (oneshot_tx, oneshot_rx) = tokio::sync::oneshot::channel();
-                                let tx_wrapped = Arc::new(tokio::sync::Mutex::new(Some(oneshot_tx)));
-                                
+                                let tx_wrapped =
+                                    Arc::new(tokio::sync::Mutex::new(Some(oneshot_tx)));
+
                                 if let Err(e) = sender.send(StreamChunk::RequestConfirmation {
-                                    message: "The AI agent wants to execute the following bash command:".to_string(),
+                                    message:
+                                        "The AI agent wants to execute the following bash command:"
+                                            .to_string(),
                                     target: command_str,
                                     tx: Some(tx_wrapped),
                                 }) {
@@ -367,16 +383,27 @@ impl AgentOrchestrator {
 
                                 match oneshot_rx.await {
                                     Ok(crate::agents::types::ConfirmationResponse::AllowOnce) => {}
-                                    Ok(crate::agents::types::ConfirmationResponse::AllowSession) | Ok(crate::agents::types::ConfirmationResponse::AllowWorkspace) => {
+                                    Ok(
+                                        crate::agents::types::ConfirmationResponse::AllowSession,
+                                    )
+                                    | Ok(
+                                        crate::agents::types::ConfirmationResponse::AllowWorkspace,
+                                    ) => {
                                         self.allow_session_commands.store(true, Ordering::SeqCst);
                                     }
                                     Ok(crate::agents::types::ConfirmationResponse::Deny) => {
                                         execute_allowed = false;
-                                        custom_error_msg = Some("Command execution denied by user.".to_string());
+                                        custom_error_msg =
+                                            Some("Command execution denied by user.".to_string());
                                     }
-                                    Ok(crate::agents::types::ConfirmationResponse::Feedback(msg)) => {
+                                    Ok(crate::agents::types::ConfirmationResponse::Feedback(
+                                        msg,
+                                    )) => {
                                         execute_allowed = false;
-                                        custom_error_msg = Some(format!("Command execution denied by user with feedback: {}", msg));
+                                        custom_error_msg = Some(format!(
+                                            "Command execution denied by user with feedback: {}",
+                                            msg
+                                        ));
                                     }
                                     Err(_) => {
                                         execute_allowed = false;
@@ -385,14 +412,16 @@ impl AgentOrchestrator {
                                 }
                             }
                         }
-                    } else if ["file_read", "file_write", "file_edit", "ls", "tree", "grep"].contains(&tc.function.name.as_str())
+                    } else if ["file_read", "file_write", "file_edit", "ls", "tree", "grep"]
+                        .contains(&tc.function.name.as_str())
                         && !self.allow_session_outside_access.load(Ordering::SeqCst)
                     {
                         let path_str = args["path"].as_str().unwrap_or(".");
                         if crate::utils::storage::is_path_outside_workspace(path_str) {
                             if let Some(ref sender) = tx {
                                 let (oneshot_tx, oneshot_rx) = tokio::sync::oneshot::channel();
-                                let tx_wrapped = Arc::new(tokio::sync::Mutex::new(Some(oneshot_tx)));
+                                let tx_wrapped =
+                                    Arc::new(tokio::sync::Mutex::new(Some(oneshot_tx)));
 
                                 if let Err(e) = sender.send(StreamChunk::RequestConfirmation {
                                     message: "The AI agent wants to access a path OUTSIDE the current workspace:".to_string(),
@@ -404,20 +433,34 @@ impl AgentOrchestrator {
 
                                 match oneshot_rx.await {
                                     Ok(crate::agents::types::ConfirmationResponse::AllowOnce) => {}
-                                    Ok(crate::agents::types::ConfirmationResponse::AllowSession) | Ok(crate::agents::types::ConfirmationResponse::AllowWorkspace) => {
-                                        self.allow_session_outside_access.store(true, Ordering::SeqCst);
+                                    Ok(
+                                        crate::agents::types::ConfirmationResponse::AllowSession,
+                                    )
+                                    | Ok(
+                                        crate::agents::types::ConfirmationResponse::AllowWorkspace,
+                                    ) => {
+                                        self.allow_session_outside_access
+                                            .store(true, Ordering::SeqCst);
                                     }
                                     Ok(crate::agents::types::ConfirmationResponse::Deny) => {
                                         execute_allowed = false;
-                                        custom_error_msg = Some(format!("Access to outside path '{}' denied by user.", path_str));
+                                        custom_error_msg = Some(format!(
+                                            "Access to outside path '{}' denied by user.",
+                                            path_str
+                                        ));
                                     }
-                                    Ok(crate::agents::types::ConfirmationResponse::Feedback(msg)) => {
+                                    Ok(crate::agents::types::ConfirmationResponse::Feedback(
+                                        msg,
+                                    )) => {
                                         execute_allowed = false;
                                         custom_error_msg = Some(format!("Access to outside path '{}' denied by user with feedback: {}", path_str, msg));
                                     }
                                     Err(_) => {
                                         execute_allowed = false;
-                                        custom_error_msg = Some("Access cancelled (confirmation channel closed).".to_string());
+                                        custom_error_msg = Some(
+                                            "Access cancelled (confirmation channel closed)."
+                                                .to_string(),
+                                        );
                                     }
                                 }
                             } else {
@@ -431,7 +474,10 @@ impl AgentOrchestrator {
                     let result = if execute_allowed {
                         match tool.execute(args).await {
                             Ok(res) => res,
-                            Err(e) => crate::core::ToolResult::error(format!("Tool execution failed: {}", e)),
+                            Err(e) => crate::core::ToolResult::error(format!(
+                                "Tool execution failed: {}",
+                                e
+                            )),
                         }
                     } else {
                         crate::core::ToolResult::error(custom_error_msg.unwrap_or_default())
@@ -458,7 +504,9 @@ impl AgentOrchestrator {
         }
 
         if let Some(ref tx) = tx {
-            let _ = tx.send(StreamChunk::FinalHistory { history: history.clone() });
+            let _ = tx.send(StreamChunk::FinalHistory {
+                history: history.clone(),
+            });
             if let Err(e) = tx.send(StreamChunk::Done) {
                 log::error!("Failed to send Done chunk to UI: {}", e);
             }
@@ -472,7 +520,7 @@ impl AgentOrchestrator {
 mod tests {
     use super::*;
     use crate::agents::types::StreamChunk;
-    use crate::core::{Message, Role, ToolCall, FunctionCall, ToolResult};
+    use crate::core::{FunctionCall, Message, Role, ToolCall, ToolResult};
     use crate::tools::traits::Tool;
     use async_trait::async_trait;
     use futures::stream;
@@ -484,9 +532,19 @@ mod tests {
 
     #[async_trait]
     impl AIProvider for MockProvider {
-        fn name(&self) -> &str { "Mock" }
-        async fn list_models(&self) -> Result<Vec<String>, anyhow::Error> { Ok(vec!["mock".to_string()]) }
-        async fn ask(&self, _msgs: Arc<Vec<Message>>, _model: &str, _tools: Arc<Option<Vec<serde_json::Value>>>, _thinking_level: Option<&str>) -> Result<crate::agents::traits::StreamResponse, anyhow::Error> {
+        fn name(&self) -> &str {
+            "Mock"
+        }
+        async fn list_models(&self) -> Result<Vec<String>, anyhow::Error> {
+            Ok(vec!["mock".to_string()])
+        }
+        async fn ask(
+            &self,
+            _msgs: Arc<Vec<Message>>,
+            _model: &str,
+            _tools: Arc<Option<Vec<serde_json::Value>>>,
+            _thinking_level: Option<&str>,
+        ) -> Result<crate::agents::traits::StreamResponse, anyhow::Error> {
             let mut resps = self.responses.lock().await;
             if resps.is_empty() {
                 return Err(anyhow::anyhow!("No more mock responses"));
@@ -500,9 +558,15 @@ mod tests {
     struct MockTool;
     #[async_trait]
     impl Tool for MockTool {
-        fn name(&self) -> &str { "mock_tool" }
-        fn description(&self) -> &str { "A mock tool" }
-        fn parameters(&self) -> serde_json::Value { json!({}) }
+        fn name(&self) -> &str {
+            "mock_tool"
+        }
+        fn description(&self) -> &str {
+            "A mock tool"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            json!({})
+        }
         async fn execute(&self, _args: serde_json::Value) -> Result<ToolResult, anyhow::Error> {
             Ok(ToolResult::success("success"))
         }
@@ -512,7 +576,9 @@ mod tests {
     async fn test_orchestrator_simple_chat() {
         let provider = Arc::new(MockProvider {
             responses: Mutex::new(vec![vec![
-                StreamChunk::Text { content: "Hello!".to_string() },
+                StreamChunk::Text {
+                    content: "Hello!".to_string(),
+                },
                 StreamChunk::Done,
             ]]),
         });
@@ -521,7 +587,10 @@ mod tests {
         let orchestrator = AgentOrchestrator::new(provider, Arc::new(tool_registry), config);
 
         let mut history = vec![Message::user("Hi")];
-        orchestrator.run(&mut history, "mock", None, None).await.unwrap();
+        orchestrator
+            .run(&mut history, "mock", None, None)
+            .await
+            .unwrap();
 
         assert_eq!(history.len(), 2);
         assert_eq!(history[1].role, Role::Assistant);
@@ -543,25 +612,30 @@ mod tests {
                                 name: "mock_tool".to_string(),
                                 arguments: "{}".to_string(),
                             },
-                        }
+                        },
                     },
                     StreamChunk::Done,
                 ],
                 // Second response: finalize
                 vec![
-                    StreamChunk::Text { content: "Tool executed!".to_string() },
+                    StreamChunk::Text {
+                        content: "Tool executed!".to_string(),
+                    },
                     StreamChunk::Done,
-                ]
+                ],
             ]),
         });
-        
+
         let mut tool_registry = ToolRegistry::new();
         tool_registry.register(Arc::new(MockTool));
         let config = Arc::new(Mutex::new(crate::core::Config::default()));
         let orchestrator = AgentOrchestrator::new(provider, Arc::new(tool_registry), config);
 
         let mut history = vec![Message::user("Run tool")];
-        orchestrator.run(&mut history, "mock", None, None).await.unwrap();
+        orchestrator
+            .run(&mut history, "mock", None, None)
+            .await
+            .unwrap();
 
         // History: User -> Assistant (ToolCall) -> ToolResult -> Assistant (Final)
         assert_eq!(history.len(), 4);

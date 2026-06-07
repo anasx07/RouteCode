@@ -39,7 +39,11 @@ pub struct Cli {
     /// Override the retry policy for this run. Accepted values:
     /// `disabled`, `qir`, `exponential_backoff`. Does not persist to
     /// config.json. Takes precedence over `--qir` if both are set.
-    #[arg(long, value_name = "STRATEGY", help = "Retry policy for this run: disabled | qir | exponential_backoff")]
+    #[arg(
+        long,
+        value_name = "STRATEGY",
+        help = "Retry policy for this run: disabled | qir | exponential_backoff"
+    )]
     pub retry_policy: Option<String>,
 
     #[command(subcommand)]
@@ -55,27 +59,26 @@ pub enum Commands {
 mod ui;
 
 use crossterm::{
-    event::{EnableBracketedPaste, DisableBracketedPaste, EnableMouseCapture, DisableMouseCapture},
+    event::{DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 use routecode_sdk::core::AgentOrchestrator;
 use routecode_sdk::tools::bash::BashTool;
-use routecode_sdk::tools::file_ops::{FileEditTool, FileReadTool, FileWriteTool, ApplyPatchTool};
+use routecode_sdk::tools::file_ops::{ApplyPatchTool, FileEditTool, FileReadTool, FileWriteTool};
 use routecode_sdk::tools::lsp_tool::LspTool;
 use routecode_sdk::tools::mcp::manager::McpManager;
 use routecode_sdk::tools::navigation::{GrepTool, LsTool, TreeTool};
 use routecode_sdk::tools::subagent::SubAgentTool;
 use routecode_sdk::tools::web::{fetch::WebFetchTool, search::WebSearchTool};
 use routecode_sdk::tools::ToolRegistry;
+use simplelog::{CombinedLogger, ConfigBuilder, LevelFilter, SharedLogger, WriteLogger};
 use std::io;
 use std::process::Command;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use ui::{run_app, App};
-use simplelog::{CombinedLogger, ConfigBuilder, LevelFilter, SharedLogger, WriteLogger};
-
 
 fn restore_terminal() {
     use crossterm::terminal::disable_raw_mode;
@@ -132,15 +135,20 @@ async fn main() -> anyhow::Result<()> {
     }
     let log_path = base_dir.join("routecode.log");
 
-    let log_level = if cli.debug { LevelFilter::Debug } else { LevelFilter::Info };
+    let log_level = if cli.debug {
+        LevelFilter::Debug
+    } else {
+        LevelFilter::Info
+    };
 
-    let loggers: Vec<Box<dyn SharedLogger>> = vec![
-        WriteLogger::new(
-            log_level,
-            ConfigBuilder::default().set_time_format_rfc3339().build(),
-            std::fs::OpenOptions::new().create(true).append(true).open(&log_path)?,
-        ),
-    ];
+    let loggers: Vec<Box<dyn SharedLogger>> = vec![WriteLogger::new(
+        log_level,
+        ConfigBuilder::default().set_time_format_rfc3339().build(),
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)?,
+    )];
 
     CombinedLogger::init(loggers)?;
 
@@ -159,14 +167,27 @@ async fn main() -> anyhow::Result<()> {
             #[cfg(target_os = "windows")]
             {
                 Command::new("cmd")
-                    .args(["/C", "start", "powershell", "-NoExit", "-Command", &format!("Get-Content -Path \"{}\" -Wait", log_path.display())])
+                    .args([
+                        "/C",
+                        "start",
+                        "powershell",
+                        "-NoExit",
+                        "-Command",
+                        &format!("Get-Content -Path \"{}\" -Wait", log_path.display()),
+                    ])
                     .spawn()
                     .map(|_| ())
             }
             #[cfg(target_os = "macos")]
             {
                 Command::new("osascript")
-                    .args(["-e", &format!("tell application \"Terminal\" to do script \"tail -f '{}'\"", log_path.display())])
+                    .args([
+                        "-e",
+                        &format!(
+                            "tell application \"Terminal\" to do script \"tail -f '{}'\"",
+                            log_path.display()
+                        ),
+                    ])
                     .spawn()
                     .map(|_| ())
             }
@@ -206,7 +227,10 @@ async fn main() -> anyhow::Result<()> {
         let json = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("Failed to read '{}': {}", path.display(), e))?;
         let session: routecode_sdk::utils::storage::Session = serde_json::from_str(&json)?;
-        let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("imported");
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("imported");
         routecode_sdk::utils::storage::save_session(name, &session)?;
         if let Ok(mut config) = routecode_sdk::utils::storage::load_session_config(name) {
             config.allow_all_commands = false;
@@ -267,7 +291,10 @@ async fn main() -> anyhow::Result<()> {
 
     // Initialize MCP Manager and load dynamic tools
     let mcp_manager = McpManager::new();
-    if let Err(e) = mcp_manager.load_and_register_tools(&mut tool_registry).await {
+    if let Err(e) = mcp_manager
+        .load_and_register_tools(&mut tool_registry)
+        .await
+    {
         eprintln!("Warning: Failed to load MCP tools: {}", e);
     }
 
@@ -292,7 +319,12 @@ async fn main() -> anyhow::Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture, EnableBracketedPaste)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        EnableBracketedPaste
+    )?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -304,16 +336,19 @@ async fn main() -> anyhow::Result<()> {
     let mut config_clone = config.clone();
     let update_handle = tokio::spawn(async move {
         if routecode_sdk::update::should_check(config_clone.last_update_check, 24) {
-            match routecode_sdk::update::check_for_update(&current_version, "anasx07/routecode").await {
+            match routecode_sdk::update::check_for_update(&current_version, "anasx07/routecode")
+                .await
+            {
                 Ok(info) => {
                     config_clone.last_update_check = routecode_sdk::update::now_timestamp();
                     let _ = routecode_sdk::utils::storage::save_config(&config_clone);
                     if info.is_update_available {
-                        let _ = tx.send(routecode_sdk::agents::types::StreamChunk::UpdateAvailable {
-                            version: info.version,
-                            changelog: info.changelog,
-                            published_at: info.published_at,
-                        });
+                        let _ =
+                            tx.send(routecode_sdk::agents::types::StreamChunk::UpdateAvailable {
+                                version: info.version,
+                                changelog: info.changelog,
+                                published_at: info.published_at,
+                            });
                     }
                 }
                 Err(e) => {
@@ -322,7 +357,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     });
-    
+
     let models_handle = tokio::spawn(async move {
         if let Err(e) = routecode_sdk::utils::models::fetch_and_cache_models().await {
             log::warn!("Failed to fetch models in background: {}", e);
@@ -339,18 +374,32 @@ async fn main() -> anyhow::Result<()> {
                 let mut u = app.orchestrator.usage.lock().await;
                 *u = session.usage;
                 app.session_id = resume_name.clone();
-                if let Ok(config) = routecode_sdk::utils::storage::load_session_config(&resume_name) {
-                    app.orchestrator.allow_session_commands.store(config.allow_all_commands, std::sync::atomic::Ordering::SeqCst);
-                    app.orchestrator.allow_session_outside_access.store(config.allow_all_outside_access, std::sync::atomic::Ordering::SeqCst);
+                if let Ok(config) = routecode_sdk::utils::storage::load_session_config(&resume_name)
+                {
+                    app.orchestrator.allow_session_commands.store(
+                        config.allow_all_commands,
+                        std::sync::atomic::Ordering::SeqCst,
+                    );
+                    app.orchestrator.allow_session_outside_access.store(
+                        config.allow_all_outside_access,
+                        std::sync::atomic::Ordering::SeqCst,
+                    );
                 }
             }
-            Err(e) => app.history.push(routecode_sdk::core::Message::system(format!("Failed to resume session '{}': {}", resume_name, e))),
+            Err(e) => app
+                .history
+                .push(routecode_sdk::core::Message::system(format!(
+                    "Failed to resume session '{}': {}",
+                    resume_name, e
+                ))),
         }
     }
 
     if let Ok(workspace_config) = routecode_sdk::utils::storage::load_workspace_config() {
         if workspace_config.allow_all_outside_access {
-            app.orchestrator.allow_session_outside_access.store(true, std::sync::atomic::Ordering::SeqCst);
+            app.orchestrator
+                .allow_session_outside_access
+                .store(true, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -431,8 +480,12 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Don't block shutdown on slow update checks — timeout after 1 second
-    tokio::time::timeout(std::time::Duration::from_secs(1), update_handle).await.ok();
-    tokio::time::timeout(std::time::Duration::from_secs(1), models_handle).await.ok();
+    tokio::time::timeout(std::time::Duration::from_secs(1), update_handle)
+        .await
+        .ok();
+    tokio::time::timeout(std::time::Duration::from_secs(1), models_handle)
+        .await
+        .ok();
 
     Ok(())
 }
@@ -463,7 +516,10 @@ mod tests {
     #[test]
     fn override_disabled_from_policy() {
         let cli = cli_with(&["--retry-policy", "disabled"]);
-        assert_eq!(apply_retry_policy_override(&cli), Some(RetryPolicy::Disabled));
+        assert_eq!(
+            apply_retry_policy_override(&cli),
+            Some(RetryPolicy::Disabled)
+        );
     }
 
     #[test]
@@ -477,7 +533,11 @@ mod tests {
         let cli = cli_with(&["--retry-policy", "exponential_backoff"]);
         let p = apply_retry_policy_override(&cli).unwrap();
         match p {
-            RetryPolicy::ExponentialBackoff { max_attempts, base_secs, jitter } => {
+            RetryPolicy::ExponentialBackoff {
+                max_attempts,
+                base_secs,
+                jitter,
+            } => {
                 assert!(max_attempts > 0);
                 assert!(base_secs > 0.0);
                 assert!(jitter);
@@ -490,7 +550,10 @@ mod tests {
     fn override_policy_wins_over_qir_flag() {
         let cli = cli_with(&["--qir", "--retry-policy", "disabled"]);
         // --retry-policy is more specific, so it wins.
-        assert_eq!(apply_retry_policy_override(&cli), Some(RetryPolicy::Disabled));
+        assert_eq!(
+            apply_retry_policy_override(&cli),
+            Some(RetryPolicy::Disabled)
+        );
     }
 
     #[test]

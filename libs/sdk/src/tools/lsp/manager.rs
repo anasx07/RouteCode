@@ -7,6 +7,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+#[derive(Default)]
 pub struct LspManager {
     clients: Mutex<HashMap<String, Arc<LspClient>>>,
 }
@@ -43,7 +44,8 @@ impl LspManager {
         let client = LspClient::spawn(program, &args).await.map_err(|e| {
             anyhow!(
                 "Failed to spawn {} (is it installed?). Error: {}",
-                program, e
+                program,
+                e
             )
         })?;
 
@@ -57,17 +59,18 @@ impl LspManager {
             process_id: Some(std::process::id()),
             workspace_folders: Some(vec![WorkspaceFolder {
                 uri: root_uri.clone(),
-                name: root_dir.file_name().unwrap_or_default().to_string_lossy().to_string(),
+                name: root_dir
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string(),
             }]),
             capabilities: ClientCapabilities::default(),
             ..Default::default()
         };
 
         let _init_result = client_arc
-            .request(
-                "initialize",
-                serde_json::to_value(init_params)?,
-            )
+            .request("initialize", serde_json::to_value(init_params)?)
             .await?;
 
         // Send initialized notification

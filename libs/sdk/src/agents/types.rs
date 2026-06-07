@@ -1,4 +1,4 @@
-use crate::core::{ToolCall, Message};
+use crate::core::{Message, ToolCall};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -45,7 +45,9 @@ pub enum StreamChunk {
         message: String,
         target: String,
         #[serde(skip)]
-        tx: Option<Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<ConfirmationResponse>>>>>,
+        tx: Option<
+            Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<ConfirmationResponse>>>>,
+        >,
     },
     UpdateAvailable {
         version: String,

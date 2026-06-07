@@ -60,12 +60,14 @@ impl AIProvider for CloudflareWorkersAI {
 
         let val: Value = match response.json().await {
             Ok(v) => v,
-            Err(_) => return Ok(vec![
-                "@cf/meta/llama-3-8b-instruct".to_string(),
-                "@cf/meta/llama-3-70b-instruct".to_string(),
-                "@cf/mistral/mistral-7b-instruct-v0.1".to_string(),
-                "@cf/qwen/qwen1.5-7b-chat-awq".to_string(),
-            ]),
+            Err(_) => {
+                return Ok(vec![
+                    "@cf/meta/llama-3-8b-instruct".to_string(),
+                    "@cf/meta/llama-3-70b-instruct".to_string(),
+                    "@cf/mistral/mistral-7b-instruct-v0.1".to_string(),
+                    "@cf/qwen/qwen1.5-7b-chat-awq".to_string(),
+                ])
+            }
         };
 
         if let Some(result) = val["result"].as_array() {
@@ -74,7 +76,7 @@ impl AIProvider for CloudflareWorkersAI {
                 .filter_map(|m| m["name"].as_str().map(|s| s.to_string()))
                 .collect();
             if models.is_empty() {
-                 Ok(vec![
+                Ok(vec![
                     "@cf/meta/llama-3-8b-instruct".to_string(),
                     "@cf/meta/llama-3-70b-instruct".to_string(),
                     "@cf/mistral/mistral-7b-instruct-v0.1".to_string(),
