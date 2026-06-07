@@ -35,7 +35,7 @@ impl VertexAIProvider {
 
     fn endpoint(&self, model: &str) -> String {
         format!(
-            "https://{}-aiplatform.googleapis.com/v1/projects/{}/locations/{}/publishers/google/models/{}:streamGenerateContent",
+            "https://{}-vertexai.googleapis.com/v1/projects/{}/locations/{}/models/{}:streamGenerateContent",
             self.location, self.project, self.location, model
         )
     }
