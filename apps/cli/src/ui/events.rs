@@ -322,6 +322,13 @@ pub(crate) async fn handle_key_event(
                             format!("{}_API_KEY", provider_id.to_uppercase().replace("-", "_"));
                         let api_key = std::env::var(env_key)
                             .ok()
+                            .or_else(|| {
+                                if provider_id == "vertex" {
+                                    std::env::var("GOOGLE_API_KEY").ok()
+                                } else {
+                                    None
+                                }
+                            })
                             .or_else(|| config.api_keys.get(provider_id).cloned());
                         if let Some(key) = api_key {
                             config.model = model_name.clone();
@@ -487,6 +494,9 @@ pub(crate) async fn handle_key_event(
                         let mut api_key = std::env::var(&env_key).ok();
                         if api_key.is_none() && provider_id.starts_with("cloudflare") {
                             api_key = std::env::var("CLOUDFLARE_API_KEY").ok();
+                        }
+                        if api_key.is_none() && provider_id == "vertex" {
+                            api_key = std::env::var("GOOGLE_API_KEY").ok();
                         }
                         if api_key.is_none() {
                             let config = app.orchestrator.config.lock().await;

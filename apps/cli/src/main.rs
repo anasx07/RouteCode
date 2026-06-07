@@ -258,6 +258,13 @@ async fn main() -> anyhow::Result<()> {
     let provider_name = config.provider.clone();
     let api_key = std::env::var(format!("{}_API_KEY", provider_name.to_uppercase()))
         .ok()
+        .or_else(|| {
+            if provider_name == "vertex" {
+                std::env::var("GOOGLE_API_KEY").ok()
+            } else {
+                None
+            }
+        })
         .or_else(|| config.api_keys.get(&provider_name).cloned());
 
     let api_key = match api_key {
