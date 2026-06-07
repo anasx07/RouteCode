@@ -31,6 +31,17 @@ pub struct Cli {
     #[arg(long, help = "Import a session from a JSON file")]
     pub import: Option<String>,
 
+    /// Enable Quick Infinite Retry for this run (overrides the saved
+    /// config; does not persist). Equivalent to `--retry-policy qir`.
+    #[arg(long, help = "Enable Quick Infinite Retry (QIR) for this run")]
+    pub qir: bool,
+
+    /// Override the retry policy for this run. Accepted values:
+    /// `disabled`, `qir`, `exponential_backoff`. Does not persist to
+    /// config.json. Takes precedence over `--qir` if both are set.
+    #[arg(long, value_name = "STRATEGY", help = "Retry policy for this run: disabled | qir | exponential_backoff")]
+    pub retry_policy: Option<String>,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 }
@@ -51,8 +62,12 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use routecode_sdk::core::AgentOrchestrator;
 use routecode_sdk::tools::bash::BashTool;
-use routecode_sdk::tools::file_ops::{FileEditTool, FileReadTool, FileWriteTool};
+use routecode_sdk::tools::file_ops::{FileEditTool, FileReadTool, FileWriteTool, ApplyPatchTool};
+use routecode_sdk::tools::lsp_tool::LspTool;
+use routecode_sdk::tools::mcp::manager::McpManager;
 use routecode_sdk::tools::navigation::{GrepTool, LsTool, TreeTool};
+use routecode_sdk::tools::subagent::SubAgentTool;
+use routecode_sdk::tools::web::{fetch::WebFetchTool, search::WebSearchTool};
 use routecode_sdk::tools::ToolRegistry;
 use std::io;
 use std::process::Command;
@@ -71,6 +86,39 @@ fn restore_terminal() {
         DisableMouseCapture,
         DisableBracketedPaste
     );
+}
+
+/// Resolve the retry-policy override from CLI flags. `--retry-policy`
+/// wins over `--qir` if both are set. Returns `None` if neither flag is
+/// set or both yield no change. Bad values for `--retry-policy` are
+/// logged and ignored (we don't bail out — a typo shouldn't prevent the
+/// user from running the app at all).
+fn apply_retry_policy_override(cli: &Cli) -> Option<routecode_sdk::core::config::RetryPolicy> {
+    use routecode_sdk::core::config::RetryPolicy;
+    if let Some(s) = &cli.retry_policy {
+        match s.as_str() {
+            "disabled" => return Some(RetryPolicy::Disabled),
+            "qir" => return Some(RetryPolicy::Qir),
+            "exponential_backoff" => {
+                return Some(RetryPolicy::ExponentialBackoff {
+                    max_attempts: 10,
+                    base_secs: 1.0,
+                    jitter: true,
+                });
+            }
+            other => {
+                log::warn!(
+                    "Unknown --retry-policy value '{}'. Accepted: disabled, qir, exponential_backoff. Ignoring.",
+                    other
+                );
+                return None;
+            }
+        }
+    }
+    if cli.qir {
+        return Some(RetryPolicy::Qir);
+    }
+    None
 }
 
 #[tokio::main]
@@ -178,6 +226,9 @@ async fn main() -> anyhow::Result<()> {
     if let Some(p) = &cli.provider {
         config.provider = p.clone();
     }
+    if let Some(policy) = apply_retry_policy_override(&cli) {
+        config.retry_policy = policy;
+    }
 
     // API Key Discovery
     let provider_name = config.provider.clone();
@@ -209,6 +260,26 @@ async fn main() -> anyhow::Result<()> {
     tool_registry.register(Arc::new(LsTool));
     tool_registry.register(Arc::new(TreeTool));
     tool_registry.register(Arc::new(GrepTool));
+    tool_registry.register(Arc::new(LspTool::new()));
+    tool_registry.register(Arc::new(ApplyPatchTool));
+    tool_registry.register(Arc::new(WebFetchTool));
+    tool_registry.register(Arc::new(WebSearchTool));
+
+    // Initialize MCP Manager and load dynamic tools
+    let mcp_manager = McpManager::new();
+    if let Err(e) = mcp_manager.load_and_register_tools(&mut tool_registry).await {
+        eprintln!("Warning: Failed to load MCP tools: {}", e);
+    }
+
+    if config.sub_agents_enabled {
+        let registry_clone = Arc::new(tool_registry.clone());
+        tool_registry.register(Arc::new(SubAgentTool::new(
+            provider.clone(),
+            registry_clone,
+            Arc::new(Mutex::new(config.clone())),
+        )));
+    }
+
     let tool_registry = Arc::new(tool_registry);
 
     let config_mutex = Arc::new(Mutex::new(config.clone()));
@@ -251,6 +322,13 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     });
+    
+    let models_handle = tokio::spawn(async move {
+        if let Err(e) = routecode_sdk::utils::models::fetch_and_cache_models().await {
+            log::warn!("Failed to fetch models in background: {}", e);
+        }
+    });
+
     app.current_model = config.model;
 
     if let Some(resume_name) = cli.resume {
@@ -354,6 +432,71 @@ async fn main() -> anyhow::Result<()> {
 
     // Don't block shutdown on slow update checks — timeout after 1 second
     tokio::time::timeout(std::time::Duration::from_secs(1), update_handle).await.ok();
+    tokio::time::timeout(std::time::Duration::from_secs(1), models_handle).await.ok();
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use routecode_sdk::core::config::RetryPolicy;
+
+    fn cli_with(args: &[&str]) -> Cli {
+        let mut full = vec!["routecode"];
+        full.extend_from_slice(args);
+        Cli::parse_from(full)
+    }
+
+    #[test]
+    fn override_none_when_neither_flag_set() {
+        let cli = cli_with(&[]);
+        assert_eq!(apply_retry_policy_override(&cli), None);
+    }
+
+    #[test]
+    fn override_qir_from_flag() {
+        let cli = cli_with(&["--qir"]);
+        assert_eq!(apply_retry_policy_override(&cli), Some(RetryPolicy::Qir));
+    }
+
+    #[test]
+    fn override_disabled_from_policy() {
+        let cli = cli_with(&["--retry-policy", "disabled"]);
+        assert_eq!(apply_retry_policy_override(&cli), Some(RetryPolicy::Disabled));
+    }
+
+    #[test]
+    fn override_qir_from_policy() {
+        let cli = cli_with(&["--retry-policy", "qir"]);
+        assert_eq!(apply_retry_policy_override(&cli), Some(RetryPolicy::Qir));
+    }
+
+    #[test]
+    fn override_exponential_backoff_uses_safe_defaults() {
+        let cli = cli_with(&["--retry-policy", "exponential_backoff"]);
+        let p = apply_retry_policy_override(&cli).unwrap();
+        match p {
+            RetryPolicy::ExponentialBackoff { max_attempts, base_secs, jitter } => {
+                assert!(max_attempts > 0);
+                assert!(base_secs > 0.0);
+                assert!(jitter);
+            }
+            other => panic!("expected ExponentialBackoff, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn override_policy_wins_over_qir_flag() {
+        let cli = cli_with(&["--qir", "--retry-policy", "disabled"]);
+        // --retry-policy is more specific, so it wins.
+        assert_eq!(apply_retry_policy_override(&cli), Some(RetryPolicy::Disabled));
+    }
+
+    #[test]
+    fn override_unknown_value_is_ignored() {
+        // Bad value must not panic and must not change the policy.
+        let cli = cli_with(&["--retry-policy", "totally-bogus"]);
+        assert_eq!(apply_retry_policy_override(&cli), None);
+    }
 }

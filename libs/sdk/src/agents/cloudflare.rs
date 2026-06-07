@@ -8,6 +8,7 @@ use futures::StreamExt;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 pub struct CloudflareWorkersAI {
     account_id: String,
@@ -94,9 +95,9 @@ impl AIProvider for CloudflareWorkersAI {
 
     async fn ask(
         &self,
-        messages: Vec<Message>,
+        messages: Arc<Vec<Message>>,
         model: &str,
-        _tools: Option<Vec<Value>>,
+        _tools: Arc<Option<Vec<Value>>>,
         _thinking_level: Option<&str>,
     ) -> Result<StreamResponse, anyhow::Error> {
         // Workers AI has an OpenAI-compatible endpoint now, which is easier to use.
@@ -107,11 +108,11 @@ impl AIProvider for CloudflareWorkersAI {
 
         let mut body = json!({
             "model": model,
-            "messages": messages,
+            "messages": &*messages,
             "stream": true,
         });
 
-        if let Some(t) = _tools {
+        if let Some(t) = _tools.as_ref() {
             if !t.is_empty() {
                 body["tools"] = json!(t);
             }
@@ -125,10 +126,7 @@ impl AIProvider for CloudflareWorkersAI {
             .send()
             .await?;
 
-        if !response.status().is_success() {
-            let err_text = response.text().await?;
-            return Err(anyhow::anyhow!("Cloudflare Workers AI error: {}", err_text));
-        }
+        let response = crate::utils::error::check_status(response).await?;
 
         let mut bytes_stream = response.bytes_stream();
         let mut buffer = String::new();
@@ -184,9 +182,9 @@ impl AIProvider for CloudflareAIGateway {
 
     async fn ask(
         &self,
-        messages: Vec<Message>,
+        messages: Arc<Vec<Message>>,
         model: &str,
-        tools: Option<Vec<Value>>,
+        tools: Arc<Option<Vec<Value>>>,
         _thinking_level: Option<&str>,
     ) -> Result<StreamResponse, anyhow::Error> {
         // AI Gateway works as a proxy.
@@ -198,11 +196,11 @@ impl AIProvider for CloudflareAIGateway {
 
         let mut body = json!({
             "model": model,
-            "messages": messages,
+            "messages": &*messages,
             "stream": true,
         });
 
-        if let Some(t) = tools {
+        if let Some(t) = tools.as_ref() {
             body["tools"] = json!(t);
         }
 
@@ -214,10 +212,7 @@ impl AIProvider for CloudflareAIGateway {
             .send()
             .await?;
 
-        if !response.status().is_success() {
-            let err_text = response.text().await?;
-            return Err(anyhow::anyhow!("Cloudflare AI Gateway error: {}", err_text));
-        }
+        let response = crate::utils::error::check_status(response).await?;
 
         let mut bytes_stream = response.bytes_stream();
         let mut buffer = String::new();

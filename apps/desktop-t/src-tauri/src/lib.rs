@@ -1,16 +1,20 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tauri::{AppHandle, Emitter, State, Manager};
+use tokio_util::sync::CancellationToken;
 
 use routecode_sdk::core::{AgentOrchestrator, Message, Config};
 use routecode_sdk::agents::types::{ConfirmationResponse, StreamChunk};
-use routecode_sdk::tools::ToolRegistry;
-use routecode_sdk::tools::bash::BashTool;
-use routecode_sdk::tools::file_ops::{FileEditTool, FileReadTool, FileWriteTool};
-use routecode_sdk::tools::navigation::{GrepTool, LsTool, TreeTool};
+use routecode_sdk::tools::{
+    bash::BashTool, file_ops::{FileEditTool, FileReadTool, FileWriteTool, ApplyPatchTool},
+    lsp_tool::LspTool, mcp::manager::McpManager, navigation::{GrepTool, LsTool, TreeTool},
+    subagent::SubAgentTool, web::{fetch::WebFetchTool, search::WebSearchTool},
+    ToolRegistry,
+};
 use routecode_sdk::utils::storage::{
-    Session, save_session, load_session, list_sessions, sanitize_session_name,
-    find_project_root, get_base_dir
+    Session, SessionConfig, WorkspaceConfig, save_session, load_session, list_sessions,
+    load_session_config, save_session_config, load_workspace_config, save_workspace_config,
+    sanitize_session_name, find_project_root, get_base_dir
 };
 
 type PendingConfirmation = Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<ConfirmationResponse>>>>;
@@ -19,6 +23,7 @@ type PendingConfirmation = Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::S
 pub struct AppState {
     pub orchestrator: Mutex<Option<Arc<AgentOrchestrator>>>,
     pub pending_confirmation: Mutex<Option<PendingConfirmation>>,
+    pub cancel_token: Mutex<Option<CancellationToken>>,
 }
 
 impl Default for AppState {
@@ -32,6 +37,7 @@ impl AppState {
         Self {
             orchestrator: Mutex::new(None),
             pending_confirmation: Mutex::new(None),
+            cancel_token: Mutex::new(None),
         }
     }
 }
@@ -153,6 +159,7 @@ async fn init_engine(
         routecode_sdk::agents::resolve_provider(&provider_name, api_key)
     };
 
+
     // Register Secure Tools into Registry
     let mut tool_registry = ToolRegistry::new();
     tool_registry.register(Arc::new(FileReadTool));
@@ -162,6 +169,26 @@ async fn init_engine(
     tool_registry.register(Arc::new(LsTool));
     tool_registry.register(Arc::new(TreeTool));
     tool_registry.register(Arc::new(GrepTool));
+    tool_registry.register(Arc::new(LspTool::new()));
+    tool_registry.register(Arc::new(ApplyPatchTool));
+    tool_registry.register(Arc::new(WebFetchTool));
+    tool_registry.register(Arc::new(WebSearchTool));
+
+    // Initialize MCP Manager and load dynamic tools
+    let mcp_manager = McpManager::new();
+    if let Err(e) = mcp_manager.load_and_register_tools(&mut tool_registry).await {
+        println!("Warning: Failed to load MCP tools: {}", e);
+    }
+
+    if config.sub_agents_enabled {
+        let registry_clone = Arc::new(tool_registry.clone());
+        tool_registry.register(Arc::new(SubAgentTool::new(
+            provider.clone(),
+            registry_clone,
+            Arc::new(Mutex::new(config.clone())),
+        )));
+    }
+
     let tool_registry = Arc::new(tool_registry);
 
     // Build the Mutex Config and Orchestrator
@@ -177,6 +204,32 @@ async fn init_engine(
     *orch_guard = Some(orchestrator);
 
     Ok("RouteCode SDK Engine Initialized Successfully".to_string())
+}
+
+// 7b. Fetch available models for a given provider using its API key. This
+// mirrors the CLI's `/model` flow: resolve the provider trait, call
+// `list_models()` (which hits the OpenAI-compatible `/models` endpoint for
+// most providers, the Anthropic/Cloudflare fallbacks for those).
+#[tauri::command]
+async fn fetch_provider_models(
+    provider_id: String,
+    api_key: String,
+) -> Result<Vec<String>, String> {
+    println!("Fetching models for provider={}", provider_id);
+
+    if provider_id.trim().is_empty() {
+        return Err("provider_id is empty".to_string());
+    }
+
+    let provider = routecode_sdk::agents::resolve_provider(&provider_id, api_key);
+    let mut models = provider
+        .list_models()
+        .await
+        .map_err(|e| format!("Failed to list models for {}: {}", provider_id, e))?;
+
+    models.sort();
+    models.dedup();
+    Ok(models)
 }
 
 // 8. Stream Agent Response Command
@@ -198,12 +251,25 @@ async fn send_message(
         }
     };
 
+    // Mint a fresh cancellation token for this request. Cancel any prior
+    // in-flight request first to keep the invariant that at most one
+    // request is active at a time.
+    let cancel_token = CancellationToken::new();
+    {
+        let mut guard = state.cancel_token.lock().await;
+        if let Some(prev) = guard.take() {
+            prev.cancel();
+        }
+        *guard = Some(cancel_token.clone());
+    }
+
     // Run the orchestrator in a spawned background thread
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<StreamChunk>();
 
     let mut history_mut = history.clone();
+    let cancel_for_task = cancel_token.clone();
     tokio::spawn(async move {
-        let _ = orchestrator.run(&mut history_mut, &model, Some(tx)).await;
+        let _ = orchestrator.run(&mut history_mut, &model, Some(tx), Some(cancel_for_task)).await;
     });
 
     // Listen to the unbounded channel and stream to the frontend
@@ -238,13 +304,86 @@ async fn send_message(
     Ok("Streaming started".to_string())
 }
 
-// 9. User confirmation Response Command
+// 8b. Cancel an in-flight agent run
+#[tauri::command]
+async fn cancel_message(state: State<'_, AppState>) -> Result<String, String> {
+    println!("Cancellation requested for in-flight agent run");
+
+    let token = {
+        let guard = state.cancel_token.lock().await;
+        guard.clone()
+    };
+
+    match token {
+        Some(t) => {
+            t.cancel();
+            Ok("Cancellation signal sent to agent".to_string())
+        }
+        None => Err("No in-flight agent run to cancel".to_string()),
+    }
+}
+
+// 9. User confirmation Response Command. The `response` string maps to a
+// `ConfirmationResponse` variant the orchestrator awaits on:
+//
+//   "allow_once"      -> AllowOnce
+//   "allow_session"   -> AllowSession (sets the in-memory atomic and
+//                        persists `allow_all_commands` /
+//                        `allow_all_outside_access` to the active session)
+//   "allow_workspace" -> AllowWorkspace (sets the atomic, persists to the
+//                        active session, AND to the workspace config so
+//                        every session in this workspace inherits it)
+//   "deny"            -> Deny
+//   "feedback:<text>" -> Feedback(String) — the LLM sees the feedback as a
+//                        denial reason
 #[tauri::command]
 async fn respond_confirmation(
     state: State<'_, AppState>,
-    allowed: bool,
+    app: AppHandle,
+    response: String,
+    session_name: Option<String>,
 ) -> Result<String, String> {
-    println!("User responded to confirmation dialog: allowed={}", allowed);
+    println!("User responded to confirmation: {}", response);
+
+    let parsed = parse_confirmation_response(&response);
+
+    // For session/workspace allows we also flip the orchestrator's atomic
+    // eagerly and persist the change. The orchestrator's own branch in the
+    // await arm does the same flip; doing it here lets the modal close
+    // immediately and the next tool call in this session skips the prompt.
+    if matches!(
+        parsed,
+        ConfirmationResponse::AllowSession | ConfirmationResponse::AllowWorkspace
+    ) {
+        let orch_guard = state.orchestrator.lock().await;
+        if let Some(orch) = orch_guard.as_ref() {
+            use std::sync::atomic::Ordering;
+            orch.allow_session_commands.store(true, Ordering::SeqCst);
+            orch.allow_session_outside_access.store(true, Ordering::SeqCst);
+        }
+
+        if let Some(name) = session_name.as_deref() {
+            // Persist session-level permission.
+            if let Ok(mut sc) = load_session_config(name) {
+                sc.allow_all_commands = true;
+                sc.allow_all_outside_access = true;
+                if let Err(e) = save_session_config(name, &sc) {
+                    eprintln!("Failed to save session config: {}", e);
+                }
+            }
+            // For AllowWorkspace also persist to workspace config.
+            if matches!(parsed, ConfirmationResponse::AllowWorkspace) {
+                let wc = WorkspaceConfig {
+                    allow_all_outside_access: true,
+                    allowed_outside_paths: vec![],
+                };
+                if let Err(e) = save_workspace_config(&wc) {
+                    eprintln!("Failed to save workspace config: {}", e);
+                }
+            }
+        }
+        let _ = app;
+    }
 
     let sender_opt = {
         let mut pending_guard = state.pending_confirmation.lock().await;
@@ -254,18 +393,76 @@ async fn respond_confirmation(
     if let Some(tx_mutex) = sender_opt {
         let mut tx_guard = tx_mutex.lock().await;
         if let Some(tx) = tx_guard.take() {
-            let response = if allowed {
-                ConfirmationResponse::AllowOnce
-            } else {
-                ConfirmationResponse::Deny
-            };
-
-            let _ = tx.send(response);
+            let _ = tx.send(parsed);
             return Ok("Permission response sent to agent".to_string());
         }
     }
 
     Err("No pending confirmation request found".to_string())
+}
+
+fn parse_confirmation_response(s: &str) -> ConfirmationResponse {
+    if let Some(rest) = s.strip_prefix("feedback:") {
+        ConfirmationResponse::Feedback(rest.to_string())
+    } else {
+        match s {
+            "allow_once" => ConfirmationResponse::AllowOnce,
+            "allow_session" => ConfirmationResponse::AllowSession,
+            "allow_workspace" => ConfirmationResponse::AllowWorkspace,
+            "deny" => ConfirmationResponse::Deny,
+            // Back-compat: a bare "true"/"false" still maps to allow-once/deny
+            "true" => ConfirmationResponse::AllowOnce,
+            "false" => ConfirmationResponse::Deny,
+            other => ConfirmationResponse::Feedback(format!(
+                "Unknown response '{}' treated as deny",
+                other
+            )),
+        }
+    }
+}
+
+// 9b. Load per-session sandbox config. Defaults to `SessionConfig::default()`
+// (all denies) if no file exists on disk.
+#[tauri::command]
+async fn load_session_config_cmd(name: String) -> Result<SessionConfig, String> {
+    load_session_config(&name).map_err(|e| format!("Failed to load session config: {}", e))
+}
+
+// 9c. Persist per-session sandbox config. Used by the React side when the
+// user clicks "Allow for this session" in the confirmation modal.
+#[tauri::command]
+async fn save_session_config_cmd(name: String, config: SessionConfig) -> Result<String, String> {
+    save_session_config(&name, &config)
+        .map_err(|e| format!("Failed to save session config: {}", e))?;
+    Ok("Session config saved".to_string())
+}
+
+// 9d. Apply a session's persisted sandbox flags to the running orchestrator's
+// atomics. Called on session load / tab switch so the user's previous
+// "Allow for this session" choice is honored on the next run.
+#[tauri::command]
+async fn set_session_permissions(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<SessionConfig, String> {
+    let sc = load_session_config(&name).map_err(|e| format!("Failed to load session config: {}", e))?;
+    let wc = load_workspace_config().unwrap_or_default();
+
+    use std::sync::atomic::Ordering;
+    let orch_guard = state.orchestrator.lock().await;
+    if let Some(orch) = orch_guard.as_ref() {
+        let allow_commands = sc.allow_all_commands || wc.allow_all_outside_access;
+        orch.allow_session_commands.store(allow_commands, Ordering::SeqCst);
+        orch.allow_session_outside_access
+            .store(sc.allow_all_outside_access || wc.allow_all_outside_access, Ordering::SeqCst);
+    }
+    Ok(sc)
+}
+
+// 9e. Load workspace config (per-folder sandbox rules).
+#[tauri::command]
+async fn load_workspace_config_cmd() -> Result<WorkspaceConfig, String> {
+    Ok(load_workspace_config().unwrap_or_default())
 }
 
 // 10. Check for updates
@@ -341,8 +538,14 @@ pub fn run() {
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             init_engine,
+            fetch_provider_models,
             send_message,
+            cancel_message,
             respond_confirmation,
+            load_session_config_cmd,
+            save_session_config_cmd,
+            set_session_permissions,
+            load_workspace_config_cmd,
             get_config,
             save_config,
             list_saved_sessions,

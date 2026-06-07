@@ -147,8 +147,20 @@ pub fn ui_session(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
         left_spans.push(Span::styled(format!(" {} ", cleaned_model), Style::default().fg(COLOR_PRIMARY).add_modifier(Modifier::BOLD)));
         left_spans.push(Span::styled(thinking_tag, Style::default().fg(COLOR_SYSTEM).add_modifier(Modifier::BOLD)));
     }
+    if let Some(qir) = app.qir_retry_status {
+        let (color, label) = if qir.is_recovered() {
+            (COLOR_SUCCESS, format!(" ∞ {} ", qir.label()))
+        } else {
+            (COLOR_SYSTEM, format!(" ∞ {} ", qir.label()))
+        };
+        left_spans.push(Span::styled(label, Style::default().fg(color).add_modifier(Modifier::BOLD)));
+    }
     if !app.hide_context_summary {
-        left_spans.push(Span::styled(format!(" • Tokens: {} • Cost: ${:.4} ", app.usage.total_tokens, app.usage.total_cost), Style::default().fg(COLOR_SECONDARY)));
+        let mut summary = format!(" • Tokens: {} • Cost: ${:.4}", app.usage.total_tokens, app.usage.total_cost);
+        if app.usage.qir_attempts > 0 {
+            summary.push_str(&format!(" • Retries: {}", app.usage.qir_attempts));
+        }
+        left_spans.push(Span::styled(summary, Style::default().fg(COLOR_SECONDARY)));
         left_spans.push(Span::styled(format!(" • Scroll: {}/{} ", app.history_scroll, app.max_scroll), Style::default().fg(COLOR_SECONDARY).add_modifier(Modifier::DIM)));
     }
     left_spans.push(Span::styled(generating_text, Style::default().fg(COLOR_SYSTEM)));

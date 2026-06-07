@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use reqwest::Client;
 use serde_json::{json, Value};
+use std::sync::Arc;
 use uuid::Uuid;
 
 pub struct VertexAIProvider {
@@ -47,21 +48,33 @@ impl AIProvider for VertexAIProvider {
     }
 
     async fn list_models(&self) -> Result<Vec<String>, anyhow::Error> {
+        if let Some(models) = crate::utils::models::get_models_for_provider("google-vertex") {
+            return Ok(models);
+        }
         Ok(vec![
+            "gemini-2.5-pro".to_string(),
+            "gemini-2.5-flash".to_string(),
+            "gemini-2.0-pro-exp-02-05".to_string(),
+            "gemini-2.0-flash-thinking-exp-01-21".to_string(),
+            "gemini-2.0-flash".to_string(),
+            "gemini-2.0-flash-lite-preview-02-05".to_string(),
             "gemini-2.0-flash-001".to_string(),
             "gemini-2.0-flash-exp".to_string(),
             "gemini-1.5-pro-002".to_string(),
             "gemini-1.5-pro-001".to_string(),
             "gemini-1.5-flash-002".to_string(),
             "gemini-1.5-flash-001".to_string(),
+            "claude-3-7-sonnet@20250219".to_string(),
+            "claude-3-5-sonnet-v2@20241022".to_string(),
+            "claude-3-5-haiku@20241022".to_string(),
         ])
     }
 
     async fn ask(
         &self,
-        messages: Vec<Message>,
+        messages: Arc<Vec<Message>>,
         model: &str,
-        _tools: Option<Vec<Value>>,
+        _tools: Arc<Option<Vec<Value>>>,
         _thinking_level: Option<&str>,
     ) -> Result<StreamResponse, anyhow::Error> {
         let url = self.endpoint(model);
@@ -74,7 +87,7 @@ impl AIProvider for VertexAIProvider {
         let mut contents = Vec::new();
         let mut system_instruction = String::new();
 
-        for msg in messages {
+        for msg in messages.iter() {
             match msg.role {
                 Role::System => {
                     if let Some(c) = &msg.content {
@@ -84,7 +97,7 @@ impl AIProvider for VertexAIProvider {
                 Role::User => {
                     contents.push(json!({
                         "role": "user",
-                        "parts": [{ "text": msg.content.unwrap_or_default() }]
+                        "parts": [{ "text": msg.content.as_deref().unwrap_or_default() }]
                     }));
                 }
                 Role::Assistant => {
@@ -117,7 +130,7 @@ impl AIProvider for VertexAIProvider {
                         "parts": [{
                             "functionResponse": {
                                 "name": fn_name,
-                                "response": { "result": msg.content.unwrap_or_default() }
+                                "response": { "result": msg.content.as_deref().unwrap_or_default() }
                             }
                         }]
                     }));
@@ -142,10 +155,7 @@ impl AIProvider for VertexAIProvider {
 
         let response = request.send().await?;
 
-        if !response.status().is_success() {
-            let err_text = response.text().await?;
-            return Err(anyhow::anyhow!("Vertex AI error: {}", err_text));
-        }
+        let response = crate::utils::error::check_status(response).await?;
 
         let mut bytes_stream = response.bytes_stream();
         let mut buffer = String::new();

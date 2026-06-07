@@ -6,6 +6,7 @@ use crate::utils::costs::Usage;
 use futures::StreamExt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 
 pub struct AgentOrchestrator {
     provider: Mutex<Arc<dyn AIProvider>>,
@@ -47,10 +48,42 @@ impl AgentOrchestrator {
 
         // 1. Build System Prompt with Project Context
         let mut system_content = String::from(
-            "You are RouteCode, a senior software engineer AI coding assistant.\n\
-            You help users with their codebase through a terminal interface.\n\
-            You have access to tools for file operations, navigation, and bash commands.\n\
-            When you need to explore or modify the codebase, use the appropriate tools.\n",
+            "You are RouteCode, a senior software engineer AI coding assistant. \
+            You help users work with their codebase through a terminal interface.\n\
+            \n\
+            # Tool use\n\
+            - You have access to tools for file operations, navigation, and bash commands.\n\
+            - Read files before modifying them. Use the smallest tool that solves the task.\n\
+            - When a tool fails, diagnose the root cause before retrying; do not blindly re-run.\n\
+            - Chain tools deliberately: if one tool's output determines the next call, do not speculatively parallelize.\n\
+            \n\
+            # Response style\n\
+            - Be concise. Prefer short, direct answers over long preambles.\n\
+            - When you create or modify a file, briefly explain why in the chat.\n\
+            - Show final code in the chat (not only via tool calls) so the user can review without expanding the file.\n\
+            - Use markdown sparingly: fenced code blocks for code, bullet lists for 3+ items, plain text otherwise.\n\
+            \n\
+            # Language\n\
+            - Reply in the same language the user uses. If the user writes in Spanish, respond in Spanish; \
+            if in Japanese, respond in Japanese. Default to English only when the user writes in English.\n\
+            - Keep code, identifiers, file paths, and error messages in their original language (usually English) \
+            regardless of your response language.\n\
+            \n\
+            # Anticipate edge cases\n\
+            - Before answering, consider what the user may not have thought of: empty inputs, null values, \
+            error states, boundary conditions, concurrency, large inputs, encoding, locale, permissions.\n\
+            - If an edge case could break the user's code or change behavior, mention it briefly with a one-line fix.\n\
+            - Do not pad answers with exhaustive edge-case lists when the question is simple. Mention only what matters.\n\
+            \n\
+            # Safety\n\
+            - Never run destructive commands (rm -rf, force push, dropping databases, etc.) without explicit user confirmation.\n\
+            - Never exfiltrate secrets, API keys, or PII from the workspace.\n\
+            - If a request is ambiguous or potentially harmful, ask one short clarifying question before acting.\n\
+            \n\
+            # Project context\n\
+            - The user's README.md and ROUTECODE.md are appended below. Follow any project-specific rules in them \
+            as if they were part of this prompt.\n\
+            - Project conventions (libraries, code style, file layout) take precedence over generic best practices.\n",
         );
 
         let project_root = crate::utils::storage::find_project_root();
@@ -86,12 +119,20 @@ impl AgentOrchestrator {
         history: &mut Vec<Message>,
         model: &str,
         tx: Option<tokio::sync::mpsc::UnboundedSender<StreamChunk>>,
+        cancel: Option<CancellationToken>,
     ) -> Result<(), anyhow::Error> {
-        match self.run_with_depth(history, model, tx.clone(), 0).await {
+        match self.run_with_depth(history, model, tx.clone(), 0, cancel.clone()).await {
             Ok(_) => Ok(()),
             Err(e) => {
+                let was_cancelled = cancel.as_ref().is_some_and(|c| c.is_cancelled());
                 if let Some(ref tx) = tx {
-                    let _ = tx.send(StreamChunk::Error { content: e.to_string() });
+                    if was_cancelled {
+                        let _ = tx.send(StreamChunk::Status {
+                            content: "Request cancelled by user".to_string(),
+                        });
+                    } else {
+                        let _ = tx.send(StreamChunk::Error { content: e.to_string() });
+                    }
                     let _ = tx.send(StreamChunk::Done);
                 }
                 Err(e)
@@ -105,84 +146,166 @@ impl AgentOrchestrator {
         model: &str,
         tx: Option<tokio::sync::mpsc::UnboundedSender<StreamChunk>>,
         depth: usize,
+        cancel: Option<CancellationToken>,
     ) -> Result<(), anyhow::Error> {
         if depth >= 25 {
             return Err(anyhow::anyhow!("Maximum tool recursion depth (25) reached. Aborting to prevent infinite loop."));
         }
+        if cancel.as_ref().is_some_and(|c| c.is_cancelled()) {
+            return Err(anyhow::anyhow!("Request cancelled by user"));
+        }
 
-        let tools = Some(self.tool_registry.get_all_schemas());
-        let messages = self.prepare_messages(history).await;
+        // Wrap messages and tools in Arc once. The retry wrapper reuses the
+        // same allocation across attempts (Arc::clone is just a refcount bump)
+        // so we don't pay the cost of cloning a 100k-token history on every
+        // retry.
+        let tools: Arc<Option<Vec<serde_json::Value>>> =
+            Arc::new(Some(self.tool_registry.get_all_schemas()));
+        let messages: Arc<Vec<Message>> = Arc::new(self.prepare_messages(history).await);
 
         log::debug!("Sending AI request to model: {} (messages: {})", model, messages.len());
 
-        let thinking_level = {
+        // Snapshot the retry policy, thinking-level, and provider at the start
+        // of the run. A mid-request policy change is intentionally NOT honored
+        // — an in-flight retry loop keeps its current policy for the rest of
+        // the request to avoid half-applied policy and to make the run's retry
+        // behavior deterministic for the user. Users who want to stop a
+        // runaway loop should use cancellation, not toggle.
+        let (thinking_level, retry_policy, provider_arc) = {
             let config = self.config.lock().await;
-            config.thinking_level.clone()
-        };
-
-        let stream = {
             let p = self.provider.lock().await;
-            p.ask(messages, model, tools, Some(&thinking_level)).await?
+            (
+                config.thinking_level.clone(),
+                config.retry_policy.clone(),
+                Arc::clone(&p),
+            )
         };
 
-        let mut stream = stream;
+        // Wrap the provider in a RetryingProvider for this request. This is
+        // where the retry logic lives now — the orchestrator just consumes
+        // the returned stream.
+        let retrying = crate::agents::RetryingProvider::new(provider_arc, retry_policy);
 
-        let mut assistant_content = String::new();
-        let mut assistant_thought = String::new();
-        let mut tool_calls: Vec<crate::core::ToolCall> = Vec::new();
+        let (assistant_content, assistant_thought, tool_calls) = {
+            let mut s = retrying
+                .ask_with_retry(
+                    Arc::clone(&messages),
+                    model,
+                    Arc::clone(&tools),
+                    Some(&thinking_level),
+                    cancel.clone(),
+                )
+                .await?;
 
-        while let Some(chunk_res) = stream.next().await {
-            let chunk = match chunk_res {
-                Ok(c) => c,
-                Err(e) => {
-                    log::error!("Stream error: {}", e);
-                    return Err(e);
-                }
-            };
-            log::debug!("Received chunk: {:?}", chunk);
+            let mut local_content = String::new();
+            let mut local_thought = String::new();
+            let mut local_tool_calls: Vec<crate::core::ToolCall> = Vec::new();
+            let mut chunk_buffer: Vec<StreamChunk> = Vec::new();
 
-            if let Some(ref tx) = tx {
-                if let Err(e) = tx.send(chunk.clone()) {
-                    log::error!("Failed to send chunk to UI: {}", e);
+            while let Some(chunk_res) = s.next().await {
+                // Check for user cancellation between stream chunks.
+                if cancel.as_ref().is_some_and(|c| c.is_cancelled()) {
+                    return Err(anyhow::anyhow!("Request cancelled by user"));
                 }
-            }
 
-            match chunk {
-                StreamChunk::Text { content } => {
-                    assistant_content.push_str(&content);
-                }
-                StreamChunk::Thought { content } => {
-                    assistant_thought.push_str(&content);
-                }
-                StreamChunk::ToolCall { tool_call } => {
-                    if let Some(idx) = tool_call.index {
-                        if let Some(existing) =
-                            tool_calls.iter_mut().find(|tc| tc.index == Some(idx))
-                        {
-                            *existing = tool_call;
-                        } else {
-                            tool_calls.push(tool_call);
+                let chunk = match chunk_res {
+                    Ok(c) => c,
+                    Err(e) => {
+                        return Err(e);
+                    }
+                };
+
+                // Detect retry events emitted by the wrapper and bump the
+                // session-aggregate UI state in real time. The status text is
+                // produced by the wrapper, so the strings are stable.
+                if let StreamChunk::Status { content } = &chunk {
+                    if content.starts_with("QIR retrying")
+                        || content.starts_with("QIR stream interrupted")
+                    {
+                        let mut u = self.usage.lock().await;
+                        u.record_qir_attempt();
+                        if let Some(ref tx) = tx {
+                            let _ = tx.send(StreamChunk::SessionStats {
+                                total_tokens: u.total_tokens,
+                                total_cost: u.total_cost,
+                                qir_attempts: u.qir_attempts,
+                            });
                         }
-                    } else {
-                        tool_calls.push(tool_call);
                     }
                 }
-                StreamChunk::Usage { usage } => {
+
+                // Capture usage for the session aggregate as we go (success
+                // path will have flushed chunks; this catches them in
+                // non-buffered flows too).
+                if let StreamChunk::Usage { usage } = &chunk {
                     let mut u = self.usage.lock().await;
                     u.add(usage.prompt_tokens, usage.completion_tokens, model).await;
                 }
-                StreamChunk::Error { content } => {
-                    return Err(anyhow::anyhow!("Provider error: {}", content));
+
+                // Accumulate the final assistant message.
+                match &chunk {
+                    StreamChunk::Text { content } => {
+                        local_content.push_str(content);
+                    }
+                    StreamChunk::Thought { content } => {
+                        local_thought.push_str(content);
+                    }
+                    StreamChunk::ToolCall { tool_call } => {
+                        if let Some(idx) = tool_call.index {
+                            if let Some(existing) = local_tool_calls
+                                .iter_mut()
+                                .find(|tc| tc.index == Some(idx))
+                            {
+                                *existing = tool_call.clone();
+                            } else {
+                                local_tool_calls.push(tool_call.clone());
+                            }
+                        } else {
+                            local_tool_calls.push(tool_call.clone());
+                        }
+                    }
+                    // A `StreamChunk::Error` reaching the orchestrator means
+                    // either (a) the retry wrapper was bypassed (e.g. policy
+                    // is `Disabled` and the provider emitted one mid-stream),
+                    // or (b) the wrapper is being misused as a passthrough.
+                    // In both cases the spec is "surface to the UI and abort
+                    // cleanly". `run()` above wraps the returned Err with a
+                    // `StreamChunk::Error` + `Done` so the consumer can
+                    // finalize without hanging.
+                    StreamChunk::Error { content } => {
+                        return Err(anyhow::anyhow!("Provider error: {}", content));
+                    }
+                    _ => {}
                 }
-                StreamChunk::ToolResult { .. } => {}
-                StreamChunk::Done => {}
-                StreamChunk::FinalHistory { .. } => {}
-                StreamChunk::Models { .. } => {}
-                StreamChunk::ModelsDone => {}
-                StreamChunk::RequestConfirmation { .. } => {}
-                StreamChunk::UpdateAvailable { .. } => {}
+
+                // Buffer Done / Status / etc. for the final flush below.
+                chunk_buffer.push(chunk);
             }
-        }
+
+            // Final SessionStats snapshot so the UI sees the up-to-date
+            // aggregate after a successful (possibly retried) attempt.
+            if let Some(ref tx) = tx {
+                let u = self.usage.lock().await;
+                let _ = tx.send(StreamChunk::SessionStats {
+                    total_tokens: u.total_tokens,
+                    total_cost: u.total_cost,
+                    qir_attempts: u.qir_attempts,
+                });
+            }
+
+            // Flush all buffered chunks to the UI (this is the chunks from the
+            // successful attempt; the wrapper buffered failed attempts'
+            // chunks internally and only flushed the final one).
+            for chunk in chunk_buffer {
+                if let Some(ref tx) = tx {
+                    if let Err(e) = tx.send(chunk) {
+                        log::error!("Failed to send chunk to UI: {}", e);
+                    }
+                }
+            }
+
+            (local_content, local_thought, local_tool_calls)
+        };
 
         let assistant_msg = Message::assistant(
             if assistant_content.is_empty() {
@@ -331,7 +454,7 @@ impl AgentOrchestrator {
                 }
             }
             // Recurse after tool execution
-            return Box::pin(self.run_with_depth(history, model, tx, depth + 1)).await;
+            return Box::pin(self.run_with_depth(history, model, tx, depth + 1, cancel)).await;
         }
 
         if let Some(ref tx) = tx {
@@ -363,7 +486,7 @@ mod tests {
     impl AIProvider for MockProvider {
         fn name(&self) -> &str { "Mock" }
         async fn list_models(&self) -> Result<Vec<String>, anyhow::Error> { Ok(vec!["mock".to_string()]) }
-        async fn ask(&self, _msgs: Vec<Message>, _model: &str, _tools: Option<Vec<serde_json::Value>>, _thinking_level: Option<&str>) -> Result<crate::agents::traits::StreamResponse, anyhow::Error> {
+        async fn ask(&self, _msgs: Arc<Vec<Message>>, _model: &str, _tools: Arc<Option<Vec<serde_json::Value>>>, _thinking_level: Option<&str>) -> Result<crate::agents::traits::StreamResponse, anyhow::Error> {
             let mut resps = self.responses.lock().await;
             if resps.is_empty() {
                 return Err(anyhow::anyhow!("No more mock responses"));
@@ -398,7 +521,7 @@ mod tests {
         let orchestrator = AgentOrchestrator::new(provider, Arc::new(tool_registry), config);
 
         let mut history = vec![Message::user("Hi")];
-        orchestrator.run(&mut history, "mock", None).await.unwrap();
+        orchestrator.run(&mut history, "mock", None, None).await.unwrap();
 
         assert_eq!(history.len(), 2);
         assert_eq!(history[1].role, Role::Assistant);
@@ -438,7 +561,7 @@ mod tests {
         let orchestrator = AgentOrchestrator::new(provider, Arc::new(tool_registry), config);
 
         let mut history = vec![Message::user("Run tool")];
-        orchestrator.run(&mut history, "mock", None).await.unwrap();
+        orchestrator.run(&mut history, "mock", None, None).await.unwrap();
 
         // History: User -> Assistant (ToolCall) -> ToolResult -> Assistant (Final)
         assert_eq!(history.len(), 4);
