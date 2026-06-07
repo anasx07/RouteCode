@@ -1,15 +1,17 @@
-use crate::tools::lsp::manager::LspManager;
 use crate::core::ToolResult;
+use crate::tools::lsp::manager::LspManager;
 use crate::tools::traits::Tool;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use lsp_types::{
-    GotoDefinitionParams, HoverParams, Position, ReferenceContext, ReferenceParams, TextDocumentIdentifier, TextDocumentPositionParams, Url,
+    GotoDefinitionParams, HoverParams, Position, ReferenceContext, ReferenceParams,
+    TextDocumentIdentifier, TextDocumentPositionParams, Url,
 };
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+#[derive(Default)]
 pub struct LspTool {
     manager: Arc<LspManager>,
 }
@@ -72,18 +74,27 @@ impl Tool for LspTool {
 
         // Open Document notification (LSP servers require the file to be "opened" to answer queries)
         let client = self.manager.get_or_spawn_client(&path).await?;
-        
+
         let content = std::fs::read_to_string(&path)?;
         let did_open_params = lsp_types::DidOpenTextDocumentParams {
             text_document: lsp_types::TextDocumentItem {
                 uri: uri.clone(),
-                language_id: path.extension().unwrap_or_default().to_string_lossy().to_string(),
+                language_id: path
+                    .extension()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string(),
                 version: 1,
                 text: content,
             },
         };
         // We notify but don't await response, it's just a notification
-        let _ = client.notify("textDocument/didOpen", serde_json::to_value(did_open_params)?).await;
+        let _ = client
+            .notify(
+                "textDocument/didOpen",
+                serde_json::to_value(did_open_params)?,
+            )
+            .await;
 
         let text_doc_pos = TextDocumentPositionParams {
             text_document: TextDocumentIdentifier { uri: uri.clone() },
@@ -97,23 +108,31 @@ impl Tool for LspTool {
                     work_done_progress_params: Default::default(),
                     partial_result_params: Default::default(),
                 };
-                client.request("textDocument/definition", serde_json::to_value(params)?).await?
+                client
+                    .request("textDocument/definition", serde_json::to_value(params)?)
+                    .await?
             }
             "findReferences" => {
                 let params = ReferenceParams {
                     text_document_position: text_doc_pos,
-                    context: ReferenceContext { include_declaration: true },
+                    context: ReferenceContext {
+                        include_declaration: true,
+                    },
                     work_done_progress_params: Default::default(),
                     partial_result_params: Default::default(),
                 };
-                client.request("textDocument/references", serde_json::to_value(params)?).await?
+                client
+                    .request("textDocument/references", serde_json::to_value(params)?)
+                    .await?
             }
             "hover" => {
                 let params = HoverParams {
                     text_document_position_params: text_doc_pos,
                     work_done_progress_params: Default::default(),
                 };
-                client.request("textDocument/hover", serde_json::to_value(params)?).await?
+                client
+                    .request("textDocument/hover", serde_json::to_value(params)?)
+                    .await?
             }
             _ => return Ok(ToolResult::error("Unsupported operation")),
         };

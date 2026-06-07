@@ -31,9 +31,10 @@ pub fn parse_sse_buffer(
                                 content: content.to_string(),
                             });
                         }
-                        if let Some(thought) =
-                            delta.get("reasoning_content").and_then(|v| v.as_str())
-                                .or_else(|| delta.get("thought").and_then(|v| v.as_str()))
+                        if let Some(thought) = delta
+                            .get("reasoning_content")
+                            .and_then(|v| v.as_str())
+                            .or_else(|| delta.get("thought").and_then(|v| v.as_str()))
                         {
                             chunks.push(StreamChunk::Thought {
                                 content: thought.to_string(),
@@ -45,14 +46,16 @@ pub fn parse_sse_buffer(
                                 if let Some(idx_val) = tc_delta.get("index") {
                                     let index = idx_val.as_u64().unwrap_or(0) as usize;
                                     let entry =
-                                        active_tool_calls.entry(index).or_insert_with(|| ToolCall {
-                                            index: Some(index),
-                                            id: String::new(),
-                                            r#type: "function".to_string(),
-                                            function: FunctionCall {
-                                                name: String::new(),
-                                                arguments: String::new(),
-                                            },
+                                        active_tool_calls.entry(index).or_insert_with(|| {
+                                            ToolCall {
+                                                index: Some(index),
+                                                id: String::new(),
+                                                r#type: "function".to_string(),
+                                                function: FunctionCall {
+                                                    name: String::new(),
+                                                    arguments: String::new(),
+                                                },
+                                            }
                                         });
 
                                     if let Some(id) = tc_delta.get("id").and_then(|v| v.as_str()) {
@@ -62,7 +65,9 @@ pub fn parse_sse_buffer(
                                         if let Some(name) = f.get("name").and_then(|v| v.as_str()) {
                                             entry.function.name = name.to_string();
                                         }
-                                        if let Some(args) = f.get("arguments").and_then(|v| v.as_str()) {
+                                        if let Some(args) =
+                                            f.get("arguments").and_then(|v| v.as_str())
+                                        {
                                             entry.function.arguments.push_str(args);
                                         }
                                     }

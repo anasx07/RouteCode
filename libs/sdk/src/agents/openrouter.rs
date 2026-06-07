@@ -34,7 +34,8 @@ impl AIProvider for OpenRouter {
     }
 
     async fn list_models(&self) -> Result<Vec<String>, anyhow::Error> {
-        let response = self.client
+        let response = self
+            .client
             .get("https://openrouter.ai/api/v1/models")
             .header("Authorization", format!("Bearer {}", self.api_key))
             .send()
@@ -98,21 +99,21 @@ impl AIProvider for OpenRouter {
         let mut active_tool_calls: HashMap<usize, ToolCall> = HashMap::new();
 
         let s = stream! {
-            while let Some(item) = bytes_stream.next().await {
-                match item {
-                    Ok(bytes) => {
-                        let chunks = parse_sse_buffer(&mut buffer, &mut active_tool_calls, &String::from_utf8_lossy(&bytes));
-                        for chunk in chunks {
-                            yield Ok(chunk);
-                        }
-                        }
-                        Err(e) => {
-                        yield Err(anyhow::Error::from(e));
-                        }
-                        }
-                        }
-                        yield Ok(StreamChunk::Done);
-                        };
+        while let Some(item) = bytes_stream.next().await {
+            match item {
+                Ok(bytes) => {
+                    let chunks = parse_sse_buffer(&mut buffer, &mut active_tool_calls, &String::from_utf8_lossy(&bytes));
+                    for chunk in chunks {
+                        yield Ok(chunk);
+                    }
+                    }
+                    Err(e) => {
+                    yield Err(anyhow::Error::from(e));
+                    }
+                    }
+                    }
+                    yield Ok(StreamChunk::Done);
+                    };
         Ok(Box::pin(s))
     }
 }

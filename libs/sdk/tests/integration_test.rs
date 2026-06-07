@@ -1,6 +1,12 @@
+use async_trait::async_trait;
+use futures::stream;
 use routecode_sdk::agents::resolve_provider;
+use routecode_sdk::agents::types::StreamChunk;
+use routecode_sdk::agents::AIProvider;
 use routecode_sdk::core::orchestrator::AgentOrchestrator;
-use routecode_sdk::core::{Config, DynamicModelInfo, Message, Role, ToolCall, FunctionCall, ToolResult};
+use routecode_sdk::core::{
+    Config, DynamicModelInfo, FunctionCall, Message, Role, ToolCall, ToolResult,
+};
 use routecode_sdk::tools::bash::BashTool;
 use routecode_sdk::tools::file_ops::{FileEditTool, FileReadTool, FileWriteTool};
 use routecode_sdk::tools::navigation::{GrepTool, LsTool, TreeTool};
@@ -10,20 +16,15 @@ use routecode_sdk::utils::costs::{calculate_cost, Usage};
 use routecode_sdk::utils::storage::{
     find_project_root, is_path_outside_workspace, load_config, sanitize_session_name, save_config,
 };
-use routecode_sdk::agents::types::StreamChunk;
-use routecode_sdk::agents::AIProvider;
-use async_trait::async_trait;
-use futures::stream;
 use serde_json::json;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::fs;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use tempfile::TempDir;
 
 fn workspace_temp_dir() -> TempDir {
     let cwd = std::env::current_dir().expect("current dir");
     let dir = cwd.join(".routecode_test_tmp");
-    let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     TempDir::new_in(&dir).unwrap()
 }
@@ -45,7 +46,10 @@ async fn test_tool_file_write_read_edit_pipeline() {
     let read_args = json!({ "path": file_path.to_str().unwrap() });
     let res = read_tool.execute(read_args.clone()).await.unwrap();
     assert!(res.success, "FileRead after write failed: {:?}", res.error);
-    assert_eq!(res.content.unwrap(), "line 1: hello\nline 2: world\nline 3: goodbye");
+    assert_eq!(
+        res.content.unwrap(),
+        "line 1: hello\nline 2: world\nline 3: goodbye"
+    );
 
     let edit_tool = FileEditTool;
     let edit_args = json!({
@@ -58,7 +62,10 @@ async fn test_tool_file_write_read_edit_pipeline() {
 
     let res = read_tool.execute(read_args.clone()).await.unwrap();
     assert!(res.success, "FileRead after edit failed: {:?}", res.error);
-    assert_eq!(res.content.unwrap(), "line 1: hello\nline 2: world\nline 3: aloha");
+    assert_eq!(
+        res.content.unwrap(),
+        "line 1: hello\nline 2: world\nline 3: aloha"
+    );
 }
 
 #[tokio::test]
@@ -70,7 +77,10 @@ async fn test_tool_ls_tree_grep() {
     fs::write(dir.path().join("sub").join("gamma.rs"), "fn gamma() {}").unwrap();
 
     let ls_tool = LsTool;
-    let res = ls_tool.execute(json!({ "path": dir.path().to_str().unwrap() })).await.unwrap();
+    let res = ls_tool
+        .execute(json!({ "path": dir.path().to_str().unwrap() }))
+        .await
+        .unwrap();
     assert!(res.success);
     let content = res.content.unwrap();
     assert!(content.contains("alpha.rs"));
@@ -78,34 +88,46 @@ async fn test_tool_ls_tree_grep() {
     assert!(content.contains("sub"));
 
     let tree_tool = TreeTool;
-    let res = tree_tool.execute(json!({
-        "path": dir.path().to_str().unwrap(),
-        "depth": 2
-    })).await.unwrap();
+    let res = tree_tool
+        .execute(json!({
+            "path": dir.path().to_str().unwrap(),
+            "depth": 2
+        }))
+        .await
+        .unwrap();
     assert!(res.success);
     assert!(res.content.unwrap().contains("gamma.rs"));
 
     let grep_tool = GrepTool;
-    let res = grep_tool.execute(json!({
-        "pattern": "gamma",
-        "path": dir.path().to_str().unwrap()
-    })).await.unwrap();
+    let res = grep_tool
+        .execute(json!({
+            "pattern": "gamma",
+            "path": dir.path().to_str().unwrap()
+        }))
+        .await
+        .unwrap();
     assert!(res.success);
     assert!(res.content.unwrap().contains("gamma.rs"));
 
-    let res = grep_tool.execute(json!({
-        "pattern": "alpha",
-        "path": dir.path().to_str().unwrap(),
-        "include": "*.rs"
-    })).await.unwrap();
+    let res = grep_tool
+        .execute(json!({
+            "pattern": "alpha",
+            "path": dir.path().to_str().unwrap(),
+            "include": "*.rs"
+        }))
+        .await
+        .unwrap();
     assert!(res.success);
     assert!(res.content.unwrap().contains("alpha.rs"));
 
-    let res = grep_tool.execute(json!({
-        "pattern": "beta",
-        "path": dir.path().to_str().unwrap(),
-        "include": "*.rs"
-    })).await.unwrap();
+    let res = grep_tool
+        .execute(json!({
+            "pattern": "beta",
+            "path": dir.path().to_str().unwrap(),
+            "include": "*.rs"
+        }))
+        .await
+        .unwrap();
     assert!(res.success);
     assert_eq!(res.content.unwrap(), "No matches found.");
 }
@@ -154,12 +176,18 @@ async fn test_tool_edit_ambiguous() {
 async fn test_tool_bash_simple() {
     if cfg!(target_os = "windows") {
         let tool = BashTool;
-        let res = tool.execute(json!({"command": "echo hello"})).await.unwrap();
+        let res = tool
+            .execute(json!({"command": "echo hello"}))
+            .await
+            .unwrap();
         assert!(res.success);
         assert!(res.content.unwrap_or_default().contains("hello"));
     } else {
         let tool = BashTool;
-        let res = tool.execute(json!({"command": "echo hello"})).await.unwrap();
+        let res = tool
+            .execute(json!({"command": "echo hello"}))
+            .await
+            .unwrap();
         assert!(res.success);
         assert!(res.content.unwrap_or_default().contains("hello"));
     }
@@ -220,15 +248,30 @@ async fn test_orchestrator_recursion_depth_limit() {
     struct InfiniteLoopProvider;
     #[async_trait]
     impl AIProvider for InfiniteLoopProvider {
-        fn name(&self) -> &str { "InfiniteLoop" }
-        async fn list_models(&self) -> Result<Vec<String>, anyhow::Error> { Ok(vec!["mock".into()]) }
-        async fn ask(&self, _msgs: Arc<Vec<Message>>, _model: &str, _tools: Arc<Option<Vec<serde_json::Value>>>, _thinking_level: Option<&str>) -> Result<routecode_sdk::agents::traits::StreamResponse, anyhow::Error> {
+        fn name(&self) -> &str {
+            "InfiniteLoop"
+        }
+        async fn list_models(&self) -> Result<Vec<String>, anyhow::Error> {
+            Ok(vec!["mock".into()])
+        }
+        async fn ask(
+            &self,
+            _msgs: Arc<Vec<Message>>,
+            _model: &str,
+            _tools: Arc<Option<Vec<serde_json::Value>>>,
+            _thinking_level: Option<&str>,
+        ) -> Result<routecode_sdk::agents::traits::StreamResponse, anyhow::Error> {
             let chunks = vec![
                 Ok(StreamChunk::ToolCall {
                     tool_call: ToolCall {
-                        id: "call_inf".into(), r#type: "function".into(), index: Some(0),
-                        function: FunctionCall { name: "mock_tool".into(), arguments: "{}".into() },
-                    }
+                        id: "call_inf".into(),
+                        r#type: "function".into(),
+                        index: Some(0),
+                        function: FunctionCall {
+                            name: "mock_tool".into(),
+                            arguments: "{}".into(),
+                        },
+                    },
                 }),
                 Ok(StreamChunk::Done),
             ];
@@ -239,9 +282,15 @@ async fn test_orchestrator_recursion_depth_limit() {
     struct RecursiveMockTool;
     #[async_trait]
     impl Tool for RecursiveMockTool {
-        fn name(&self) -> &str { "mock_tool" }
-        fn description(&self) -> &str { "recursive mock" }
-        fn parameters(&self) -> serde_json::Value { json!({}) }
+        fn name(&self) -> &str {
+            "mock_tool"
+        }
+        fn description(&self) -> &str {
+            "recursive mock"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            json!({})
+        }
         async fn execute(&self, _args: serde_json::Value) -> Result<ToolResult, anyhow::Error> {
             Ok(ToolResult::success("ok"))
         }
@@ -256,7 +305,10 @@ async fn test_orchestrator_recursion_depth_limit() {
     let mut history = vec![Message::user("loop")];
     let result = orchestrator.run(&mut history, "mock", None, None).await;
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("Maximum tool recursion depth (25)"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Maximum tool recursion depth (25)"));
 }
 
 #[tokio::test]
@@ -266,13 +318,27 @@ async fn test_orchestrator_stream_channel() {
     }
     #[async_trait]
     impl AIProvider for StreamingProvider {
-        fn name(&self) -> &str { "Streaming" }
-        async fn list_models(&self) -> Result<Vec<String>, anyhow::Error> { Ok(vec!["mock".into()]) }
-        async fn ask(&self, _msgs: Arc<Vec<Message>>, _model: &str, _tools: Arc<Option<Vec<serde_json::Value>>>, _thinking_level: Option<&str>) -> Result<routecode_sdk::agents::traits::StreamResponse, anyhow::Error> {
+        fn name(&self) -> &str {
+            "Streaming"
+        }
+        async fn list_models(&self) -> Result<Vec<String>, anyhow::Error> {
+            Ok(vec!["mock".into()])
+        }
+        async fn ask(
+            &self,
+            _msgs: Arc<Vec<Message>>,
+            _model: &str,
+            _tools: Arc<Option<Vec<serde_json::Value>>>,
+            _thinking_level: Option<&str>,
+        ) -> Result<routecode_sdk::agents::traits::StreamResponse, anyhow::Error> {
             self.call_count.fetch_add(1, Ordering::SeqCst);
             let chunks = vec![
-                Ok(StreamChunk::Text { content: "Hello ".to_string() }),
-                Ok(StreamChunk::Text { content: "World!".to_string() }),
+                Ok(StreamChunk::Text {
+                    content: "Hello ".to_string(),
+                }),
+                Ok(StreamChunk::Text {
+                    content: "World!".to_string(),
+                }),
                 Ok(StreamChunk::Done),
             ];
             Ok(Box::pin(stream::iter(chunks)))
@@ -280,13 +346,18 @@ async fn test_orchestrator_stream_channel() {
     }
 
     let call_count = Arc::new(AtomicUsize::new(0));
-    let provider = Arc::new(StreamingProvider { call_count: call_count.clone() });
+    let provider = Arc::new(StreamingProvider {
+        call_count: call_count.clone(),
+    });
     let config = Arc::new(tokio::sync::Mutex::new(Config::default()));
     let orchestrator = AgentOrchestrator::new(provider, Arc::new(ToolRegistry::new()), config);
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let mut history = vec![Message::user("hi")];
-    orchestrator.run(&mut history, "mock", Some(tx), None).await.unwrap();
+    orchestrator
+        .run(&mut history, "mock", Some(tx), None)
+        .await
+        .unwrap();
 
     let mut text_parts = Vec::new();
     while let Some(chunk) = rx.recv().await {
@@ -314,8 +385,12 @@ async fn test_orchestrator_handles_mid_stream_error_chunk() {
     struct MidStreamErrorProvider;
     #[async_trait]
     impl AIProvider for MidStreamErrorProvider {
-        fn name(&self) -> &str { "MidStreamError" }
-        async fn list_models(&self) -> Result<Vec<String>, anyhow::Error> { Ok(vec!["mock".into()]) }
+        fn name(&self) -> &str {
+            "MidStreamError"
+        }
+        async fn list_models(&self) -> Result<Vec<String>, anyhow::Error> {
+            Ok(vec!["mock".into()])
+        }
         async fn ask(
             &self,
             _msgs: Arc<Vec<Message>>,
@@ -324,8 +399,12 @@ async fn test_orchestrator_handles_mid_stream_error_chunk() {
             _thinking_level: Option<&str>,
         ) -> Result<routecode_sdk::agents::traits::StreamResponse, anyhow::Error> {
             let chunks = vec![
-                Ok(StreamChunk::Text { content: "partial".to_string() }),
-                Ok(StreamChunk::Error { content: "rate-limited".to_string() }),
+                Ok(StreamChunk::Text {
+                    content: "partial".to_string(),
+                }),
+                Ok(StreamChunk::Error {
+                    content: "rate-limited".to_string(),
+                }),
                 Ok(StreamChunk::Done),
             ];
             Ok(Box::pin(stream::iter(chunks)))
@@ -346,9 +425,16 @@ async fn test_orchestrator_handles_mid_stream_error_chunk() {
     // StreamChunk::Error and StreamChunk::Done to the UI so the consumer
     // can finalize cleanly without hanging.
     let result = orchestrator.run(&mut history, "mock", Some(tx), None).await;
-    assert!(result.is_err(), "orchestrator should propagate mid-stream error");
+    assert!(
+        result.is_err(),
+        "orchestrator should propagate mid-stream error"
+    );
     let err_msg = result.unwrap_err().to_string();
-    assert!(err_msg.contains("rate-limited"), "error should carry provider content: {}", err_msg);
+    assert!(
+        err_msg.contains("rate-limited"),
+        "error should carry provider content: {}",
+        err_msg
+    );
 
     // Drain the UI channel and assert the cleanup shape.
     let mut got_error = false;
@@ -359,7 +445,11 @@ async fn test_orchestrator_handles_mid_stream_error_chunk() {
             StreamChunk::Text { content } => text_parts.push(content),
             StreamChunk::Error { content } => {
                 got_error = true;
-                assert!(content.contains("rate-limited"), "UI error content: {}", content);
+                assert!(
+                    content.contains("rate-limited"),
+                    "UI error content: {}",
+                    content
+                );
             }
             StreamChunk::Done => {
                 got_done = true;
@@ -367,7 +457,10 @@ async fn test_orchestrator_handles_mid_stream_error_chunk() {
             _ => {}
         }
     }
-    assert!(got_error, "UI should receive StreamChunk::Error after abort");
+    assert!(
+        got_error,
+        "UI should receive StreamChunk::Error after abort"
+    );
     assert!(got_done, "UI should receive StreamChunk::Done after abort");
     // The Text("partial") that arrived before the error may or may not be
     // flushed depending on buffering; the contract is just that the
@@ -387,7 +480,10 @@ async fn test_message_serialization_roundtrip() {
                 index: Some(0),
                 id: "call_1".into(),
                 r#type: "function".into(),
-                function: FunctionCall { name: "file_read".into(), arguments: r#"{"path":"."}"#.into() },
+                function: FunctionCall {
+                    name: "file_read".into(),
+                    arguments: r#"{"path":"."}"#.into(),
+                },
             }]),
         ),
         Message::tool("call_1".into(), "file_read".into(), "file content"),
@@ -412,7 +508,10 @@ async fn test_config_serialization_roundtrip() {
     config.model = "gpt-4o-mini".into();
     config.provider = "openai".into();
     config.thinking_level = "deep".into();
-    config.favorites.push(DynamicModelInfo { name: "claude-3-5-sonnet".into(), provider_id: "anthropic".into() });
+    config.favorites.push(DynamicModelInfo {
+        name: "claude-3-5-sonnet".into(),
+        provider_id: "anthropic".into(),
+    });
 
     let json = serde_json::to_string_pretty(&config).unwrap();
     let deserialized: Config = serde_json::from_str(&json).unwrap();

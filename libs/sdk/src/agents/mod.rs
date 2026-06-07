@@ -1,8 +1,8 @@
 pub mod anthropic;
 pub mod cloudflare;
 pub mod gemini;
-pub mod opencode;
 pub mod openai;
+pub mod opencode;
 pub mod openrouter;
 pub mod retry;
 pub mod traits;
@@ -13,8 +13,8 @@ pub mod vertex;
 pub use anthropic::AnthropicProvider;
 pub use cloudflare::{CloudflareAIGateway, CloudflareWorkersAI};
 pub use gemini::GeminiProvider;
-pub use opencode::OpenCodeProvider;
 pub use openai::OpenAIProvider;
+pub use opencode::OpenCodeProvider;
 pub use openrouter::OpenRouter;
 pub use retry::{run_retry_loop, RetryingProvider};
 pub use traits::AIProvider;
@@ -43,7 +43,10 @@ pub fn resolve_provider_with_config(
             // If api_key contains a colon, it might be account_id:api_token
             if api_key.contains(':') {
                 let parts: Vec<&str> = api_key.split(':').collect();
-                std::sync::Arc::new(CloudflareWorkersAI::new(parts[0].to_string(), parts[1].to_string()))
+                std::sync::Arc::new(CloudflareWorkersAI::new(
+                    parts[0].to_string(),
+                    parts[1].to_string(),
+                ))
             } else {
                 std::sync::Arc::new(CloudflareWorkersAI::new(account_id, api_key))
             }
@@ -54,7 +57,11 @@ pub fn resolve_provider_with_config(
             // If api_key contains colons, it might be account_id:gateway_id:api_token
             let parts: Vec<&str> = api_key.split(':').collect();
             if parts.len() == 3 {
-                std::sync::Arc::new(CloudflareAIGateway::new(parts[0].to_string(), parts[1].to_string(), parts[2].to_string()))
+                std::sync::Arc::new(CloudflareAIGateway::new(
+                    parts[0].to_string(),
+                    parts[1].to_string(),
+                    parts[2].to_string(),
+                ))
             } else {
                 std::sync::Arc::new(CloudflareAIGateway::new(account_id, gateway_id, api_key))
             }
@@ -91,7 +98,7 @@ pub fn resolve_provider_with_config(
                 .or_else(|_| std::env::var("GCP_PROJECT"))
                 .or_else(|_| std::env::var("GCLOUD_PROJECT"))
                 .unwrap_or_default();
-            
+
             let final_project = if vertex_project.is_empty() {
                 &env_project
             } else {

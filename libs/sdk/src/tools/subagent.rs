@@ -1,9 +1,9 @@
+use crate::agents::AIProvider;
+use crate::core::orchestrator::AgentOrchestrator;
+use crate::core::Config;
 use crate::core::ToolResult;
 use crate::tools::registry::ToolRegistry;
 use crate::tools::traits::Tool;
-use crate::core::orchestrator::AgentOrchestrator;
-use crate::core::Config;
-use crate::agents::AIProvider;
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -66,10 +66,15 @@ impl Tool for SubAgentTool {
 
         let approve_handle = tokio::spawn(async move {
             while let Some(chunk) = rx.recv().await {
-                if let crate::agents::types::StreamChunk::RequestConfirmation { tx: Some(resp_tx), .. } = chunk {
+                if let crate::agents::types::StreamChunk::RequestConfirmation {
+                    tx: Some(resp_tx),
+                    ..
+                } = chunk
+                {
                     let mut lock = resp_tx.lock().await;
                     if let Some(sender) = lock.take() {
-                        let _ = sender.send(crate::agents::types::ConfirmationResponse::AllowSession);
+                        let _ =
+                            sender.send(crate::agents::types::ConfirmationResponse::AllowSession);
                     }
                 }
             }
@@ -78,7 +83,7 @@ impl Tool for SubAgentTool {
         let config = self.config.lock().await;
         let model = config.model.clone();
         drop(config);
-        
+
         match orchestrator.run(&mut history, &model, Some(tx), None).await {
             Ok(_) => {
                 let _ = approve_handle.await;
@@ -86,7 +91,9 @@ impl Tool for SubAgentTool {
                     let content_str = msg.content.as_deref().unwrap_or_default().to_string();
                     Ok(ToolResult::success(content_str))
                 } else {
-                    Ok(ToolResult::error("Sub-agent completed but returned no final response."))
+                    Ok(ToolResult::error(
+                        "Sub-agent completed but returned no final response.",
+                    ))
                 }
             }
             Err(e) => Ok(ToolResult::error(format!("Sub-agent failed: {}", e))),

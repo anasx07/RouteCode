@@ -145,7 +145,8 @@ pub async fn run_retry_loop(
                     if classify_error(&e) == RetryClass::Permanent {
                         log::info!(
                             "RetryPolicy: permanent error on attempt {}, bailing out: {}",
-                            attempt, e
+                            attempt,
+                            e
                         );
                         let _ = tx.send(Err(e));
                         break;
@@ -193,7 +194,8 @@ pub async fn run_retry_loop(
             if let Some(err) = stream_err {
                 log::warn!(
                     "RetryPolicy: stream interrupted on attempt {} (retrying per policy): {}",
-                    attempt, err
+                    attempt,
+                    err
                 );
                 let status = StreamChunk::Status {
                     content: format!("QIR stream interrupted (attempt {}) -- {}", attempt, err),
@@ -257,17 +259,19 @@ mod tests {
             _tools: Arc<Option<Vec<serde_json::Value>>>,
             _thinking_level: Option<&str>,
         ) -> Result<StreamResponse, anyhow::Error> {
-            let prev = self.failures_remaining.fetch_update(
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-                |v| Some(v.saturating_sub(1)),
-            );
+            let prev =
+                self.failures_remaining
+                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
+                        Some(v.saturating_sub(1))
+                    });
             // We always succeed (returning a single Text chunk); the
             // "flakiness" is injected via the failures_remaining counter
             // which the test uses to assert call count.
             let _ = prev;
             let chunks = vec![
-                Ok(StreamChunk::Text { content: "ok".to_string() }),
+                Ok(StreamChunk::Text {
+                    content: "ok".to_string(),
+                }),
                 Ok(StreamChunk::Done),
             ];
             Ok(Box::pin(stream::iter(chunks)))
@@ -328,8 +332,12 @@ mod tests {
         .unwrap();
         let chunks: Vec<_> = s.collect().await;
         // Should not see "QIR retrying" since policy is Disabled.
-        assert!(!chunks.iter().any(|c| matches!(c, Ok(StreamChunk::Status { content }) if content.contains("QIR"))));
-        assert!(chunks.iter().any(|c| matches!(c, Ok(StreamChunk::Text { content }) if content == "ok")));
+        assert!(!chunks
+            .iter()
+            .any(|c| matches!(c, Ok(StreamChunk::Status { content }) if content.contains("QIR"))));
+        assert!(chunks
+            .iter()
+            .any(|c| matches!(c, Ok(StreamChunk::Text { content }) if content == "ok")));
     }
 
     // Note: tests for the QIR-retry path (qir_retries_on_ask_error,

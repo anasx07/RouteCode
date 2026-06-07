@@ -1,7 +1,7 @@
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use once_cell::sync::Lazy;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Usage {
@@ -39,9 +39,8 @@ struct ModelsDevCost {
     pub output: f64,
 }
 
-static RATE_CACHE: Lazy<Arc<RwLock<HashMap<String, ModelRates>>>> = Lazy::new(|| {
-    Arc::new(RwLock::new(HashMap::new()))
-});
+static RATE_CACHE: Lazy<Arc<RwLock<HashMap<String, ModelRates>>>> =
+    Lazy::new(|| Arc::new(RwLock::new(HashMap::new())));
 
 impl Usage {
     pub async fn add(&mut self, input: u32, output: u32, model: &str) {
@@ -73,7 +72,10 @@ pub async fn refresh_rates() -> anyhow::Result<()> {
 
     let response = client.get("https://models.dev/api.json").send().await?;
     if !response.status().is_success() {
-        return Err(anyhow::anyhow!("Failed to fetch rates: {}", response.status()));
+        return Err(anyhow::anyhow!(
+            "Failed to fetch rates: {}",
+            response.status()
+        ));
     }
 
     let data: HashMap<String, ModelsDevProvider> = response.json().await?;
@@ -82,10 +84,13 @@ pub async fn refresh_rates() -> anyhow::Result<()> {
     for (_provider_id, provider) in data {
         for (model_id, model) in provider.models {
             if let Some(cost) = model.cost {
-                new_rates.insert(model_id, ModelRates {
-                    input_per_1m: cost.input,
-                    output_per_1m: cost.output,
-                });
+                new_rates.insert(
+                    model_id,
+                    ModelRates {
+                        input_per_1m: cost.input,
+                        output_per_1m: cost.output,
+                    },
+                );
             }
         }
     }
@@ -93,7 +98,10 @@ pub async fn refresh_rates() -> anyhow::Result<()> {
     if !new_rates.is_empty() {
         let mut cache = RATE_CACHE.write().unwrap_or_else(|e| e.into_inner());
         *cache = new_rates;
-        log::info!("Successfully updated {} model rates from models.dev", cache.len());
+        log::info!(
+            "Successfully updated {} model rates from models.dev",
+            cache.len()
+        );
     }
 
     Ok(())
@@ -110,7 +118,7 @@ async fn get_model_rates(model: &str) -> ModelRates {
         if let Some(rates) = cache.get(model) {
             return rates.clone();
         }
-        
+
         // Try fuzzy match if exact match fails (e.g. "gpt-4o-2024-05-13" vs "gpt-4o")
         for (cached_id, rates) in cache.iter() {
             if model.contains(cached_id) || cached_id.contains(model) {
@@ -137,18 +145,36 @@ async fn get_model_rates(model: &str) -> ModelRates {
 
 fn get_fallback_rates(model: &str) -> ModelRates {
     if model.contains("gpt-4o-mini") {
-        ModelRates { input_per_1m: 0.15, output_per_1m: 0.60 }
+        ModelRates {
+            input_per_1m: 0.15,
+            output_per_1m: 0.60,
+        }
     } else if model.contains("gpt-4o") {
-        ModelRates { input_per_1m: 5.0, output_per_1m: 15.0 }
+        ModelRates {
+            input_per_1m: 5.0,
+            output_per_1m: 15.0,
+        }
     } else if model.contains("claude-3-5-sonnet") {
-        ModelRates { input_per_1m: 3.0, output_per_1m: 15.0 }
+        ModelRates {
+            input_per_1m: 3.0,
+            output_per_1m: 15.0,
+        }
     } else if model.contains("deepseek-v3") || model.contains("deepseek-chat") {
-        ModelRates { input_per_1m: 0.14, output_per_1m: 0.28 }
+        ModelRates {
+            input_per_1m: 0.14,
+            output_per_1m: 0.28,
+        }
     } else {
         if !model.is_empty() {
-            log::warn!("Unknown model '{}' for cost calculation. Using default fallback rates.", model);
+            log::warn!(
+                "Unknown model '{}' for cost calculation. Using default fallback rates.",
+                model
+            );
         }
         // Default GPT-4o style fallback
-        ModelRates { input_per_1m: 5.0, output_per_1m: 15.0 }
+        ModelRates {
+            input_per_1m: 5.0,
+            output_per_1m: 15.0,
+        }
     }
 }

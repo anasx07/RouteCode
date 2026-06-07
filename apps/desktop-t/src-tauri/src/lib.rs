@@ -1,23 +1,28 @@
 use std::sync::Arc;
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::Mutex;
-use tauri::{AppHandle, Emitter, State, Manager};
 use tokio_util::sync::CancellationToken;
 
-use routecode_sdk::core::{AgentOrchestrator, Message, Config};
 use routecode_sdk::agents::types::{ConfirmationResponse, StreamChunk};
+use routecode_sdk::core::{AgentOrchestrator, Config, Message};
 use routecode_sdk::tools::{
-    bash::BashTool, file_ops::{FileEditTool, FileReadTool, FileWriteTool, ApplyPatchTool},
-    lsp_tool::LspTool, mcp::manager::McpManager, navigation::{GrepTool, LsTool, TreeTool},
-    subagent::SubAgentTool, web::{fetch::WebFetchTool, search::WebSearchTool},
+    bash::BashTool,
+    file_ops::{ApplyPatchTool, FileEditTool, FileReadTool, FileWriteTool},
+    lsp_tool::LspTool,
+    mcp::manager::McpManager,
+    navigation::{GrepTool, LsTool, TreeTool},
+    subagent::SubAgentTool,
+    web::{fetch::WebFetchTool, search::WebSearchTool},
     ToolRegistry,
 };
 use routecode_sdk::utils::storage::{
-    Session, SessionConfig, WorkspaceConfig, save_session, load_session, list_sessions,
-    load_session_config, save_session_config, load_workspace_config, save_workspace_config,
-    sanitize_session_name, find_project_root, get_base_dir
+    find_project_root, get_base_dir, list_sessions, load_session, load_session_config,
+    load_workspace_config, sanitize_session_name, save_session, save_session_config,
+    save_workspace_config, Session, SessionConfig, WorkspaceConfig,
 };
 
-type PendingConfirmation = Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<ConfirmationResponse>>>>;
+type PendingConfirmation =
+    Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<ConfirmationResponse>>>>;
 
 // Define the Shared Application State
 pub struct AppState {
@@ -53,7 +58,10 @@ async fn get_config() -> Result<Config, String> {
 // 2. Save Persistent Config Command
 #[tauri::command]
 async fn save_config(config: Config) -> Result<String, String> {
-    println!("Saving persistent RouteCode configuration: provider={}, model={}", config.provider, config.model);
+    println!(
+        "Saving persistent RouteCode configuration: provider={}, model={}",
+        config.provider, config.model
+    );
     routecode_sdk::utils::storage::save_config(&config)
         .map_err(|e| format!("Failed to save configuration: {}", e))?;
     Ok("Configuration saved successfully".to_string())
@@ -63,8 +71,7 @@ async fn save_config(config: Config) -> Result<String, String> {
 #[tauri::command]
 async fn list_saved_sessions() -> Result<Vec<String>, String> {
     println!("Listing saved sessions...");
-    let sessions = list_sessions()
-        .map_err(|e| format!("Failed to list sessions: {}", e))?;
+    let sessions = list_sessions().map_err(|e| format!("Failed to list sessions: {}", e))?;
     Ok(sessions)
 }
 
@@ -72,15 +79,22 @@ async fn list_saved_sessions() -> Result<Vec<String>, String> {
 #[tauri::command]
 async fn load_saved_session(name: String) -> Result<Session, String> {
     println!("Loading saved session: {}", name);
-    let session = load_session(&name)
-        .map_err(|e| format!("Failed to load session: {}", e))?;
+    let session = load_session(&name).map_err(|e| format!("Failed to load session: {}", e))?;
     Ok(session)
 }
 
 // 5. Save/Update Session Command
 #[tauri::command]
-async fn save_saved_session(name: String, messages: Vec<Message>, model: String) -> Result<String, String> {
-    println!("Saving session: {} (message count={})", name, messages.len());
+async fn save_saved_session(
+    name: String,
+    messages: Vec<Message>,
+    model: String,
+) -> Result<String, String> {
+    println!(
+        "Saving session: {} (message count={})",
+        name,
+        messages.len()
+    );
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -91,8 +105,7 @@ async fn save_saved_session(name: String, messages: Vec<Message>, model: String)
         model,
         timestamp,
     };
-    save_session(&name, &session)
-        .map_err(|e| format!("Failed to save session: {}", e))?;
+    save_session(&name, &session).map_err(|e| format!("Failed to save session: {}", e))?;
     Ok("Session saved successfully".to_string())
 }
 
@@ -113,7 +126,9 @@ async fn delete_session(name: String) -> Result<String, String> {
             .map_err(|e| format!("Failed to delete workspace session directory: {}", e))?;
     }
 
-    let old_path = get_base_dir().join("sessions").join(format!("{}.json", safe_name));
+    let old_path = get_base_dir()
+        .join("sessions")
+        .join(format!("{}.json", safe_name));
     if old_path.exists() {
         std::fs::remove_file(&old_path)
             .map_err(|e| format!("Failed to delete legacy session file: {}", e))?;
@@ -129,7 +144,10 @@ async fn init_engine(
     provider_name: String,
     model_name: String,
 ) -> Result<String, String> {
-    println!("Initializing RouteCode Engine: provider={}, model={}", provider_name, model_name);
+    println!(
+        "Initializing RouteCode Engine: provider={}, model={}",
+        provider_name, model_name
+    );
 
     // Load persistent configuration
     let mut config = routecode_sdk::utils::storage::load_config().unwrap_or_default();
@@ -152,13 +170,14 @@ async fn init_engine(
     // Resolve Provider Agent interface
     let provider = if provider_name == "vertex" {
         routecode_sdk::agents::resolve_provider_with_config(
-            &provider_name, api_key,
-            &config.vertex_project, &config.vertex_location,
+            &provider_name,
+            api_key,
+            &config.vertex_project,
+            &config.vertex_location,
         )
     } else {
         routecode_sdk::agents::resolve_provider(&provider_name, api_key)
     };
-
 
     // Register Secure Tools into Registry
     let mut tool_registry = ToolRegistry::new();
@@ -176,7 +195,10 @@ async fn init_engine(
 
     // Initialize MCP Manager and load dynamic tools
     let mcp_manager = McpManager::new();
-    if let Err(e) = mcp_manager.load_and_register_tools(&mut tool_registry).await {
+    if let Err(e) = mcp_manager
+        .load_and_register_tools(&mut tool_registry)
+        .await
+    {
         println!("Warning: Failed to load MCP tools: {}", e);
     }
 
@@ -240,7 +262,10 @@ async fn send_message(
     history: Vec<Message>,
     model: String,
 ) -> Result<String, String> {
-    println!("Received prompt from frontend. Message history length: {}", history.len());
+    println!(
+        "Received prompt from frontend. Message history length: {}",
+        history.len()
+    );
 
     // Resolve the active orchestrator from state
     let orchestrator = {
@@ -269,23 +294,29 @@ async fn send_message(
     let mut history_mut = history.clone();
     let cancel_for_task = cancel_token.clone();
     tokio::spawn(async move {
-        let _ = orchestrator.run(&mut history_mut, &model, Some(tx), Some(cancel_for_task)).await;
+        let _ = orchestrator
+            .run(&mut history_mut, &model, Some(tx), Some(cancel_for_task))
+            .await;
     });
 
     // Listen to the unbounded channel and stream to the frontend
     let app_clone = app.clone();
-    
+
     tokio::spawn(async move {
         let state_clone = app_clone.state::<AppState>();
         while let Some(chunk) = rx.recv().await {
             match chunk.clone() {
-                StreamChunk::RequestConfirmation { message: _, target: _, tx: oneshot_tx } => {
+                StreamChunk::RequestConfirmation {
+                    message: _,
+                    target: _,
+                    tx: oneshot_tx,
+                } => {
                     // Stash the oneshot channel sender in the global AppState for allow/deny confirmation
                     if let Some(oneshot) = oneshot_tx {
                         let mut pending_guard = state_clone.pending_confirmation.lock().await;
                         *pending_guard = Some(oneshot);
                     }
-                    
+
                     // Emit RequestConfirmation event to trigger frontend modal dialog
                     let _ = app_clone.emit("agent-chunk", chunk);
                 }
@@ -359,7 +390,8 @@ async fn respond_confirmation(
         if let Some(orch) = orch_guard.as_ref() {
             use std::sync::atomic::Ordering;
             orch.allow_session_commands.store(true, Ordering::SeqCst);
-            orch.allow_session_outside_access.store(true, Ordering::SeqCst);
+            orch.allow_session_outside_access
+                .store(true, Ordering::SeqCst);
         }
 
         if let Some(name) = session_name.as_deref() {
@@ -445,16 +477,20 @@ async fn set_session_permissions(
     state: State<'_, AppState>,
     name: String,
 ) -> Result<SessionConfig, String> {
-    let sc = load_session_config(&name).map_err(|e| format!("Failed to load session config: {}", e))?;
+    let sc =
+        load_session_config(&name).map_err(|e| format!("Failed to load session config: {}", e))?;
     let wc = load_workspace_config().unwrap_or_default();
 
     use std::sync::atomic::Ordering;
     let orch_guard = state.orchestrator.lock().await;
     if let Some(orch) = orch_guard.as_ref() {
         let allow_commands = sc.allow_all_commands || wc.allow_all_outside_access;
-        orch.allow_session_commands.store(allow_commands, Ordering::SeqCst);
-        orch.allow_session_outside_access
-            .store(sc.allow_all_outside_access || wc.allow_all_outside_access, Ordering::SeqCst);
+        orch.allow_session_commands
+            .store(allow_commands, Ordering::SeqCst);
+        orch.allow_session_outside_access.store(
+            sc.allow_all_outside_access || wc.allow_all_outside_access,
+            Ordering::SeqCst,
+        );
     }
     Ok(sc)
 }
@@ -477,9 +513,7 @@ async fn check_update(app: AppHandle) -> Result<String, String> {
         Ok(Some(update)) => {
             let update_version = update.version.clone();
             let body = update.body.clone().unwrap_or_default();
-            let date = update.date
-                .map(|d| d.to_string())
-                .unwrap_or_default();
+            let date = update.date.map(|d| d.to_string()).unwrap_or_default();
 
             let info = routecode_sdk::update::types::UpdateInfo {
                 version: update_version.clone(),
@@ -519,12 +553,10 @@ async fn install_update(app: AppHandle) -> Result<String, String> {
     let updater = app.updater().map_err(|e| e.to_string())?;
 
     match updater.check().await {
-        Ok(Some(update)) => {
-            match update.download_and_install(|_, _| {}, || {}).await {
-                Ok(()) => Ok("Update installed. Please restart the application.".to_string()),
-                Err(e) => Err(format!("Update installation failed: {}", e)),
-            }
-        }
+        Ok(Some(update)) => match update.download_and_install(|_, _| {}, || {}).await {
+            Ok(()) => Ok("Update installed. Please restart the application.".to_string()),
+            Err(e) => Err(format!("Update installation failed: {}", e)),
+        },
         Ok(None) => Err("No update available".to_string()),
         Err(e) => Err(format!("Update check failed: {}", e)),
     }

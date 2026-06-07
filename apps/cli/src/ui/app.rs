@@ -3,10 +3,12 @@ use routecode_sdk::agents::StreamChunk;
 use routecode_sdk::core::{AgentOrchestrator, DynamicModelInfo, Message};
 use routecode_sdk::utils::costs::Usage;
 use std::sync::Arc;
-use tui_textarea::TextArea;
 use tokio::task::JoinSet;
+use tui_textarea::TextArea;
 
-use super::types::{ApprovalMode, Command, QirStatus, Screen, SettingsMenuItem, COMMANDS, ApiKeyInputStage};
+use super::types::{
+    ApiKeyInputStage, ApprovalMode, Command, QirStatus, Screen, SettingsMenuItem, COMMANDS,
+};
 
 pub struct App {
     pub screen: Screen,
@@ -88,7 +90,11 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(orchestrator: Arc<AgentOrchestrator>, provider_name: String, default_model: String) -> Self {
+    pub fn new(
+        orchestrator: Arc<AgentOrchestrator>,
+        provider_name: String,
+        default_model: String,
+    ) -> Self {
         let mut input = TextArea::default();
         input.set_cursor_line_style(Style::default());
         input.set_placeholder_style(Style::default().fg(super::components::COLOR_SECONDARY));
@@ -101,7 +107,8 @@ impl App {
         let mut model_search_input = TextArea::default();
         model_search_input.set_cursor_line_style(Style::default());
         model_search_input.set_placeholder_text(" Search models...");
-        model_search_input.set_placeholder_style(Style::default().fg(super::components::COLOR_SECONDARY));
+        model_search_input
+            .set_placeholder_style(Style::default().fg(super::components::COLOR_SECONDARY));
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -207,7 +214,12 @@ impl App {
             },
             SettingsMenuItem::Option {
                 name: "Show Context Summary".to_string(),
-                val: if self.hide_context_summary { "hide" } else { "show" }.to_string(),
+                val: if self.hide_context_summary {
+                    "hide"
+                } else {
+                    "show"
+                }
+                .to_string(),
                 key: "hide_context_summary".to_string(),
             },
             SettingsMenuItem::Option {
@@ -218,14 +230,24 @@ impl App {
             SettingsMenuItem::Header("Advanced".to_string()),
             SettingsMenuItem::Option {
                 name: "Enable Sub-Agents".to_string(),
-                val: if config.sub_agents_enabled { "on" } else { "off" }.to_string(),
+                val: if config.sub_agents_enabled {
+                    "on"
+                } else {
+                    "off"
+                }
+                .to_string(),
                 key: "sub_agents_enabled".to_string(),
             },
         ];
     }
 
     pub fn update_filtered_commands(&mut self) {
-        let input_line = self.input.lines().first().map(|l| l.to_lowercase()).unwrap_or_default();
+        let input_line = self
+            .input
+            .lines()
+            .first()
+            .map(|l| l.to_lowercase())
+            .unwrap_or_default();
         if input_line.starts_with('/') {
             self.filtered_commands = COMMANDS
                 .iter()
@@ -375,9 +397,19 @@ mod tests {
     struct MockProvider;
     #[async_trait]
     impl AIProvider for MockProvider {
-        fn name(&self) -> &str { "Mock" }
-        async fn list_models(&self) -> Result<Vec<String>, anyhow::Error> { Ok(vec![]) }
-        async fn ask(&self, _: Arc<Vec<Message>>, _: &str, _: Arc<Option<Vec<serde_json::Value>>>, _: Option<&str>) -> Result<routecode_sdk::agents::traits::StreamResponse, anyhow::Error> {
+        fn name(&self) -> &str {
+            "Mock"
+        }
+        async fn list_models(&self) -> Result<Vec<String>, anyhow::Error> {
+            Ok(vec![])
+        }
+        async fn ask(
+            &self,
+            _: Arc<Vec<Message>>,
+            _: &str,
+            _: Arc<Option<Vec<serde_json::Value>>>,
+            _: Option<&str>,
+        ) -> Result<routecode_sdk::agents::traits::StreamResponse, anyhow::Error> {
             Err(anyhow::anyhow!("Not implemented"))
         }
     }

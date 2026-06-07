@@ -2,9 +2,9 @@ use crate::core::ToolResult;
 use crate::tools::traits::Tool;
 use async_trait::async_trait;
 use serde_json::{json, Value};
+use similar::{ChangeTag, TextDiff};
 use std::fs;
 use std::path::{Path, PathBuf};
-use similar::{ChangeTag, TextDiff};
 
 fn normalize_path(path: &str) -> PathBuf {
     let mut p = path;
@@ -87,12 +87,27 @@ impl Tool for FileReadTool {
         let path = normalize_path(raw_path);
         match is_within_workspace(&path) {
             Ok(true) => {}
-            Ok(false) => return Ok(ToolResult::error(format!("Access denied: Path '{}' is outside the workspace boundary", path.display()))),
-            Err(e) => return Ok(ToolResult::error(format!("Failed to verify path '{}': {}", path.display(), e))),
+            Ok(false) => {
+                return Ok(ToolResult::error(format!(
+                    "Access denied: Path '{}' is outside the workspace boundary",
+                    path.display()
+                )))
+            }
+            Err(e) => {
+                return Ok(ToolResult::error(format!(
+                    "Failed to verify path '{}': {}",
+                    path.display(),
+                    e
+                )))
+            }
         }
         match fs::read_to_string(&path) {
             Ok(content) => Ok(ToolResult::success(content)),
-            Err(e) => Ok(ToolResult::error(format!("Failed to read file '{}': {}", path.display(), e))),
+            Err(e) => Ok(ToolResult::error(format!(
+                "Failed to read file '{}': {}",
+                path.display(),
+                e
+            ))),
         }
     }
 }
@@ -125,23 +140,46 @@ impl Tool for FileWriteTool {
         let content = args["content"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing content"))?;
-        
+
         let path = normalize_path(raw_path);
         match is_within_workspace(&path) {
             Ok(true) => {}
-            Ok(false) => return Ok(ToolResult::error(format!("Access denied: Path '{}' is outside the workspace boundary", path.display()))),
-            Err(e) => return Ok(ToolResult::error(format!("Failed to verify path '{}': {}", path.display(), e))),
+            Ok(false) => {
+                return Ok(ToolResult::error(format!(
+                    "Access denied: Path '{}' is outside the workspace boundary",
+                    path.display()
+                )))
+            }
+            Err(e) => {
+                return Ok(ToolResult::error(format!(
+                    "Failed to verify path '{}': {}",
+                    path.display(),
+                    e
+                )))
+            }
         }
         let old_content = fs::read_to_string(&path).unwrap_or_default();
         let diff = generate_diff(&old_content, content);
 
         if let Err(e) = ensure_parent_dir(&path) {
-            return Ok(ToolResult::error(format!("Failed to create directories for '{}': {}", path.display(), e)));
+            return Ok(ToolResult::error(format!(
+                "Failed to create directories for '{}': {}",
+                path.display(),
+                e
+            )));
         }
 
         match fs::write(&path, content) {
-            Ok(_) => Ok(ToolResult::success(format!("File '{}' written successfully", path.display())).with_diff(diff)),
-            Err(e) => Ok(ToolResult::error(format!("Failed to write file '{}': {}", path.display(), e))),
+            Ok(_) => Ok(ToolResult::success(format!(
+                "File '{}' written successfully",
+                path.display()
+            ))
+            .with_diff(diff)),
+            Err(e) => Ok(ToolResult::error(format!(
+                "Failed to write file '{}': {}",
+                path.display(),
+                e
+            ))),
         }
     }
 }
@@ -184,12 +222,29 @@ impl Tool for FileEditTool {
         let path = normalize_path(raw_path);
         match is_within_workspace(&path) {
             Ok(true) => {}
-            Ok(false) => return Ok(ToolResult::error(format!("Access denied: Path '{}' is outside the workspace boundary", path.display()))),
-            Err(e) => return Ok(ToolResult::error(format!("Failed to verify path '{}': {}", path.display(), e))),
+            Ok(false) => {
+                return Ok(ToolResult::error(format!(
+                    "Access denied: Path '{}' is outside the workspace boundary",
+                    path.display()
+                )))
+            }
+            Err(e) => {
+                return Ok(ToolResult::error(format!(
+                    "Failed to verify path '{}': {}",
+                    path.display(),
+                    e
+                )))
+            }
         }
         let content = match fs::read_to_string(&path) {
             Ok(c) => c,
-            Err(e) => return Ok(ToolResult::error(format!("Failed to read file '{}': {}", path.display(), e))),
+            Err(e) => {
+                return Ok(ToolResult::error(format!(
+                    "Failed to read file '{}': {}",
+                    path.display(),
+                    e
+                )))
+            }
         };
 
         let matches = content.matches(old_string).count();
@@ -214,9 +269,15 @@ impl Tool for FileEditTool {
         match fs::write(&path, new_content) {
             Ok(_) => Ok(ToolResult::success(format!(
                 "Successfully replaced {} occurrence(s) in {}",
-                matches, path.display()
-            )).with_diff(diff)),
-            Err(e) => Ok(ToolResult::error(format!("Failed to write file '{}': {}", path.display(), e))),
+                matches,
+                path.display()
+            ))
+            .with_diff(diff)),
+            Err(e) => Ok(ToolResult::error(format!(
+                "Failed to write file '{}': {}",
+                path.display(),
+                e
+            ))),
         }
     }
 }
@@ -255,13 +316,30 @@ impl Tool for ApplyPatchTool {
         let path = normalize_path(raw_path);
         match is_within_workspace(&path) {
             Ok(true) => {}
-            Ok(false) => return Ok(ToolResult::error(format!("Access denied: Path '{}' is outside the workspace boundary", path.display()))),
-            Err(e) => return Ok(ToolResult::error(format!("Failed to verify path '{}': {}", path.display(), e))),
+            Ok(false) => {
+                return Ok(ToolResult::error(format!(
+                    "Access denied: Path '{}' is outside the workspace boundary",
+                    path.display()
+                )))
+            }
+            Err(e) => {
+                return Ok(ToolResult::error(format!(
+                    "Failed to verify path '{}': {}",
+                    path.display(),
+                    e
+                )))
+            }
         }
 
         let content = match fs::read_to_string(&path) {
             Ok(c) => c,
-            Err(e) => return Ok(ToolResult::error(format!("Failed to read file '{}': {}", path.display(), e))),
+            Err(e) => {
+                return Ok(ToolResult::error(format!(
+                    "Failed to read file '{}': {}",
+                    path.display(),
+                    e
+                )))
+            }
         };
 
         let patch = match diffy::Patch::from_str(patch_text) {
@@ -277,8 +355,16 @@ impl Tool for ApplyPatchTool {
         let diff = generate_diff(&content, &new_content);
 
         match fs::write(&path, new_content) {
-            Ok(_) => Ok(ToolResult::success(format!("Successfully applied patch to {}", path.display())).with_diff(diff)),
-            Err(e) => Ok(ToolResult::error(format!("Failed to write file '{}': {}", path.display(), e))),
+            Ok(_) => Ok(ToolResult::success(format!(
+                "Successfully applied patch to {}",
+                path.display()
+            ))
+            .with_diff(diff)),
+            Err(e) => Ok(ToolResult::error(format!(
+                "Failed to write file '{}': {}",
+                path.display(),
+                e
+            ))),
         }
     }
 }

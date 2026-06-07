@@ -1,7 +1,8 @@
 use routecode_sdk::agents::types::ConfirmationResponse;
 use routecode_sdk::core::DynamicModelInfo;
 
-pub type ConfirmationSender = std::sync::Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<ConfirmationResponse>>>>;
+pub type ConfirmationSender =
+    std::sync::Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<ConfirmationResponse>>>>;
 
 pub struct ProviderInfo {
     pub id: &'static str,
@@ -12,17 +13,61 @@ pub struct ProviderInfo {
 }
 
 pub const PROVIDERS: &[ProviderInfo] = &[
-    ProviderInfo { id: "openrouter",         name: "OpenRouter",           requires_api_key: true },
-    ProviderInfo { id: "nvidia",             name: "NVIDIA",               requires_api_key: true },
-    ProviderInfo { id: "opencode-zen",       name: "OpenCode Zen",         requires_api_key: false },
-    ProviderInfo { id: "opencode-go",        name: "OpenCode Go",          requires_api_key: false },
-    ProviderInfo { id: "openai",             name: "OpenAI",               requires_api_key: true },
-    ProviderInfo { id: "anthropic",          name: "Anthropic",            requires_api_key: true },
-    ProviderInfo { id: "gemini",             name: "Google Gemini",        requires_api_key: true },
-    ProviderInfo { id: "deepseek",           name: "DeepSeek",             requires_api_key: true },
-    ProviderInfo { id: "cloudflare-workers", name: "Cloudflare Workers AI", requires_api_key: true },
-    ProviderInfo { id: "cloudflare-gateway", name: "Cloudflare AI Gateway", requires_api_key: true },
-    ProviderInfo { id: "vertex",             name: "Google Vertex AI",     requires_api_key: true },
+    ProviderInfo {
+        id: "openrouter",
+        name: "OpenRouter",
+        requires_api_key: true,
+    },
+    ProviderInfo {
+        id: "nvidia",
+        name: "NVIDIA",
+        requires_api_key: true,
+    },
+    ProviderInfo {
+        id: "opencode-zen",
+        name: "OpenCode Zen",
+        requires_api_key: false,
+    },
+    ProviderInfo {
+        id: "opencode-go",
+        name: "OpenCode Go",
+        requires_api_key: false,
+    },
+    ProviderInfo {
+        id: "openai",
+        name: "OpenAI",
+        requires_api_key: true,
+    },
+    ProviderInfo {
+        id: "anthropic",
+        name: "Anthropic",
+        requires_api_key: true,
+    },
+    ProviderInfo {
+        id: "gemini",
+        name: "Google Gemini",
+        requires_api_key: true,
+    },
+    ProviderInfo {
+        id: "deepseek",
+        name: "DeepSeek",
+        requires_api_key: true,
+    },
+    ProviderInfo {
+        id: "cloudflare-workers",
+        name: "Cloudflare Workers AI",
+        requires_api_key: true,
+    },
+    ProviderInfo {
+        id: "cloudflare-gateway",
+        name: "Cloudflare AI Gateway",
+        requires_api_key: true,
+    },
+    ProviderInfo {
+        id: "vertex",
+        name: "Google Vertex AI",
+        requires_api_key: true,
+    },
 ];
 
 /// Look up a `ProviderInfo` by id. Returns `None` for unknown providers
@@ -51,16 +96,46 @@ pub struct Command {
 }
 
 pub const COMMANDS: &[Command] = &[
-    Command { name: "/model", description: "Switch model" },
-    Command { name: "/resume", description: "Resume a session" },
-    Command { name: "/sessions", description: "List saved sessions" },
-    Command { name: "/clear", description: "Clear history" },
-    Command { name: "/thinking", description: "Set thinking level (low/max)" },
-    Command { name: "/help", description: "Show help" },
-    Command { name: "/stop", description: "Stop AI generation" },
-    Command { name: "/provider", description: "Manage providers" },
-    Command { name: "/settings", description: "Manage settings" },
-    Command { name: "/exit", description: "Exit application" },
+    Command {
+        name: "/model",
+        description: "Switch model",
+    },
+    Command {
+        name: "/resume",
+        description: "Resume a session",
+    },
+    Command {
+        name: "/sessions",
+        description: "List saved sessions",
+    },
+    Command {
+        name: "/clear",
+        description: "Clear history",
+    },
+    Command {
+        name: "/thinking",
+        description: "Set thinking level (low/max)",
+    },
+    Command {
+        name: "/help",
+        description: "Show help",
+    },
+    Command {
+        name: "/stop",
+        description: "Stop AI generation",
+    },
+    Command {
+        name: "/provider",
+        description: "Manage providers",
+    },
+    Command {
+        name: "/settings",
+        description: "Manage settings",
+    },
+    Command {
+        name: "/exit",
+        description: "Exit application",
+    },
 ];
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -111,7 +186,11 @@ pub enum ApiKeyInputStage {
 #[derive(Clone, Debug, PartialEq)]
 pub enum SettingsMenuItem {
     Header(String),
-    Option { name: String, val: String, key: String },
+    Option {
+        name: String,
+        val: String,
+        key: String,
+    },
 }
 
 /// State of the most recent QIR retry event emitted by the SDK's
@@ -162,11 +241,17 @@ pub fn parse_qir_status(content: &str) -> Option<QirStatus> {
         rest[..end].parse().ok()
     };
     if content.starts_with("QIR recovered") {
-        Some(QirStatus::Recovered { attempt: attempt_of(content)? })
+        Some(QirStatus::Recovered {
+            attempt: attempt_of(content)?,
+        })
     } else if content.starts_with("QIR stream interrupted") {
-        Some(QirStatus::StreamInterrupted { attempt: attempt_of(content)? })
+        Some(QirStatus::StreamInterrupted {
+            attempt: attempt_of(content)?,
+        })
     } else if content.starts_with("QIR retrying") {
-        Some(QirStatus::Retrying { attempt: attempt_of(content)? })
+        Some(QirStatus::Retrying {
+            attempt: attempt_of(content)?,
+        })
     } else {
         None
     }
@@ -274,7 +359,11 @@ mod tests {
         let s = format_error_for_display(body);
         assert!(s.contains("401 Unauthorized"), "{}", s);
         assert!(s.contains("Incorrect API key provided"), "{}", s);
-        assert!(!s.contains("invalid_request_error"), "raw JSON leaked: {}", s);
+        assert!(
+            !s.contains("invalid_request_error"),
+            "raw JSON leaked: {}",
+            s
+        );
     }
 
     #[test]
@@ -311,8 +400,14 @@ mod tests {
     #[test]
     fn test_format_error_non_http_passthrough() {
         // Transport errors, mid-stream "Provider error: ..." etc.
-        assert_eq!(format_error_for_display("Provider error: rate-limited"), "Provider error: rate-limited");
-        assert_eq!(format_error_for_display("connection reset"), "connection reset");
+        assert_eq!(
+            format_error_for_display("Provider error: rate-limited"),
+            "Provider error: rate-limited"
+        );
+        assert_eq!(
+            format_error_for_display("connection reset"),
+            "connection reset"
+        );
         assert_eq!(format_error_for_display(""), "");
     }
 
@@ -324,7 +419,17 @@ mod tests {
 
     #[test]
     fn test_known_providers_require_key() {
-        for id in ["openrouter", "openai", "anthropic", "gemini", "deepseek", "vertex", "cloudflare-workers", "cloudflare-gateway", "nvidia"] {
+        for id in [
+            "openrouter",
+            "openai",
+            "anthropic",
+            "gemini",
+            "deepseek",
+            "vertex",
+            "cloudflare-workers",
+            "cloudflare-gateway",
+            "nvidia",
+        ] {
             assert!(
                 provider_requires_api_key(id),
                 "{} should require an API key",
@@ -347,6 +452,10 @@ mod tests {
         seen.sort();
         let original_len = seen.len();
         seen.dedup();
-        assert_eq!(seen.len(), original_len, "duplicate provider id in PROVIDERS");
+        assert_eq!(
+            seen.len(),
+            original_len,
+            "duplicate provider id in PROVIDERS"
+        );
     }
 }

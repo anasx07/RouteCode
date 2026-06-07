@@ -15,10 +15,11 @@ pub struct DynamicModelInfo {
 /// implemented at the call site — the orchestrator currently only honors
 /// `Qir` vs not-`Qir`, so picking `ExponentialBackoff` is reserved for
 /// future use).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(tag = "strategy", rename_all = "snake_case")]
 pub enum RetryPolicy {
     /// No automatic retry on failure. Default.
+    #[default]
     Disabled,
     /// Quick Infinite Retry: re-send immediately with no delay and no limit.
     /// Experimental. Use at your own risk — aggressive retrying can
@@ -44,26 +45,15 @@ pub enum RetryPolicy {
 /// * `Yolo`: tool calls are auto-allowed without any UI prompt. Use for
 ///   trusted, sandboxed runs. The LLM can still ask for input via the
 ///   `/plan` sub-agent flow.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(tag = "strategy", rename_all = "snake_case")]
 pub enum ApprovalMode {
     /// Confirm every tool call (default).
+    #[default]
     Normal,
     /// Auto-allow every tool call. The user is responsible for the agent's
     /// actions; nothing is sandboxed beyond what the OS already provides.
     Yolo,
-}
-
-impl Default for RetryPolicy {
-    fn default() -> Self {
-        RetryPolicy::Disabled
-    }
-}
-
-impl Default for ApprovalMode {
-    fn default() -> Self {
-        ApprovalMode::Normal
-    }
 }
 
 impl RetryPolicy {
@@ -213,7 +203,11 @@ impl Config {
                 b,
                 if b { "qir" } else { "disabled" }
             );
-            self.retry_policy = if b { RetryPolicy::Qir } else { RetryPolicy::Disabled };
+            self.retry_policy = if b {
+                RetryPolicy::Qir
+            } else {
+                RetryPolicy::Disabled
+            };
         }
     }
 }
@@ -235,7 +229,11 @@ mod tests {
         assert!(!RetryPolicy::Disabled.is_retry_enabled());
         assert!(RetryPolicy::Qir.is_retry_enabled());
         assert!(RetryPolicy::Qir.is_qir());
-        let eb = RetryPolicy::ExponentialBackoff { max_attempts: 5, base_secs: 1.0, jitter: true };
+        let eb = RetryPolicy::ExponentialBackoff {
+            max_attempts: 5,
+            base_secs: 1.0,
+            jitter: true,
+        };
         assert!(eb.is_retry_enabled());
         assert!(!eb.is_qir());
     }
@@ -264,10 +262,15 @@ mod tests {
 
     #[test]
     fn retry_policy_deserializes_exponential_backoff() {
-        let json = r#"{"strategy":"exponential_backoff","max_attempts":5,"base_secs":1.5,"jitter":true}"#;
+        let json =
+            r#"{"strategy":"exponential_backoff","max_attempts":5,"base_secs":1.5,"jitter":true}"#;
         let p: RetryPolicy = serde_json::from_str(json).unwrap();
         match p {
-            RetryPolicy::ExponentialBackoff { max_attempts, base_secs, jitter } => {
+            RetryPolicy::ExponentialBackoff {
+                max_attempts,
+                base_secs,
+                jitter,
+            } => {
                 assert_eq!(max_attempts, 5);
                 assert!((base_secs - 1.5).abs() < f64::EPSILON);
                 assert!(jitter);
