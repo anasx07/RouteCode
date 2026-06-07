@@ -99,21 +99,25 @@ pub fn resolve_provider_with_config(
                 .or_else(|_| std::env::var("GCLOUD_PROJECT"))
                 .unwrap_or_default();
 
-            let final_project = if vertex_project.is_empty() {
-                &env_project
+            let final_project = if !env_project.is_empty() {
+                env_project
+            } else if !vertex_project.is_empty() {
+                vertex_project.to_string()
             } else {
-                vertex_project
+                "".to_string()
             };
 
-            let env_location = std::env::var("GOOGLE_VERTEX_LOCATION")
-                .or_else(|_| std::env::var("GOOGLE_CLOUD_LOCATION"))
+            let env_location = std::env::var("GOOGLE_CLOUD_LOCATION")
+                .or_else(|_| std::env::var("GOOGLE_VERTEX_LOCATION"))
                 .or_else(|_| std::env::var("VERTEX_LOCATION"))
                 .unwrap_or_else(|_| "us-central1".to_string());
 
-            let final_location = if vertex_location.is_empty() {
-                &env_location
+            let final_location = if !env_location.is_empty() {
+                env_location
+            } else if !vertex_location.is_empty() {
+                vertex_location.to_string()
             } else {
-                vertex_location
+                "us-central1".to_string()
             };
 
             if final_project.is_empty() {
@@ -122,8 +126,8 @@ pub fn resolve_provider_with_config(
             } else {
                 std::sync::Arc::new(VertexAIProvider::new(
                     api_key,
-                    final_project.to_string(),
-                    final_location.to_string(),
+                    final_project,
+                    final_location,
                 ))
             }
         }

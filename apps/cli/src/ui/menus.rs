@@ -105,6 +105,10 @@ pub fn render_api_key_dialog(f: &mut Frame, app: &mut App) {
         ApiKeyInputStage::CloudflareApiKey => {
             ("Enter Cloudflare API Token:".to_string(), " API Token...")
         }
+        ApiKeyInputStage::VertexProject => (
+            "Enter GCP Project ID (e.g. my-gcp-project):".to_string(),
+            " Project ID...",
+        ),
         ApiKeyInputStage::VertexLocation => (
             "Enter GCP location (us-central1, europe-west4, us):".to_string(),
             " us-central1...",

@@ -258,6 +258,13 @@ async fn main() -> anyhow::Result<()> {
     let provider_name = config.provider.clone();
     let api_key = std::env::var(format!("{}_API_KEY", provider_name.to_uppercase()))
         .ok()
+        .or_else(|| {
+            if provider_name == "vertex" {
+                std::env::var("GOOGLE_API_KEY").ok()
+            } else {
+                None
+            }
+        })
         .or_else(|| config.api_keys.get(&provider_name).cloned());
 
     let api_key = match api_key {
@@ -447,13 +454,15 @@ async fn main() -> anyhow::Result<()> {
             #[cfg(target_os = "windows")]
             {
                 match std::process::Command::new("powershell")
-                    .args(["-NoProfile", "-Command", "irm https://raw.githubusercontent.com/anasx07/routecode/main/install.ps1 | iex"])
-                    .status()
+                    .args([
+                        "-NoProfile",
+                        "-Command",
+                        "Start-Sleep -m 500; irm https://raw.githubusercontent.com/anasx07/routecode/main/install.ps1 | iex",
+                    ])
+                    .spawn()
                 {
-                    Ok(status) => {
-                        if !status.success() {
-                            eprintln!("Update command failed with exit code: {:?}", status.code());
-                        }
+                    Ok(_) => {
+                        std::process::exit(0);
                     }
                     Err(e) => eprintln!("Failed to run update command: {}", e),
                 }
