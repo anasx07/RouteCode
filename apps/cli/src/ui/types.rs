@@ -177,6 +177,7 @@ pub enum Screen {
 pub enum ApiKeyInputStage {
     None,
     ApiKey,
+    VertexProject,
     VertexLocation,
     CloudflareAccountId,
     CloudflareGatewayId,

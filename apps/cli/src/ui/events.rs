@@ -375,10 +375,11 @@ pub(crate) async fn handle_key_event(
                         ApiKeyInputStage::ApiKey => {
                             if let Some(provider_id) = app.pending_provider_id.clone() {
                                 if provider_id == "vertex" {
-                                    app.api_key_input_stage = ApiKeyInputStage::VertexLocation;
+                                    app.pending_account_id = Some(input_value);
+                                    app.api_key_input_stage = ApiKeyInputStage::VertexProject;
                                     app.api_key_input = TextArea::default();
                                     app.api_key_input
-                                        .set_placeholder_text(" Location (e.g. us-central1)...");
+                                        .set_placeholder_text(" Google Cloud Project ID...");
                                 } else {
                                     app.pending_provider_id.take();
                                     let mut config = app.orchestrator.config.lock().await;
@@ -397,13 +398,20 @@ pub(crate) async fn handle_key_event(
                                 app.api_key_input_stage = ApiKeyInputStage::None;
                             }
                         }
+                        ApiKeyInputStage::VertexProject => {
+                            app.pending_gateway_id = Some(input_value);
+                            app.api_key_input_stage = ApiKeyInputStage::VertexLocation;
+                            app.api_key_input = TextArea::default();
+                            app.api_key_input
+                                .set_placeholder_text(" Location (e.g. us-central1)...");
+                        }
                         ApiKeyInputStage::VertexLocation => {
                             if let Some(provider_id) = app.pending_provider_id.take() {
                                 let location = input_value;
-                                let api_key =
-                                    app.api_key_input.lines().join("\n").trim().to_string();
+                                let api_key = app.pending_account_id.take().unwrap_or_default();
+                                let project = app.pending_gateway_id.take().unwrap_or_default();
                                 let mut config = app.orchestrator.config.lock().await;
-                                config.vertex_project = "".to_string();
+                                config.vertex_project = project;
                                 config.vertex_location = location;
                                 config.api_keys.insert(provider_id, api_key);
                                 if let Err(e) = routecode_sdk::utils::storage::save_config(&config)
