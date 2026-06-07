@@ -222,7 +222,7 @@ async fn test_orchestrator_recursion_depth_limit() {
     impl AIProvider for InfiniteLoopProvider {
         fn name(&self) -> &str { "InfiniteLoop" }
         async fn list_models(&self) -> Result<Vec<String>, anyhow::Error> { Ok(vec!["mock".into()]) }
-        async fn ask(&self, _msgs: Vec<Message>, _model: &str, _tools: Option<Vec<serde_json::Value>>, _thinking_level: Option<&str>) -> Result<routecode_sdk::agents::traits::StreamResponse, anyhow::Error> {
+        async fn ask(&self, _msgs: Arc<Vec<Message>>, _model: &str, _tools: Arc<Option<Vec<serde_json::Value>>>, _thinking_level: Option<&str>) -> Result<routecode_sdk::agents::traits::StreamResponse, anyhow::Error> {
             let chunks = vec![
                 Ok(StreamChunk::ToolCall {
                     tool_call: ToolCall {
@@ -254,7 +254,7 @@ async fn test_orchestrator_recursion_depth_limit() {
     let orchestrator = AgentOrchestrator::new(provider, Arc::new(registry), config);
 
     let mut history = vec![Message::user("loop")];
-    let result = orchestrator.run(&mut history, "mock", None).await;
+    let result = orchestrator.run(&mut history, "mock", None, None).await;
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("Maximum tool recursion depth (25)"));
 }
@@ -268,7 +268,7 @@ async fn test_orchestrator_stream_channel() {
     impl AIProvider for StreamingProvider {
         fn name(&self) -> &str { "Streaming" }
         async fn list_models(&self) -> Result<Vec<String>, anyhow::Error> { Ok(vec!["mock".into()]) }
-        async fn ask(&self, _msgs: Vec<Message>, _model: &str, _tools: Option<Vec<serde_json::Value>>, _thinking_level: Option<&str>) -> Result<routecode_sdk::agents::traits::StreamResponse, anyhow::Error> {
+        async fn ask(&self, _msgs: Arc<Vec<Message>>, _model: &str, _tools: Arc<Option<Vec<serde_json::Value>>>, _thinking_level: Option<&str>) -> Result<routecode_sdk::agents::traits::StreamResponse, anyhow::Error> {
             self.call_count.fetch_add(1, Ordering::SeqCst);
             let chunks = vec![
                 Ok(StreamChunk::Text { content: "Hello ".to_string() }),
@@ -286,7 +286,7 @@ async fn test_orchestrator_stream_channel() {
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let mut history = vec![Message::user("hi")];
-    orchestrator.run(&mut history, "mock", Some(tx)).await.unwrap();
+    orchestrator.run(&mut history, "mock", Some(tx), None).await.unwrap();
 
     let mut text_parts = Vec::new();
     while let Some(chunk) = rx.recv().await {
@@ -301,6 +301,78 @@ async fn test_orchestrator_stream_channel() {
     assert_eq!(history.len(), 2);
     assert_eq!(history[1].role, Role::Assistant);
     assert_eq!(history[1].content.as_deref(), Some("Hello World!"));
+}
+
+#[tokio::test]
+async fn test_orchestrator_handles_mid_stream_error_chunk() {
+    // Provider emits a couple of Text chunks, then a `StreamChunk::Error`
+    // mid-stream (e.g. a rate-limit notice or upstream 5xx), then Done.
+    // This is the case where the retry wrapper would normally catch and
+    // retry, but to exercise the orchestrator's defensive handler we run
+    // with `RetryPolicy::Disabled` so the stream is passed through
+    // untouched.
+    struct MidStreamErrorProvider;
+    #[async_trait]
+    impl AIProvider for MidStreamErrorProvider {
+        fn name(&self) -> &str { "MidStreamError" }
+        async fn list_models(&self) -> Result<Vec<String>, anyhow::Error> { Ok(vec!["mock".into()]) }
+        async fn ask(
+            &self,
+            _msgs: Arc<Vec<Message>>,
+            _model: &str,
+            _tools: Arc<Option<Vec<serde_json::Value>>>,
+            _thinking_level: Option<&str>,
+        ) -> Result<routecode_sdk::agents::traits::StreamResponse, anyhow::Error> {
+            let chunks = vec![
+                Ok(StreamChunk::Text { content: "partial".to_string() }),
+                Ok(StreamChunk::Error { content: "rate-limited".to_string() }),
+                Ok(StreamChunk::Done),
+            ];
+            Ok(Box::pin(stream::iter(chunks)))
+        }
+    }
+
+    let provider: Arc<dyn AIProvider> = Arc::new(MidStreamErrorProvider);
+    let mut config = Config::default();
+    config.retry_policy = routecode_sdk::core::config::RetryPolicy::Disabled;
+    let config = Arc::new(tokio::sync::Mutex::new(config));
+    let orchestrator = AgentOrchestrator::new(provider, Arc::new(ToolRegistry::new()), config);
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut history = vec![Message::user("hi")];
+
+    // The orchestrator must return Err (the StreamChunk::Error aborts the
+    // stream consumer). The wrapper's `run()` will then send a
+    // StreamChunk::Error and StreamChunk::Done to the UI so the consumer
+    // can finalize cleanly without hanging.
+    let result = orchestrator.run(&mut history, "mock", Some(tx), None).await;
+    assert!(result.is_err(), "orchestrator should propagate mid-stream error");
+    let err_msg = result.unwrap_err().to_string();
+    assert!(err_msg.contains("rate-limited"), "error should carry provider content: {}", err_msg);
+
+    // Drain the UI channel and assert the cleanup shape.
+    let mut got_error = false;
+    let mut got_done = false;
+    let mut text_parts = Vec::new();
+    while let Some(chunk) = rx.recv().await {
+        match chunk {
+            StreamChunk::Text { content } => text_parts.push(content),
+            StreamChunk::Error { content } => {
+                got_error = true;
+                assert!(content.contains("rate-limited"), "UI error content: {}", content);
+            }
+            StreamChunk::Done => {
+                got_done = true;
+            }
+            _ => {}
+        }
+    }
+    assert!(got_error, "UI should receive StreamChunk::Error after abort");
+    assert!(got_done, "UI should receive StreamChunk::Done after abort");
+    // The Text("partial") that arrived before the error may or may not be
+    // flushed depending on buffering; the contract is just that the
+    // orchestrator does not hang.
+    let _ = text_parts; // may be empty or ["partial"]
 }
 
 #[tokio::test]

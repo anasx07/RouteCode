@@ -221,6 +221,68 @@ impl Tool for FileEditTool {
     }
 }
 
+pub struct ApplyPatchTool;
+
+#[async_trait]
+impl Tool for ApplyPatchTool {
+    fn name(&self) -> &str {
+        "apply_patch"
+    }
+
+    fn description(&self) -> &str {
+        "Apply a unified diff patch to a file. Useful for making complex modifications without replacing the whole file."
+    }
+
+    fn parameters(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "The path to the file being patched" },
+                "patch_text": { "type": "string", "description": "The unified diff patch string to apply" }
+            },
+            "required": ["path", "patch_text"]
+        })
+    }
+
+    async fn execute(&self, args: Value) -> Result<ToolResult, anyhow::Error> {
+        let raw_path = args["path"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing path"))?;
+        let patch_text = args["patch_text"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing patch_text"))?;
+
+        let path = normalize_path(raw_path);
+        match is_within_workspace(&path) {
+            Ok(true) => {}
+            Ok(false) => return Ok(ToolResult::error(format!("Access denied: Path '{}' is outside the workspace boundary", path.display()))),
+            Err(e) => return Ok(ToolResult::error(format!("Failed to verify path '{}': {}", path.display(), e))),
+        }
+
+        let content = match fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => return Ok(ToolResult::error(format!("Failed to read file '{}': {}", path.display(), e))),
+        };
+
+        let patch = match diffy::Patch::from_str(patch_text) {
+            Ok(p) => p,
+            Err(e) => return Ok(ToolResult::error(format!("Failed to parse patch: {}", e))),
+        };
+
+        let new_content = match diffy::apply(&content, &patch) {
+            Ok(c) => c,
+            Err(e) => return Ok(ToolResult::error(format!("Failed to apply patch: {}", e))),
+        };
+
+        let diff = generate_diff(&content, &new_content);
+
+        match fs::write(&path, new_content) {
+            Ok(_) => Ok(ToolResult::success(format!("Successfully applied patch to {}", path.display())).with_diff(diff)),
+            Err(e) => Ok(ToolResult::error(format!("Failed to write file '{}': {}", path.display(), e))),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

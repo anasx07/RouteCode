@@ -101,6 +101,43 @@ On first run, RouteCode will ask for your API key and save it to `~/.routecode/c
 
 ---
 
+## Configuration
+
+All persistent settings live in `~/.routecode/config.json` (created on first run).
+You can edit the file by hand — unknown fields are ignored, and missing fields
+fall back to their defaults. The most useful fields:
+
+| Field                   | Type      | Default        | Description |
+|-------------------------|-----------|----------------|-------------|
+| `model`                 | `string`  | `gpt-4o`       | Default model used at startup. |
+| `provider`              | `string`  | `openai`       | Default provider (see [Supported providers](#supported-providers)). |
+| `api_keys`              | `object`  | `{}`           | Map of provider id → API key. |
+| `thinking_level`        | `string`  | `default`      | One of `default` / `low` / `medium` / `high` (provider-dependent). |
+| `sub_agents_enabled`    | `bool`    | `true`         | Allow the orchestrator to spawn sub-agents for subtasks. |
+| `retry_policy`          | `object`  | `{"strategy": "disabled"}` | Retry strategy for failed provider requests. Tagged shape: `{"strategy": "disabled"}`, `{"strategy": "qir"}`, or `{"strategy": "exponential_backoff", "max_attempts": 5, "base_secs": 1.0, "jitter": true}`. Currently only `qir` and `disabled` are honored by the orchestrator; `exponential_backoff` is reserved. See below. |
+| `vertex_project`        | `string`  | `""`           | GCP project id, required when `provider = "vertex"`. |
+| `vertex_location`       | `string`  | `us-central1`  | GCP region for Vertex. |
+| `allowlist`             | `string[]`| `[]`           | Extra filesystem paths the bash / file tools are allowed to touch. |
+
+#### `retry_policy` strategies
+
+| `strategy`              | Behavior |
+|-------------------------|----------|
+| `disabled`              | No retry on failure. Default. |
+| `qir`                   | **Experimental.** Quick Infinite Retry — re-send failed requests immediately with no delay and no attempt limit. **Use at your own risk** — aggressive retrying can rate-limit, suspend, or permanently ban your account with Anthropic, OpenAI, Google Gemini, OpenRouter, Cloudflare, Vertex, OpenCode Zen, etc. The RouteCode project and its authors accept no responsibility for bans, lost credits, or other consequences. Toggle this in **Settings → Engine & Models → Quick Infinite Retry**. |
+| `exponential_backoff`   | Reserved for future use. The fields `max_attempts`, `base_secs`, and `jitter` are accepted but not yet honored at the call site. |
+
+> **Note:** `retry_policy` is snapshotted at the start of each request and is
+> NOT re-read mid-run. If you want to stop a runaway retry loop, use the Stop
+> button (sends a cancel signal) — don't just toggle QIR off.
+
+> **Migration:** Old configs with `quick_infinite_retry: true` (or
+> `retry_policy: true`) are auto-migrated to `retry_policy: {"strategy": "qir"}`
+> on load. A deprecation warning is logged. The legacy field is never written
+> back out — save once to clean up.
+
+---
+
 ## Building from source
 
 ```sh

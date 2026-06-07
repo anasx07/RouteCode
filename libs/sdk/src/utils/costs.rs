@@ -9,6 +9,12 @@ pub struct Usage {
     pub output_tokens: u32,
     pub total_tokens: u32,
     pub total_cost: f64,
+    /// Number of QIR retry attempts that occurred in this session.
+    /// Each retry is a billable request even if the user only sees the
+    /// final successful response, so this is surfaced to the UI to
+    /// prevent "invisible" cost from QIR usage.
+    #[serde(default)]
+    pub qir_attempts: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,6 +51,10 @@ impl Usage {
 
         let cost = calculate_cost(input, output, model).await;
         self.total_cost += cost;
+    }
+
+    pub fn record_qir_attempt(&mut self) {
+        self.qir_attempts += 1;
     }
 }
 

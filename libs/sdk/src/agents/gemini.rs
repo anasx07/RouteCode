@@ -6,21 +6,24 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use reqwest::Client;
 use serde_json::{json, Value};
+use std::sync::Arc;
 use uuid::Uuid;
 
 pub struct GeminiProvider {
     api_key: String,
     client: Client,
+    base_url: String,
 }
 
 impl GeminiProvider {
-    pub fn new(api_key: String) -> Self {
+    pub fn new(api_key: String, base_url: Option<String>) -> Self {
         Self {
             api_key,
             client: Client::builder()
                 .timeout(std::time::Duration::from_secs(60))
                 .build()
                 .unwrap_or_else(|_| Client::new()),
+            base_url: base_url.unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta".to_string()),
         }
     }
 }
@@ -32,20 +35,18 @@ impl AIProvider for GeminiProvider {
     }
 
     async fn list_models(&self) -> Result<Vec<String>, anyhow::Error> {
+        if let Some(models) = crate::utils::models::get_models_for_provider("google") {
+            return Ok(models);
+        }
+
         let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models?key={}",
-            self.api_key
+            "{}/models?key={}",
+            self.base_url.trim_end_matches('/'), self.api_key
         );
 
         let response = self.client.get(&url).send().await?;
 
-        if !response.status().is_success() {
-            return Ok(vec![
-                "gemini-1.5-pro".to_string(),
-                "gemini-1.5-flash".to_string(),
-                "gemini-2.0-flash-exp".to_string(),
-            ]);
-        }
+        let response = crate::utils::error::check_status(response).await?;
 
         let val: Value = response.json().await?;
         let mut models = Vec::new();
@@ -64,20 +65,20 @@ impl AIProvider for GeminiProvider {
 
     async fn ask(
         &self,
-        messages: Vec<Message>,
+        messages: Arc<Vec<Message>>,
         model: &str,
-        _tools: Option<Vec<Value>>,
+        _tools: Arc<Option<Vec<Value>>>,
         _thinking_level: Option<&str>,
     ) -> Result<StreamResponse, anyhow::Error> {
         let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?key={}",
-            model, self.api_key
+            "{}/models/{}:streamGenerateContent?key={}",
+            self.base_url.trim_end_matches('/'), model, self.api_key
         );
 
         let mut contents = Vec::new();
         let mut system_instruction = String::new();
 
-        for msg in messages {
+        for msg in messages.iter() {
             match msg.role {
                 Role::System => {
                     if let Some(c) = &msg.content {
@@ -87,7 +88,7 @@ impl AIProvider for GeminiProvider {
                 Role::User => {
                     contents.push(json!({
                         "role": "user",
-                        "parts": [{ "text": msg.content.unwrap_or_default() }]
+                        "parts": [{ "text": msg.content.as_deref().unwrap_or_default() }]
                     }));
                 }
                 Role::Assistant => {
@@ -120,7 +121,7 @@ impl AIProvider for GeminiProvider {
                         "parts": [{
                             "functionResponse": {
                                 "name": fn_name,
-                                "response": { "result": msg.content.unwrap_or_default() }
+                                "response": { "result": msg.content.as_deref().unwrap_or_default() }
                             }
                         }]
                     }));
@@ -144,7 +145,7 @@ impl AIProvider for GeminiProvider {
             }
         }
 
-        if let Some(t) = _tools {
+        if let Some(t) = _tools.as_ref() {
             let mut gemini_tools = Vec::new();
             for tool in t {
                 if let Some(f) = tool.get("function") {
@@ -167,10 +168,7 @@ impl AIProvider for GeminiProvider {
             .send()
             .await?;
 
-        if !response.status().is_success() {
-            let err_text = response.text().await?;
-            return Err(anyhow::anyhow!("Gemini error: {}", err_text));
-        }
+        let response = crate::utils::error::check_status(response).await?;
 
         let mut bytes_stream = response.bytes_stream();
         let mut buffer = String::new();

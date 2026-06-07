@@ -244,7 +244,8 @@ pub fn load_config() -> anyhow::Result<Config> {
         return Ok(Config::default());
     }
     let json = fs::read_to_string(path)?;
-    let config = serde_json::from_str(&json)?;
+    let mut config: Config = serde_json::from_str(&json)?;
+    config.normalize();
     Ok(config)
 }
 

@@ -8,20 +8,23 @@ use futures::StreamExt;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 pub struct AnthropicProvider {
     api_key: String,
     client: Client,
+    base_url: String,
 }
 
 impl AnthropicProvider {
-    pub fn new(api_key: String) -> Self {
+    pub fn new(api_key: String, base_url: Option<String>) -> Self {
         Self {
             api_key,
             client: Client::builder()
                 .timeout(std::time::Duration::from_secs(60))
                 .build()
                 .unwrap_or_else(|_| Client::new()),
+            base_url: base_url.unwrap_or_else(|| "https://api.anthropic.com".to_string()),
         }
     }
 }
@@ -33,6 +36,9 @@ impl AIProvider for AnthropicProvider {
     }
 
     async fn list_models(&self) -> Result<Vec<String>, anyhow::Error> {
+        if let Some(models) = crate::utils::models::get_models_for_provider("anthropic") {
+            return Ok(models);
+        }
         // Anthropic doesn't have a public models endpoint in the same way OpenAI does that's easily accessible without specific permissions
         // Returning a common set of models
         Ok(vec![
@@ -48,15 +54,15 @@ impl AIProvider for AnthropicProvider {
 
     async fn ask(
         &self,
-        messages: Vec<Message>,
+        messages: Arc<Vec<Message>>,
         model: &str,
-        tools: Option<Vec<Value>>,
+        tools: Arc<Option<Vec<Value>>>,
         _thinking_level: Option<&str>,
     ) -> Result<StreamResponse, anyhow::Error> {
         let mut anthropic_messages = Vec::new();
         let mut system_prompt = String::new();
 
-        for msg in messages {
+        for msg in messages.iter() {
             match msg.role {
                 Role::System => {
                     if let Some(content) = &msg.content {
@@ -66,7 +72,7 @@ impl AIProvider for AnthropicProvider {
                 Role::User => {
                     anthropic_messages.push(json!({
                         "role": "user",
-                        "content": msg.content.unwrap_or_default(),
+                        "content": msg.content.as_deref().unwrap_or_default(),
                     }));
                 }
                 Role::Assistant => {
@@ -98,8 +104,8 @@ impl AIProvider for AnthropicProvider {
                         "role": "user",
                         "content": [{
                             "type": "tool_result",
-                            "tool_use_id": msg.tool_call_id.unwrap_or_default(),
-                            "content": msg.content.unwrap_or_default(),
+                            "tool_use_id": msg.tool_call_id.as_deref().unwrap_or_default(),
+                            "content": msg.content.as_deref().unwrap_or_default(),
                         }],
                     }));
                 }
@@ -117,7 +123,7 @@ impl AIProvider for AnthropicProvider {
             body["system"] = json!(system_prompt);
         }
 
-        if let Some(t) = tools {
+        if let Some(t) = tools.as_ref() {
             let mut anthropic_tools = Vec::new();
             for tool in t {
                 if let Some(f) = tool.get("function") {
@@ -131,8 +137,18 @@ impl AIProvider for AnthropicProvider {
             body["tools"] = json!(anthropic_tools);
         }
 
-        let response = self.client
-            .post("https://api.anthropic.com/v1/messages")
+        let mut url = self.base_url.clone();
+        if !url.ends_with("/v1/messages") {
+            if url.ends_with("/v1/") || url.ends_with("/v1") {
+                url = format!("{}/messages", url.trim_end_matches('/'));
+            } else {
+                url = format!("{}/v1/messages", url.trim_end_matches('/'));
+            }
+        }
+        
+        let response = self
+            .client
+            .post(&url)
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
@@ -140,10 +156,7 @@ impl AIProvider for AnthropicProvider {
             .send()
             .await?;
 
-        if !response.status().is_success() {
-            let err_text = response.text().await?;
-            return Err(anyhow::anyhow!("Anthropic error: {}", err_text));
-        }
+        let response = crate::utils::error::check_status(response).await?;
 
         let mut bytes_stream = response.bytes_stream();
         let mut buffer = String::new();

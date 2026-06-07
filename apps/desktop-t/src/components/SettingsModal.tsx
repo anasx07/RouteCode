@@ -5,7 +5,9 @@ import {
   KeyRound, 
   Shield, 
   Eye, 
-  EyeOff
+  EyeOff,
+  AlertTriangle,
+  Infinity as InfinityIcon
 } from "lucide-react";
 
 interface SettingsModalProps {
@@ -14,9 +16,11 @@ interface SettingsModalProps {
   activeProvider: string;
   activeModel: string;
   apiKeys: Record<string, string>;
+  quickInfiniteRetry: boolean;
   onChangeProvider: (provider: string) => void;
   onChangeModel: (model: string) => void;
   onChangeApiKeys: (keys: Record<string, string>) => void;
+  onChangeQuickInfiniteRetry: (enabled: boolean) => void;
   onSave: () => void;
 }
 
@@ -26,9 +30,11 @@ export default function SettingsModal({
   activeProvider,
   activeModel,
   apiKeys,
+  quickInfiniteRetry,
   onChangeProvider,
   onChangeModel,
   onChangeApiKeys,
+  onChangeQuickInfiniteRetry,
   onSave
 }: SettingsModalProps) {
   const [activeSettingsTab, setActiveSettingsTab] = useState<"general" | "keys" | "sandbox">("general");
@@ -124,6 +130,55 @@ export default function SettingsModal({
                     placeholder="e.g. claude-3-5-sonnet, gpt-4o, deepseek-coder"
                     className="w-full px-4 py-3 bg-[#0b0c12]/90 border border-white/[0.06] rounded-xl text-xs font-mono font-bold text-gray-200 outline-none focus:border-violet-500/40"
                   />
+                </div>
+
+                <div className="h-px bg-white/[0.03] my-2" />
+
+                {/* QIR - Quick Infinite Retry */}
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-center justify-between p-4 bg-white/[0.01] border border-white/[0.02] rounded-2xl">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-500/20 to-rose-500/20 border border-amber-500/20 flex items-center justify-center">
+                        <InfinityIcon className="w-4 h-4 text-amber-400" />
+                      </div>
+                      <div className="flex flex-col gap-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-extrabold text-gray-200">Quick Infinite Retry (QIR)</span>
+                          <span className="text-[9px] font-black tracking-wider uppercase px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                            Experimental
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-gray-500">Immediately re-send failed requests with no delay and no limit.</span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onChangeQuickInfiniteRetry(!quickInfiniteRetry)}
+                      className={`w-10 h-6 rounded-full flex items-center transition-all ${
+                        quickInfiniteRetry
+                          ? "bg-amber-500 justify-end shadow shadow-amber-500/50"
+                          : "bg-[#181926] justify-start border border-white/[0.02]"
+                      } px-1 cursor-pointer`}
+                      aria-pressed={quickInfiniteRetry}
+                      aria-label="Toggle Quick Infinite Retry"
+                    >
+                      <div className={`w-4 h-4 rounded-full ${quickInfiniteRetry ? "bg-white" : "bg-gray-600"}`} />
+                    </button>
+                  </div>
+
+                  <div className="flex items-start gap-3 p-4 bg-amber-500/[0.06] border border-amber-500/20 rounded-2xl">
+                    <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                    <div className="flex flex-col gap-1.5">
+                      <span className="text-[11px] font-extrabold text-amber-300 uppercase tracking-wider">Use At Your Own Risk</span>
+                      <p className="text-[10px] text-amber-200/70 leading-relaxed">
+                        QIR re-sends the request as fast as possible with <strong>no delay</strong> and <strong>no attempt limit</strong>.
+                        Aggressive retrying can cause your account to be <strong>rate-limited, temporarily suspended, or permanently banned</strong> by AI providers
+                        (Anthropic, OpenAI, Google Gemini, OpenRouter, Cloudflare, Vertex, OpenCode Zen, etc.) and may violate their Terms of Service.
+                        The RouteCode project and its authors accept <strong>no responsibility or liability</strong> for bans, lost credits, account flags, or any other consequences
+                        resulting from enabling this feature. <strong>You alone assume all risk.</strong>
+                      </p>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}

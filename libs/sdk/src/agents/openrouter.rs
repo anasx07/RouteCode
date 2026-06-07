@@ -8,6 +8,7 @@ use futures::StreamExt;
 use reqwest::Client;
 use serde_json::json;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 pub struct OpenRouter {
     api_key: String,
@@ -39,10 +40,7 @@ impl AIProvider for OpenRouter {
             .send()
             .await?;
 
-        if !response.status().is_success() {
-            let err_text = response.text().await?;
-            return Err(anyhow::anyhow!("OpenRouter list_models error: {}", err_text));
-        }
+        let response = crate::utils::error::check_status(response).await?;
 
         let val: serde_json::Value = response.json().await?;
         let mut models = Vec::new();
@@ -60,18 +58,18 @@ impl AIProvider for OpenRouter {
 
     async fn ask(
         &self,
-        messages: Vec<Message>,
+        messages: Arc<Vec<Message>>,
         model: &str,
-        tools: Option<Vec<serde_json::Value>>,
+        tools: Arc<Option<Vec<serde_json::Value>>>,
         thinking_level: Option<&str>,
     ) -> Result<StreamResponse, anyhow::Error> {
         let mut body = json!({
             "model": model,
-            "messages": messages,
+            "messages": &*messages,
             "stream": true,
         });
 
-        if let Some(t) = tools {
+        if let Some(t) = tools.as_ref() {
             body["tools"] = json!(t);
         }
 
@@ -93,10 +91,7 @@ impl AIProvider for OpenRouter {
             .send()
             .await?;
 
-        if !response.status().is_success() {
-            let err_text = response.text().await?;
-            return Err(anyhow::anyhow!("OpenRouter error: {}", err_text));
-        }
+        let response = crate::utils::error::check_status(response).await?;
 
         let mut bytes_stream = response.bytes_stream();
         let mut buffer = String::new();

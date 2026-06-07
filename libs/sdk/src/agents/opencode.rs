@@ -7,6 +7,7 @@ use futures::StreamExt;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 pub struct OpenCodeProvider {
     api_key: String,
@@ -136,9 +137,9 @@ impl AIProvider for OpenCodeProvider {
 
     async fn ask(
         &self,
-        messages: Vec<Message>,
+        messages: Arc<Vec<Message>>,
         model: &str,
-        _tools: Option<Vec<Value>>,
+        _tools: Arc<Option<Vec<Value>>>,
         thinking_level: Option<&str>,
     ) -> Result<StreamResponse, anyhow::Error> {
         let prefixed_model = self.get_prefixed_model(model);
@@ -165,13 +166,13 @@ impl AIProvider for OpenCodeProvider {
             // Anthropic Format
             let mut anthropic_messages = Vec::new();
             let mut global_system = String::new();
-            for msg in messages {
+            for msg in messages.iter() {
                 match msg.role {
                     Role::System => {
                         if let Some(c) = &msg.content { global_system.push_str(c); }
                     }
                     Role::User => {
-                        anthropic_messages.push(json!({ "role": "user", "content": msg.content.unwrap_or_default() }));
+                        anthropic_messages.push(json!({ "role": "user", "content": msg.content.as_deref().unwrap_or_default() }));
                     }
                     Role::Assistant => {
                         let mut content = Vec::new();
@@ -200,8 +201,8 @@ impl AIProvider for OpenCodeProvider {
                             "role": "user",
                             "content": [{
                                 "type": "tool_result",
-                                "tool_use_id": msg.tool_call_id.unwrap_or_default(),
-                                "content": msg.content.unwrap_or_default(),
+                                "tool_use_id": msg.tool_call_id.as_deref().unwrap_or_default(),
+                                "content": msg.content.as_deref().unwrap_or_default(),
                             }]
                         }));
                     }
@@ -214,7 +215,7 @@ impl AIProvider for OpenCodeProvider {
                 if level != "default" { body["thinking_level"] = json!(level); }
             }
 
-            if let Some(t) = _tools {
+            if let Some(t) = _tools.as_ref() {
                 let mut anthropic_tools = Vec::new();
                 for tool in t {
                     if let Some(f) = tool.get("function") {
@@ -229,7 +230,7 @@ impl AIProvider for OpenCodeProvider {
             }
 
             let response = self.client.post(&endpoint).header("Authorization", format!("Bearer {}", self.api_key)).json(&body).send().await?;
-            if !response.status().is_success() { return Err(anyhow::anyhow!("OpenCode error: {}", response.text().await?)); }
+            let response = crate::utils::error::check_status(response).await?;
 
             let mut bytes_stream = response.bytes_stream();
             let mut buffer = String::new();
@@ -252,9 +253,9 @@ impl AIProvider for OpenCodeProvider {
         } else if endpoint.contains(":streamGenerateContent") {
             // Gemini/Google Format
             let mut contents = Vec::new();
-            for msg in messages {
+            for msg in messages.iter() {
                 let role = match msg.role { Role::User => "user", Role::Assistant => "model", _ => "user" };
-                contents.push(json!({ "role": role, "parts": [{"text": msg.content.unwrap_or_default()}] }));
+                contents.push(json!({ "role": role, "parts": [{"text": msg.content.as_deref().unwrap_or_default()}] }));
             }
             let mut body = json!({ "contents": contents });
             
@@ -262,7 +263,7 @@ impl AIProvider for OpenCodeProvider {
                 if level != "default" { body["thinking_level"] = json!(level); }
             }
 
-            if let Some(t) = _tools {
+            if let Some(t) = _tools.as_ref() {
                 let mut gemini_tools = Vec::new();
                 for tool in t {
                     if let Some(f) = tool.get("function") {
@@ -277,7 +278,7 @@ impl AIProvider for OpenCodeProvider {
             }
 
             let response = self.client.post(&endpoint).header("Authorization", format!("Bearer {}", self.api_key)).json(&body).send().await?;
-            if !response.status().is_success() { return Err(anyhow::anyhow!("OpenCode error: {}", response.text().await?)); }
+            let response = crate::utils::error::check_status(response).await?;
 
             let mut bytes_stream = response.bytes_stream();
             let mut buffer = String::new();
@@ -305,15 +306,15 @@ impl AIProvider for OpenCodeProvider {
             Ok(Box::pin(s))
         } else {
             // OpenAI Format (Default + GPT /responses)
-            let mut body = json!({ "model": prefixed_model, "messages": messages, "stream": true, "max_tokens": 16384 });
-            if let Some(t) = _tools { body["tools"] = json!(t); }
+            let mut body = json!({ "model": prefixed_model, "messages": &*messages, "stream": true, "max_tokens": 16384 });
+            if let Some(t) = _tools.as_ref() { body["tools"] = json!(t); }
             
             if let Some(level) = thinking_level {
                 if level != "default" { body["thinking_level"] = json!(level); }
             }
 
             let response = self.client.post(&endpoint).header("Authorization", format!("Bearer {}", self.api_key)).json(&body).send().await?;
-            if !response.status().is_success() { return Err(anyhow::anyhow!("OpenCode error: {}", response.text().await?)); }
+            let response = crate::utils::error::check_status(response).await?;
 
             let mut bytes_stream = response.bytes_stream();
             let mut buffer = String::new();

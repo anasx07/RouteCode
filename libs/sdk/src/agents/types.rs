@@ -52,6 +52,14 @@ pub enum StreamChunk {
         changelog: String,
         published_at: String,
     },
+    Status {
+        content: String,
+    },
+    SessionStats {
+        total_tokens: u32,
+        total_cost: f64,
+        qir_attempts: u32,
+    },
     Done,
 }
 

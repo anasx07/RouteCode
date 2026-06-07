@@ -70,7 +70,6 @@ pub fn render_api_key_dialog(f: &mut Frame, app: &mut App) {
         ApiKeyInputStage::CloudflareAccountId => ("Enter Cloudflare Account ID:".to_string(), " Account ID..."),
         ApiKeyInputStage::CloudflareGatewayId => ("Enter Cloudflare Gateway ID:".to_string(), " Gateway ID..."),
         ApiKeyInputStage::CloudflareApiKey => ("Enter Cloudflare API Token:".to_string(), " API Token..."),
-        ApiKeyInputStage::VertexProject => ("Enter your GCP project ID:".to_string(), " my-project-123..."),
         ApiKeyInputStage::VertexLocation => ("Enter GCP location (us-central1, europe-west4, us):".to_string(), " us-central1..."),
         _ => (format!("Enter API key for {}:", provider_name), " Paste your API key here..."),
     };
