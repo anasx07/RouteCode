@@ -67,7 +67,7 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 use routecode_sdk::core::AgentOrchestrator;
 use routecode_sdk::tools::bash::BashTool;
 use routecode_sdk::tools::file_ops::{ApplyPatchTool, FileEditTool, FileReadTool, FileWriteTool};
-use routecode_sdk::tools::lsp_tool::LspTool;
+use routecode_sdk::tools::lsp::LspTool;
 use routecode_sdk::tools::mcp::manager::McpManager;
 use routecode_sdk::tools::navigation::{GrepTool, LsTool, TreeTool};
 use routecode_sdk::tools::subagent::SubAgentTool;

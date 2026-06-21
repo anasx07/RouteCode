@@ -69,6 +69,18 @@ pub struct App {
     pub cached_layout: Vec<(usize, bool)>,
     pub pending_command_confirmation: Option<(String, String, super::types::ConfirmationSender)>,
     pub inputting_command_feedback: bool,
+    /// Plan markdown + sender awaiting user approval. Set by the
+    /// streaming handler when the AI calls `exit_plan_mode`.
+    pub pending_plan_approval: Option<super::types::PendingPlan>,
+    /// 0 = Approve & Unlock, 1 = Approve Once, 2 = Deny, 3 = Feedback.
+    /// Default selection is 0 (Approve & Unlock).
+    pub plan_approval_selected: usize,
+    /// Hook trust dialog state. Set by the streaming handler when
+    /// a project first defines hooks.
+    pub pending_hook_trust: Option<super::types::PendingHookTrust>,
+    /// 0 = Trust, 1 = Deny. Default 0.
+    pub hook_trust_selected: usize,
+    pub inputting_plan_feedback: bool,
     pub show_user_msg_modal: Option<usize>,
     pub user_msg_modal_selected: usize,
     pub cached_hovered_msg_idx: Option<usize>,
@@ -171,6 +183,11 @@ impl App {
             cached_layout: Vec::new(),
             pending_command_confirmation: None,
             inputting_command_feedback: false,
+            pending_plan_approval: None,
+            plan_approval_selected: 0,
+            pending_hook_trust: None,
+            hook_trust_selected: 0,
+            inputting_plan_feedback: false,
             show_user_msg_modal: None,
             user_msg_modal_selected: 0,
             cached_hovered_msg_idx: None,

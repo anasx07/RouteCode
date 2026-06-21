@@ -1,5 +1,5 @@
+use super::manager::LspManager;
 use crate::core::ToolResult;
-use crate::tools::lsp::manager::LspManager;
 use crate::tools::traits::Tool;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -10,6 +10,34 @@ use lsp_types::{
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+pub const TOOL_NAME: &str = "lsp";
+pub const TOOL_DESCRIPTION: &str = "Query a Language Server (LSP) for semantic code information (goToDefinition, findReferences, hover). Provide operation, filePath, line, and character (1-indexed).";
+
+pub fn parameters() -> serde_json::Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "operation": {
+                "type": "string",
+                "enum": ["goToDefinition", "findReferences", "hover"]
+            },
+            "filePath": {
+                "type": "string",
+                "description": "Absolute path to the file"
+            },
+            "line": {
+                "type": "integer",
+                "description": "1-based line number"
+            },
+            "character": {
+                "type": "integer",
+                "description": "1-based character offset"
+            }
+        },
+        "required": ["operation", "filePath", "line", "character"]
+    })
+}
 
 #[derive(Default)]
 pub struct LspTool {
@@ -27,42 +55,21 @@ impl LspTool {
 #[async_trait]
 impl Tool for LspTool {
     fn name(&self) -> &str {
-        "lsp"
+        TOOL_NAME
     }
 
     fn description(&self) -> &str {
-        "Query a Language Server (LSP) for semantic code information (goToDefinition, findReferences, hover). Provide operation, filePath, line, and character (1-indexed)."
+        TOOL_DESCRIPTION
     }
 
     fn parameters(&self) -> serde_json::Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "operation": {
-                    "type": "string",
-                    "enum": ["goToDefinition", "findReferences", "hover"]
-                },
-                "filePath": {
-                    "type": "string",
-                    "description": "Absolute path to the file"
-                },
-                "line": {
-                    "type": "integer",
-                    "description": "1-based line number"
-                },
-                "character": {
-                    "type": "integer",
-                    "description": "1-based character offset"
-                }
-            },
-            "required": ["operation", "filePath", "line", "character"]
-        })
+        parameters()
     }
 
     async fn execute(&self, params: serde_json::Value) -> Result<ToolResult> {
         let operation = params["operation"].as_str().unwrap_or("").to_string();
         let file_path = params["filePath"].as_str().unwrap_or("");
-        let line = params["line"].as_u64().unwrap_or(1).saturating_sub(1) as u32; // 0-indexed internally
+        let line = params["line"].as_u64().unwrap_or(1).saturating_sub(1) as u32;
         let character = params["character"].as_u64().unwrap_or(1).saturating_sub(1) as u32;
 
         let path = PathBuf::from(file_path);
@@ -71,8 +78,6 @@ impl Tool for LspTool {
         }
 
         let uri = Url::from_file_path(&path).map_err(|_| anyhow!("Invalid path"))?;
-
-        // Open Document notification (LSP servers require the file to be "opened" to answer queries)
         let client = self.manager.get_or_spawn_client(&path).await?;
 
         let content = std::fs::read_to_string(&path)?;
@@ -88,7 +93,6 @@ impl Tool for LspTool {
                 text: content,
             },
         };
-        // We notify but don't await response, it's just a notification
         let _ = client
             .notify(
                 "textDocument/didOpen",

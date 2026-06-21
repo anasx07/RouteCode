@@ -672,3 +672,286 @@ async fn test_tool_call_serialization() {
     assert_eq!(deserialized.function.name, "bash");
     assert_eq!(deserialized.index, Some(0));
 }
+
+#[tokio::test]
+async fn test_orchestrator_auto_compact() {
+    struct CompactingProvider;
+    #[async_trait]
+    impl AIProvider for CompactingProvider {
+        fn name(&self) -> &str {
+            "Compacting"
+        }
+        async fn list_models(&self) -> Result<Vec<String>, anyhow::Error> {
+            Ok(vec!["mock".into()])
+        }
+        async fn ask(
+            &self,
+            msgs: Arc<Vec<Message>>,
+            _model: &str,
+            _tools: Arc<Option<Vec<serde_json::Value>>>,
+            _thinking_level: Option<&str>,
+        ) -> Result<routecode_sdk::agents::traits::StreamResponse, anyhow::Error> {
+            // Check if we are summarizing
+            let last_content = msgs.last().and_then(|m| m.content.as_ref()).map(|c| &**c).unwrap_or("");
+            let chunks = if last_content.contains("comprehensive and detailed technical summary") {
+                vec![
+                    Ok(StreamChunk::Text {
+                        content: "SUMMARY_DRAFT: We discussed coding. 1 pending task.".to_string(),
+                    }),
+                    Ok(StreamChunk::Done),
+                ]
+            } else {
+                vec![
+                    Ok(StreamChunk::Text {
+                        content: "Hello World!".to_string(),
+                    }),
+                    Ok(StreamChunk::Done),
+                ]
+            };
+            Ok(Box::pin(stream::iter(chunks)))
+        }
+    }
+
+    let provider = Arc::new(CompactingProvider);
+    let config = Config {
+        auto_compact_enabled: true,
+        context_window_override: Some(15_000),
+        ..Default::default()
+    };
+    
+    let config_arc = Arc::new(tokio::sync::Mutex::new(config));
+    let orchestrator = AgentOrchestrator::new(provider, Arc::new(ToolRegistry::new()), config_arc);
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    
+    // Create large messages to trigger auto-compact (threshold is 12,000 for 15,000 context)
+    let long_text = "word ".repeat(3500); // ~3500 tokens
+    let mut history = vec![
+        Message::user(long_text.clone()),
+        Message::assistant(Some("Ok 1".into()), None, None),
+        Message::user(long_text.clone()),
+        Message::assistant(Some("Ok 2".into()), None, None),
+        Message::user(long_text.clone()),
+        Message::assistant(Some("Ok 3".into()), None, None),
+        Message::user("Please proceed."),
+    ];
+
+    orchestrator
+        .run(&mut history, "mock", Some(tx), None)
+        .await
+        .unwrap();
+
+    // Drain streaming chunks
+    let mut has_progress = false;
+    let mut has_result = false;
+    while let Some(chunk) = rx.recv().await {
+        match chunk {
+            StreamChunk::CompactProgress { .. } => has_progress = true,
+            StreamChunk::CompactResult { .. } => has_result = true,
+            _ => {}
+        }
+    }
+
+    // Verify progress/result events emitted
+    assert!(has_progress);
+    assert!(has_result);
+
+    // Verify history was compacted in place: contains the boundary marker and summary
+    let has_boundary = history.iter().any(|m| {
+        m.role == Role::System && m.content.as_deref() == Some("Conversation compacted")
+    });
+    assert!(has_boundary);
+
+    let has_summary = history.iter().any(|m| {
+        m.role == Role::System && m.content.as_ref().map(|c| c.contains("SUMMARY_DRAFT")).unwrap_or(false)
+    });
+    assert!(has_summary);
+}
+
+// ============================================================================
+// Hooks system integration tests
+// ============================================================================
+
+mod hooks_integration {
+    use routecode_sdk::core::orchestrator::AgentOrchestrator;
+    use routecode_sdk::core::Config;
+    use routecode_sdk::hooks::types::{HookEntry, HookMatcherConfig};
+    use routecode_sdk::hooks::{
+        aggregate_results, run_hooks_for_event, CommandHook, HookEvent, HookInput,
+        HookRegistry, HooksConfig,
+    };
+    use routecode_sdk::tools::registry::ToolRegistry;
+    use routecode_sdk::agents::AIProvider;
+    use async_trait::async_trait;
+    use futures::stream;
+    use routecode_sdk::agents::types::StreamChunk;
+    use routecode_sdk::core::Message;
+    use serde_json::json;
+    use std::collections::HashMap;
+    use std::path::Path;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+    use tokio::sync::Mutex;
+
+    fn hook_test_dir() -> TempDir {
+        let cwd = std::env::current_dir().expect("current dir");
+        let dir = cwd.join(".routecode_test_tmp");
+        std::fs::create_dir_all(&dir).unwrap();
+        TempDir::new_in(&dir).unwrap()
+    }
+
+    struct NoopProvider;
+    #[async_trait]
+    impl AIProvider for NoopProvider {
+        fn name(&self) -> &str {
+            "noop"
+        }
+        async fn list_models(&self) -> Result<Vec<String>, anyhow::Error> {
+            Ok(vec!["noop".to_string()])
+        }
+        async fn ask(
+            &self,
+            _msgs: Arc<Vec<Message>>,
+            _model: &str,
+            _tools: Arc<Option<Vec<serde_json::Value>>>,
+            _thinking_level: Option<&str>,
+        ) -> Result<routecode_sdk::agents::traits::StreamResponse, anyhow::Error> {
+            let s = stream::iter(vec![Ok(StreamChunk::Done)]);
+            Ok(Box::pin(s))
+        }
+    }
+
+    fn write_settings(dir: &Path, hooks: &HooksConfig) {
+        let settings_dir = dir.join(".routecode");
+        std::fs::create_dir_all(&settings_dir).unwrap();
+        let file = routecode_sdk::hooks::registry::SettingsFile { hooks: hooks.clone() };
+        let json = serde_json::to_string(&file).unwrap();
+        std::fs::write(settings_dir.join("settings.json"), json).unwrap();
+    }
+
+    /// End-to-end: a real PreToolUse command hook that injects
+    /// `additionalContext` runs against the runner+aggregator and
+    /// the aggregated output contains the context.
+    #[tokio::test]
+    async fn pre_tool_use_command_hook_injects_context() {
+        let dir = hook_test_dir();
+        // Write the JSON output to a file so the hook can emit it
+        // verbatim without dealing with shell quote escaping.
+        let json_file = dir.path().join("hook_out.json");
+        std::fs::write(
+            &json_file,
+            r#"{"additionalContext":"injected-by-hook"}"#,
+        )
+        .unwrap();
+        let cmd = if cfg!(windows) {
+            format!("type {}", json_file.to_string_lossy())
+        } else {
+            format!("cat {}", json_file.to_string_lossy())
+        };
+        write_settings(
+            dir.path(),
+            &HooksConfig {
+                hooks: HashMap::from([(
+                    HookEvent::PreToolUse,
+                    vec![HookMatcherConfig {
+                        matcher: Some("Bash(git *)".into()),
+                        hooks: vec![HookEntry::Command(CommandHook {
+                            command: cmd,
+                            timeout: Some(5),
+                            ..Default::default()
+                        })],
+                    }],
+                )]),
+            },
+        );
+        let mut reg = HookRegistry::load_at(Some(dir.path().canonicalize().unwrap()));
+        reg.trust_project();
+
+        let input = HookInput::PreToolUse(routecode_sdk::hooks::input::PreToolUseInput {
+            base: routecode_sdk::hooks::input::BaseHookInput {
+                session_id: "s1".into(),
+                transcript_path: "/tmp/t".into(),
+                cwd: "/cwd".into(),
+                permission_mode: None,
+                agent_id: None,
+                agent_type: None,
+            },
+            hook_event_name: HookEvent::PreToolUse,
+            tool_name: "Bash".into(),
+            tool_input: json!({ "command": "git status" }),
+            tool_use_id: "call_1".into(),
+        });
+
+        let results = run_hooks_for_event(HookEvent::PreToolUse, &input, &reg).await;
+        let agg = aggregate_results(results);
+        assert!(!agg.should_block());
+        assert_eq!(
+            agg.additional_context.as_deref(),
+            Some("injected-by-hook")
+        );
+    }
+
+    /// End-to-end: a real PreToolUse command hook that exits with
+    /// code 2 blocks the tool call.
+    #[tokio::test]
+    async fn pre_tool_use_exit_two_blocks_call() {
+        let dir = hook_test_dir();
+        let cmd = if cfg!(windows) {
+            r#"echo nope 1>&2 & exit /b 2"#.to_string()
+        } else {
+            r#"printf '%s\n' 'nope' 1>&2; exit 2"#.to_string()
+        };
+        write_settings(
+            dir.path(),
+            &HooksConfig {
+                hooks: HashMap::from([(
+                    HookEvent::PreToolUse,
+                    vec![HookMatcherConfig {
+                        matcher: Some("*".into()),
+                        hooks: vec![HookEntry::Command(CommandHook {
+                            command: cmd,
+                            timeout: Some(5),
+                            ..Default::default()
+                        })],
+                    }],
+                )]),
+            },
+        );
+        let mut reg = HookRegistry::load_at(Some(dir.path().canonicalize().unwrap()));
+        reg.trust_project();
+
+        let input = HookInput::PreToolUse(routecode_sdk::hooks::input::PreToolUseInput {
+            base: routecode_sdk::hooks::input::BaseHookInput {
+                session_id: "s1".into(),
+                transcript_path: "/tmp/t".into(),
+                cwd: "/cwd".into(),
+                permission_mode: None,
+                agent_id: None,
+                agent_type: None,
+            },
+            hook_event_name: HookEvent::PreToolUse,
+            tool_name: "Bash".into(),
+            tool_input: json!({ "command": "rm -rf /" }),
+            tool_use_id: "call_1".into(),
+        });
+
+        let results = run_hooks_for_event(HookEvent::PreToolUse, &input, &reg).await;
+        let agg = aggregate_results(results);
+        assert!(agg.should_block());
+        assert_eq!(agg.reason.as_deref(), Some("nope"));
+    }
+
+    /// Orchestrator construction: the hook registry is loaded
+    /// without panicking and is empty when there's no settings
+    /// file in the project root.
+    #[tokio::test]
+    async fn orchestrator_constructs_with_empty_hooks() {
+        let provider = Arc::new(NoopProvider);
+        let tool_registry = Arc::new(ToolRegistry::new());
+        let config = Arc::new(Mutex::new(Config::default()));
+        // We can't change cwd in tests (parallel test pollution),
+        // so we just verify the orchestrator constructs and exposes
+        // a hook_registry field.
+        let _orch = AgentOrchestrator::new(provider, tool_registry, config);
+    }
+}

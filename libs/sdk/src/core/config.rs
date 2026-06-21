@@ -76,6 +76,36 @@ impl ApprovalMode {
     }
 }
 
+/// Bash-tool command policy. Orthogonal to `ApprovalMode` (which controls
+/// confirmation flow): `approval_mode = Yolo` skips prompts globally,
+/// while `bash_mode` constrains what commands the bash tool will execute.
+///
+/// * `Default`: all commands are allowed; read-only commands skip the
+///   confirmation prompt, write/destructive commands prompt with a
+///   warning, and unrecognized commands prompt with no warning.
+/// * `ReadOnly`: only read-only commands are allowed. Write, destructive,
+///   or non-allowlisted commands are hard-denied (model sees a tool error).
+/// * `AcceptEdits`: filesystem-mutating commands (`mkdir`, `touch`, `rm`,
+///   `rmdir`, `mv`, `cp`, `sed -i`) are auto-allowed without confirmation;
+///   other commands follow the default flow.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum BashMode {
+    #[default]
+    Default,
+    ReadOnly,
+    AcceptEdits,
+}
+
+impl BashMode {
+    pub fn is_read_only(&self) -> bool {
+        matches!(self, BashMode::ReadOnly)
+    }
+    pub fn is_accept_edits(&self) -> bool {
+        matches!(self, BashMode::AcceptEdits)
+    }
+}
+
 /// Accepts both the new tagged shape (`{"strategy": "qir"}`) and the
 /// bare-bool legacy shape (`true` / `false`). Logs a deprecation warning
 /// when a bare bool is seen.
@@ -141,6 +171,49 @@ pub struct Config {
     /// removed in a future release.
     #[serde(default, skip_serializing)]
     pub quick_infinite_retry: Option<bool>,
+    /// Bash-tool command policy. Default: all commands allowed (with
+    /// confirmation for write/destructive). Set to `read_only` to hard-deny
+    /// any non-read-only command. Set to `accept_edits` to auto-allow
+    /// filesystem-mutating commands.
+    #[serde(default)]
+    pub bash_mode: BashMode,
+    /// Explicit deny rules for the bash tool. Matched with the same syntax
+    /// as `allowlist` (prefix `git:*`, exact `git`, multi-word `npm run`).
+    /// A denylist match ALWAYS denies, regardless of other settings.
+    #[serde(default)]
+    pub denylist: Vec<String>,
+    /// Sandbox toggle. Currently a no-op stub — when `false` (default), bash
+    /// commands run unsandboxed. When `true`, commands are intended to run
+    /// inside an OS-level sandbox (Docker, bwrap, etc.). Hooks for the
+    /// actual sandboxing are planned for a separate change.
+    #[serde(default)]
+    pub bash_sandbox: bool,
+    /// Plan mode: extra tools to KEEP in the schema when in plan mode,
+    /// in addition to the default read-only set. Tool names match
+    /// `Tool::name()`. Empty by default.
+    #[serde(default)]
+    pub plan_mode_tool_overrides: Vec<String>,
+    /// Hooks configuration. Loaded from
+    /// `~/.routecode/settings.json` and `.routecode/settings.json` at
+    /// runtime; the value here is a CACHE of the most recent load.
+    /// The orchestrator uses the runtime registry (which merges
+    /// user+project on disk) rather than this field, but we persist
+    /// it for the CLI to inspect and for the desktop app to
+    /// override.
+    #[serde(default)]
+    pub hooks: crate::hooks::HooksConfig,
+    /// Whether auto-compaction is enabled to prevent context overflows.
+    /// Default is true.
+    #[serde(default = "default_auto_compact_enabled")]
+    pub auto_compact_enabled: bool,
+    /// Explicit override for the model's context window. If None,
+    /// a default model-specific value (or 200,000) will be used.
+    #[serde(default)]
+    pub context_window_override: Option<usize>,
+}
+
+fn default_auto_compact_enabled() -> bool {
+    true
 }
 
 fn default_sub_agents_enabled() -> bool {
@@ -183,6 +256,13 @@ impl Default for Config {
             retry_policy: RetryPolicy::Disabled,
             quick_infinite_retry: None,
             approval_mode: ApprovalMode::Normal,
+            bash_mode: BashMode::Default,
+            denylist: Vec::new(),
+            bash_sandbox: false,
+            plan_mode_tool_overrides: Vec::new(),
+            hooks: crate::hooks::HooksConfig::empty(),
+            auto_compact_enabled: true,
+            context_window_override: None,
         }
     }
 }

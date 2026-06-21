@@ -1,5 +1,5 @@
+use super::client::McpClient;
 use crate::core::ToolResult;
-use crate::tools::mcp::client::McpClient;
 use crate::tools::traits::Tool;
 use anyhow::Result;
 use async_trait::async_trait;

@@ -170,6 +170,10 @@ fn ui(f: &mut Frame, app: &mut App) {
         render_confirmation_dialog(f, "Are you sure you want to exit RouteCode? (y/n)");
     } else if app.pending_command_confirmation.is_some() {
         render_command_confirmation_dialog(f, app);
+    } else if app.pending_plan_approval.is_some() {
+        render_plan_approval_dialog(f, app);
+    } else if app.pending_hook_trust.is_some() {
+        render_hook_trust_dialog(f, app);
     } else if app.show_user_msg_modal.is_some() {
         render_user_msg_modal(f, app);
     } else if app.pending_update.is_some() {
@@ -285,6 +289,237 @@ fn render_command_confirmation_dialog(f: &mut Frame, app: &mut App) {
             input_rect.y + app.input.cursor().0 as u16 + 1,
         );
     }
+}
+
+fn render_plan_approval_dialog(f: &mut Frame, app: &mut App) {
+    use ratatui::text::Text;
+    let area = f.size();
+
+    // 80% height, 80% width centered
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(10),
+            Constraint::Percentage(80),
+            Constraint::Percentage(10),
+        ])
+        .split(area);
+
+    let popup_horiz = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(10),
+            Constraint::Percentage(80),
+            Constraint::Percentage(10),
+        ])
+        .split(popup_layout[1]);
+
+    let inner = popup_horiz[1];
+
+    // Split inner into plan body (top) + action row (bottom)
+    let body_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(5),    // plan markdown
+            Constraint::Length(5), // action row
+        ])
+        .split(inner);
+
+    let (plan, plan_path, allowed_prompts, _sender) =
+        app.pending_plan_approval.as_ref().unwrap().clone();
+
+    let block = Block::default()
+        .title(" Plan Approval Required ")
+        .borders(ratatui::widgets::Borders::ALL)
+        .border_style(Style::default().fg(COLOR_PRIMARY))
+        .style(Style::default().bg(COLOR_BG));
+
+    let mut body_lines: Vec<Line> = Vec::new();
+    body_lines.push(Line::from(vec![
+        Span::styled(
+            "File: ",
+            Style::default().fg(COLOR_SECONDARY),
+        ),
+        Span::styled(
+            plan_path,
+            Style::default().fg(Color::Cyan),
+        ),
+    ]));
+    body_lines.push(Line::from(""));
+    // Plan body — render as plain text wrapped. No markdown parsing in
+    // v1; the user can read the plan in their editor via the file path.
+    let plan_text = Text::from(plan.clone());
+    for line in plan_text.lines {
+        body_lines.push(line);
+    }
+    if !allowed_prompts.is_empty() {
+        body_lines.push(Line::from(""));
+        body_lines.push(Line::from(vec![Span::styled(
+            "Requested permissions:",
+            Style::default()
+                .fg(COLOR_SECONDARY)
+                .add_modifier(Modifier::BOLD),
+        )]));
+        for (tool, prompt) in &allowed_prompts {
+            body_lines.push(Line::from(format!("  - [{}] {}", tool, prompt)));
+        }
+    }
+
+    let body = Paragraph::new(body_lines)
+        .block(block)
+        .wrap(ratatui::widgets::Wrap { trim: false })
+        .scroll((app.history_scroll, 0));
+    f.render_widget(ratatui::widgets::Clear, body_layout[0]);
+    f.render_widget(body, body_layout[0]);
+
+    // Action row: 4 buttons
+    let actions_block = Block::default()
+        .borders(ratatui::widgets::Borders::ALL)
+        .border_style(Style::default().fg(COLOR_DIM))
+        .style(Style::default().bg(COLOR_BG));
+
+    let buttons: [(&str, &str, Color); 4] = [
+        ("[A]", "Approve & Unlock", Color::Green),
+        ("[O]", "Approve Once", COLOR_PRIMARY),
+        ("[F]", "Send Feedback", COLOR_SECONDARY),
+        ("[D]", "Deny", Color::Red),
+    ];
+    let mut spans: Vec<Span> = Vec::new();
+    for (i, (key, label, color)) in buttons.iter().enumerate() {
+        let style = if i == app.plan_approval_selected {
+            Style::default().fg(*color).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(*color)
+        };
+        spans.push(Span::styled(*key, style));
+        spans.push(Span::raw(format!(" {}   ", label)));
+    }
+    let action = Paragraph::new(vec![Line::from(""), Line::from(spans)])
+        .block(actions_block)
+        .wrap(ratatui::widgets::Wrap { trim: false });
+    f.render_widget(ratatui::widgets::Clear, body_layout[1]);
+    f.render_widget(action, body_layout[1]);
+
+    if app.inputting_plan_feedback {
+        // Reuse the input box below the action row by overlaying it
+        let input_rect = ratatui::layout::Rect {
+            x: body_layout[1].x + 2,
+            y: body_layout[1].y + 2,
+            width: body_layout[1].width.saturating_sub(4),
+            height: 3,
+        };
+        let input_block = Block::default()
+            .borders(ratatui::widgets::Borders::ALL)
+            .border_style(Style::default().fg(COLOR_PRIMARY));
+        app.input.set_block(input_block);
+        f.render_widget(app.input.widget(), input_rect);
+        f.set_cursor(
+            input_rect.x + app.input.cursor().1 as u16 + 1,
+            input_rect.y + app.input.cursor().0 as u16 + 1,
+        );
+    }
+}
+
+fn render_hook_trust_dialog(f: &mut Frame, app: &mut App) {
+    let area = f.size();
+    let (signature, project_path, hooks) = {
+        let t = app.pending_hook_trust.as_ref();
+        match t {
+            Some(t) => (t.signature.clone(), t.project_path.clone(), t.hooks.clone()),
+            None => (String::new(), String::new(), Vec::new()),
+        }
+    };
+    let _ = signature;
+
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(20),
+            Constraint::Min(10),
+            Constraint::Percentage(20),
+        ])
+        .split(area);
+    let body = popup_layout[1];
+    let body_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(5),
+            Constraint::Length(3),
+        ])
+        .split(body);
+
+    let title_block = Block::default()
+        .borders(ratatui::widgets::Borders::ALL)
+        .border_style(Style::default().fg(COLOR_PRIMARY))
+        .title(Span::styled(
+            " Trust project hooks? ",
+            Style::default().fg(COLOR_PRIMARY).add_modifier(Modifier::BOLD),
+        ));
+    let mut header_lines = vec![Line::from(Span::styled(
+        format!("Project: {}", project_path),
+        Style::default().fg(COLOR_PRIMARY),
+    ))];
+    header_lines.push(Line::from(Span::styled(
+        format!("This project wants to register {} hook(s):", hooks.len()),
+        Style::default().fg(COLOR_PRIMARY),
+    )));
+    let header =
+        Paragraph::new(header_lines).block(title_block).wrap(ratatui::widgets::Wrap { trim: false });
+    f.render_widget(ratatui::widgets::Clear, body_layout[0]);
+    f.render_widget(header, body_layout[0]);
+
+    let list_block = Block::default()
+        .borders(ratatui::widgets::Borders::ALL)
+        .border_style(Style::default().fg(COLOR_PRIMARY));
+    let list_lines: Vec<Line> = hooks
+        .iter()
+        .take(20)
+        .map(|h| {
+            Line::from(vec![
+                Span::styled(
+                    format!("  {} ", h.event),
+                    Style::default().fg(COLOR_PRIMARY).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("({}) ", h.matcher),
+                    Style::default().fg(COLOR_DIM),
+                ),
+                Span::styled(h.description.clone(), Style::default().fg(COLOR_TEXT)),
+            ])
+        })
+        .collect();
+    let list = Paragraph::new(list_lines)
+        .block(list_block)
+        .wrap(ratatui::widgets::Wrap { trim: false });
+    f.render_widget(ratatui::widgets::Clear, body_layout[1]);
+    f.render_widget(list, body_layout[1]);
+
+    let actions_block = Block::default()
+        .borders(ratatui::widgets::Borders::ALL)
+        .border_style(Style::default().fg(COLOR_PRIMARY));
+    let buttons: Vec<(&str, &str, Color)> = vec![
+        ("T", "Trust", COLOR_PRIMARY),
+        ("D", "Deny", COLOR_SECONDARY),
+    ];
+    let mut spans: Vec<Span> = Vec::new();
+    for (i, (key, label, color)) in buttons.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw("   "));
+        }
+        let style = if i == app.hook_trust_selected {
+            Style::default().fg(*color).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(*color)
+        };
+        spans.push(Span::styled(*key, style));
+        spans.push(Span::raw(format!(" {}   ", label)));
+    }
+    let action = Paragraph::new(vec![Line::from(""), Line::from(spans)])
+        .block(actions_block)
+        .wrap(ratatui::widgets::Wrap { trim: false });
+    f.render_widget(ratatui::widgets::Clear, body_layout[2]);
+    f.render_widget(action, body_layout[2]);
 }
 
 fn render_confirmation_dialog(f: &mut Frame, message: &str) {
