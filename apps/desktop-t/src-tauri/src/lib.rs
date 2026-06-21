@@ -3,12 +3,12 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use routecode_sdk::agents::types::{ConfirmationResponse, StreamChunk};
+use routecode_sdk::agents::types::{ConfirmationResponse, PlanApprovalResponse, StreamChunk};
 use routecode_sdk::core::{AgentOrchestrator, Config, Message};
 use routecode_sdk::tools::{
     bash::BashTool,
     file_ops::{ApplyPatchTool, FileEditTool, FileReadTool, FileWriteTool},
-    lsp_tool::LspTool,
+    lsp::LspTool,
     mcp::manager::McpManager,
     navigation::{GrepTool, LsTool, TreeTool},
     subagent::SubAgentTool,
@@ -24,10 +24,17 @@ use routecode_sdk::utils::storage::{
 type PendingConfirmation =
     Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<ConfirmationResponse>>>>;
 
+type PendingPlanApproval = Arc<
+    tokio::sync::Mutex<
+        Option<tokio::sync::oneshot::Sender<PlanApprovalResponse>>,
+    >,
+>;
+
 // Define the Shared Application State
 pub struct AppState {
     pub orchestrator: Mutex<Option<Arc<AgentOrchestrator>>>,
     pub pending_confirmation: Mutex<Option<PendingConfirmation>>,
+    pub pending_plan_approval: Mutex<Option<PendingPlanApproval>>,
     pub cancel_token: Mutex<Option<CancellationToken>>,
 }
 
@@ -42,6 +49,7 @@ impl AppState {
         Self {
             orchestrator: Mutex::new(None),
             pending_confirmation: Mutex::new(None),
+            pending_plan_approval: Mutex::new(None),
             cancel_token: Mutex::new(None),
         }
     }
@@ -309,6 +317,7 @@ async fn send_message(
                 StreamChunk::RequestConfirmation {
                     message: _,
                     target: _,
+                    warning: _,
                     tx: oneshot_tx,
                 } => {
                     // Stash the oneshot channel sender in the global AppState for allow/deny confirmation
@@ -318,6 +327,16 @@ async fn send_message(
                     }
 
                     // Emit RequestConfirmation event to trigger frontend modal dialog
+                    let _ = app_clone.emit("agent-chunk", chunk);
+                }
+                StreamChunk::RequestPlanApproval { tx: oneshot_tx, .. } => {
+                    // Stash the plan-approval sender in the global
+                    // AppState for the frontend modal. Emit the
+                    // event for the frontend to render the dialog.
+                    if let Some(oneshot) = oneshot_tx {
+                        let mut pending_guard = state_clone.pending_plan_approval.lock().await;
+                        *pending_guard = Some(oneshot);
+                    }
                     let _ = app_clone.emit("agent-chunk", chunk);
                 }
                 StreamChunk::Done => {

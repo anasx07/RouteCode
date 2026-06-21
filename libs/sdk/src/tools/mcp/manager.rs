@@ -1,5 +1,5 @@
 use super::client::McpClient;
-use crate::tools::mcp_tool::DynamicMcpTool;
+use super::tool::DynamicMcpTool;
 use anyhow::Result;
 use serde::Deserialize;
 use serde_json::json;

@@ -1,10 +1,9 @@
 pub mod bash;
 pub mod file_ops;
 pub mod lsp;
-pub mod lsp_tool;
 pub mod mcp;
-pub mod mcp_tool;
 pub mod navigation;
+pub mod plan;
 pub mod registry;
 pub mod subagent;
 pub mod traits;

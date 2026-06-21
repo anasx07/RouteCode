@@ -192,6 +192,7 @@ pub(crate) async fn handle_stream_chunks(app: &mut App) {
             StreamChunk::RequestConfirmation {
                 message,
                 target,
+                warning: _,
                 tx,
             } => match app.approval_mode {
                 ApprovalMode::YOLO | ApprovalMode::Shell => {
@@ -218,6 +219,50 @@ pub(crate) async fn handle_stream_chunks(app: &mut App) {
                     }
                 }
             },
+            StreamChunk::RequestPlanApproval {
+                plan,
+                plan_path,
+                allowed_prompts,
+                tx,
+            } => {
+                use routecode_sdk::agents::types::PlanApprovalResponse;
+                match app.approval_mode {
+                    ApprovalMode::YOLO | ApprovalMode::Shell => {
+                        if let Some(sender) = tx {
+                            let mut tx_opt = sender.lock().await;
+                            if let Some(s) = tx_opt.take() {
+                                let _ = s.send(PlanApprovalResponse::ApproveAndUnlock);
+                            }
+                        }
+                    }
+                    ApprovalMode::Plan => {
+                        // Pure plan mode (Shift+Tab): the user already
+                        // chose read-only review; deny the plan so the
+                        // AI stays in read-only mode.
+                        if let Some(sender) = tx {
+                            let mut tx_opt = sender.lock().await;
+                            if let Some(s) = tx_opt.take() {
+                                let _ = s.send(PlanApprovalResponse::Deny);
+                            }
+                        }
+                    }
+                    ApprovalMode::Normal => {
+                        if let Some(sender) = tx {
+                            let prompts: Vec<(String, String)> = allowed_prompts
+                                .into_iter()
+                                .map(|p| (p.tool, p.prompt))
+                                .collect();
+                            app.pending_plan_approval =
+                                Some((plan, plan_path, prompts, sender));
+                            app.plan_approval_selected = 0;
+                        } else {
+                            log::error!(
+                                "RequestPlanApproval received without a response channel"
+                            );
+                        }
+                    }
+                }
+            }
             StreamChunk::UpdateAvailable {
                 version,
                 changelog,
@@ -227,6 +272,96 @@ pub(crate) async fn handle_stream_chunks(app: &mut App) {
                 app.pending_update_changelog = changelog;
                 app.pending_update_published_at = published_at;
                 app.update_modal_selected = 1;
+            }
+            StreamChunk::HookProgress { event, name } => {
+                app.active_tool = Some(format!("hook:{}", name));
+                app.history
+                    .push(Message::system(format!("[hook] {}:{}", event, name)));
+            }
+            StreamChunk::HookResult {
+                event,
+                name,
+                decision,
+                reason,
+                additional_context,
+                system_message,
+            } => {
+                app.active_tool = None;
+                if let Some(ctx) = additional_context.as_deref() {
+                    app.history
+                        .push(Message::system(format!("[hook:{}] context: {}", name, ctx)));
+                }
+                if let Some(msg) = system_message.as_deref() {
+                    app.history
+                        .push(Message::system(format!("[hook:{}] {}", name, msg)));
+                }
+                if let Some(d) = decision.as_deref() {
+                    let r = reason.as_deref().unwrap_or("");
+                    app.history
+                        .push(Message::system(format!("[hook:{}] {} {}", name, d, r)));
+                }
+                let _ = (event, name);
+            }
+            StreamChunk::RequestHookTrust {
+                project_signature,
+                project_path,
+                hooks,
+                tx,
+            } => {
+                use routecode_sdk::agents::types::HookTrustResponse;
+                match app.approval_mode {
+                    ApprovalMode::YOLO | ApprovalMode::Shell => {
+                        if let Some(sender) = tx {
+                            let mut tx_opt = sender.lock().await;
+                            if let Some(s) = tx_opt.take() {
+                                let _ = s.send(HookTrustResponse::Trust);
+                            }
+                        }
+                    }
+                    ApprovalMode::Plan => {
+                        // Plan mode is read-only; deny project hook
+                        // trust so we don't run any side effects.
+                        if let Some(sender) = tx {
+                            let mut tx_opt = sender.lock().await;
+                            if let Some(s) = tx_opt.take() {
+                                let _ = s.send(HookTrustResponse::Deny);
+                            }
+                        }
+                    }
+                    ApprovalMode::Normal => {
+                        if let Some(sender) = tx {
+                            app.pending_hook_trust = Some(
+                                super::types::PendingHookTrust {
+                                    signature: project_signature,
+                                    project_path,
+                                    hooks,
+                                    tx: sender,
+                                },
+                            );
+                        } else {
+                            log::error!(
+                                "RequestHookTrust received without a response channel"
+                            );
+                        }
+                    }
+                }
+            }
+            StreamChunk::CompactProgress { status } => {
+                app.active_tool = Some(format!("compact: {}", status));
+                app.history
+                    .push(Message::system(format!("[compact] {}", status)));
+            }
+            StreamChunk::CompactResult { pre_tokens, post_tokens } => {
+                app.active_tool = None;
+                app.history.push(Message::system(format!(
+                    "[compact] Conversation compacted: tokens reduced from {} to {}",
+                    pre_tokens, post_tokens
+                )));
+            }
+            StreamChunk::ContextWarning { message } => {
+                app.history.push(Message::system(format!(
+                    "⚠️ WARNING: {}", message
+                )));
             }
             _ => {}
         }

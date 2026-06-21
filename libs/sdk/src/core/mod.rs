@@ -2,6 +2,7 @@ pub mod config;
 pub mod message;
 pub mod orchestrator;
 pub mod tool_result;
+pub mod compact;
 
 pub use config::{Config, DynamicModelInfo};
 pub use message::{FunctionCall, Message, Role, ToolCall};

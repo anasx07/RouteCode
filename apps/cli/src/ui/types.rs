@@ -1,8 +1,50 @@
 use routecode_sdk::agents::types::ConfirmationResponse;
+use routecode_sdk::agents::types::HookTrustEntry;
+use routecode_sdk::agents::types::HookTrustResponse;
+use routecode_sdk::agents::types::PlanApprovalResponse;
 use routecode_sdk::core::DynamicModelInfo;
 
 pub type ConfirmationSender =
     std::sync::Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<ConfirmationResponse>>>>;
+
+pub type PlanSender = std::sync::Arc<
+    tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<PlanApprovalResponse>>>,
+>;
+
+pub type HookTrustSender = std::sync::Arc<
+    tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<HookTrustResponse>>>,
+>;
+
+/// Plan approval dialog state: the plan markdown, its file path, the
+/// list of allowed-prompt semantic permissions the AI requested, and
+/// the one-shot channel back to the orchestrator.
+pub type PendingPlan = (
+    String,                // plan markdown
+    String,                // plan file path
+    Vec<(String, String)>, // (tool, prompt) allowed prompts
+    PlanSender,
+);
+
+/// Hook trust dialog state: the project signature, project path,
+/// list of hooks the project wants to register, and the response
+/// channel.
+pub struct PendingHookTrust {
+    pub signature: String,
+    pub project_path: String,
+    pub hooks: Vec<HookTrustEntry>,
+    pub tx: HookTrustSender,
+}
+
+impl Default for PendingHookTrust {
+    fn default() -> Self {
+        Self {
+            signature: String::new(),
+            project_path: String::new(),
+            hooks: Vec::new(),
+            tx: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+        }
+    }
+}
 
 pub struct ProviderInfo {
     pub id: &'static str,

@@ -191,6 +191,157 @@ pub(crate) async fn handle_key_event(
         }
         return Ok(KeyEventResult::Continue);
     }
+    if app.pending_plan_approval.is_some() {
+        use routecode_sdk::agents::types::PlanApprovalResponse;
+        if app.inputting_plan_feedback {
+            match key.code {
+                KeyCode::Esc => {
+                    app.inputting_plan_feedback = false;
+                    app.input.delete_line_by_head();
+                    while app.input.cursor() != (0, 0) {
+                        app.input.move_cursor(tui_textarea::CursorMove::Head);
+                        app.input.delete_line_by_head();
+                    }
+                    app.input
+                        .set_placeholder_text(" Ask anything... \"How do I use this?\"");
+                }
+                KeyCode::Enter => {
+                    if let Some((_, _, _, tx_mutex)) = app.pending_plan_approval.take() {
+                        let lines = app.input.lines().to_vec();
+                        app.input.delete_line_by_head();
+                        while app.input.cursor() != (0, 0) {
+                            app.input.move_cursor(tui_textarea::CursorMove::Head);
+                            app.input.delete_line_by_head();
+                        }
+                        app.input
+                            .set_placeholder_text(" Ask anything... \"How do I use this?\"");
+                        let msg = lines.join("\n").trim().to_string();
+                        let feedback = if msg.is_empty() {
+                            "Plan cancelled.".to_string()
+                        } else {
+                            msg
+                        };
+                        let mut tx_opt = tx_mutex.lock().await;
+                        if let Some(s) = tx_opt.take() {
+                            let _ = s.send(PlanApprovalResponse::Feedback(feedback));
+                        }
+                    }
+                    app.inputting_plan_feedback = false;
+                }
+                _ => {
+                    app.input.input(key);
+                }
+            }
+        } else {
+            match key.code {
+                KeyCode::Char('a') | KeyCode::Char('A') => {
+                    if let Some((_, _, _, tx_mutex)) = app.pending_plan_approval.take() {
+                        let mut tx_opt = tx_mutex.lock().await;
+                        if let Some(s) = tx_opt.take() {
+                            let _ = s.send(PlanApprovalResponse::ApproveAndUnlock);
+                        }
+                    }
+                }
+                KeyCode::Char('o') | KeyCode::Char('O') => {
+                    if let Some((_, _, _, tx_mutex)) = app.pending_plan_approval.take() {
+                        let mut tx_opt = tx_mutex.lock().await;
+                        if let Some(s) = tx_opt.take() {
+                            let _ = s.send(PlanApprovalResponse::ApproveOnce);
+                        }
+                    }
+                }
+                KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Esc => {
+                    if let Some((_, _, _, tx_mutex)) = app.pending_plan_approval.take() {
+                        let mut tx_opt = tx_mutex.lock().await;
+                        if let Some(s) = tx_opt.take() {
+                            let _ = s.send(PlanApprovalResponse::Deny);
+                        }
+                    }
+                }
+                KeyCode::Char('f') | KeyCode::Char('F') => {
+                    app.inputting_plan_feedback = true;
+                    app.input
+                        .set_placeholder_text(" Tell agent how to revise the plan...");
+                }
+                KeyCode::Left | KeyCode::Char('h') => {
+                    if app.plan_approval_selected > 0 {
+                        app.plan_approval_selected -= 1;
+                    }
+                }
+                KeyCode::Right | KeyCode::Char('l') => {
+                    if app.plan_approval_selected < 3 {
+                        app.plan_approval_selected += 1;
+                    }
+                }
+                KeyCode::Enter => {
+                    // Activate the currently highlighted button
+                    let which = app.plan_approval_selected;
+                    match which {
+                        2 => {
+                            // Feedback path: re-stash the sender (it
+                            // was NOT taken) and enter feedback mode.
+                            app.inputting_plan_feedback = true;
+                            app.input
+                                .set_placeholder_text(
+                                    " Tell agent how to revise the plan...",
+                                );
+                        }
+                        _ => {
+                            if let Some((_, _, _, tx_mutex)) =
+                                app.pending_plan_approval.take()
+                            {
+                                let mut tx_opt = tx_mutex.lock().await;
+                                if let Some(s) = tx_opt.take() {
+                                    let resp = match which {
+                                        0 => PlanApprovalResponse::ApproveAndUnlock,
+                                        1 => PlanApprovalResponse::ApproveOnce,
+                                        _ => PlanApprovalResponse::Deny,
+                                    };
+                                    let _ = s.send(resp);
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        return Ok(KeyEventResult::Continue);
+    }
+
+    if app.pending_hook_trust.is_some() {
+        use routecode_sdk::agents::types::HookTrustResponse;
+        match key.code {
+            KeyCode::Char('t') | KeyCode::Char('T') | KeyCode::Enter => {
+                if let Some(state) = app.pending_hook_trust.take() {
+                    let mut tx_opt = state.tx.lock().await;
+                    if let Some(s) = tx_opt.take() {
+                        let _ = s.send(HookTrustResponse::Trust);
+                    }
+                }
+            }
+            KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Esc => {
+                if let Some(state) = app.pending_hook_trust.take() {
+                    let mut tx_opt = state.tx.lock().await;
+                    if let Some(s) = tx_opt.take() {
+                        let _ = s.send(HookTrustResponse::Deny);
+                    }
+                }
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                if app.hook_trust_selected > 0 {
+                    app.hook_trust_selected -= 1;
+                }
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                if app.hook_trust_selected < 1 {
+                    app.hook_trust_selected += 1;
+                }
+            }
+            _ => {}
+        }
+        return Ok(KeyEventResult::Continue);
+    }
 
     if app.pending_clear {
         match key.code {
@@ -852,9 +1003,25 @@ pub(crate) async fn handle_key_event(
             app.approval_mode = app.approval_mode.next();
             let info = match app.approval_mode {
                 ApprovalMode::YOLO => "YOLO -- commands will auto-approve",
-                ApprovalMode::Plan => "PLAN -- tool calls will be denied (read-only review)",
+                ApprovalMode::Plan => {
+                    // Mirror the UI state into the orchestrator: enter
+                    // plan mode, force bash to read-only, reset
+                    // session-unlock.
+                    app.orchestrator.enter_plan_mode();
+                    let mut cfg = app.orchestrator.config.lock().await;
+                    cfg.bash_mode = routecode_sdk::core::config::BashMode::ReadOnly;
+                    drop(cfg);
+                    "PLAN -- plan mode active: write tools hidden, bash read-only. \
+                     Use exit_plan_mode (model) to unlock writes."
+                }
                 ApprovalMode::Shell => "SHELL -- shell commands shown first, auto-approved",
-                ApprovalMode::Normal => "Normal mode -- confirm each tool call",
+                ApprovalMode::Normal => {
+                    // Leaving Plan mode (either toward YOLO/Shell or
+                    // back to Normal from a previous Plan): exit plan
+                    // mode in the orchestrator.
+                    app.orchestrator.exit_plan_mode(false);
+                    "Normal mode -- confirm each tool call"
+                }
             };
             app.history.push(Message::system(format!("Mode: {}", info)));
         }
