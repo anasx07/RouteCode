@@ -70,13 +70,19 @@ pub(crate) async fn handle_key_event(
                     .unwrap_or_default();
                 if app.user_msg_modal_selected == 0 {
                     let text_clone = text.clone();
-                    tokio::task::spawn_blocking(move || {
-                        if let Err(e) = copy_to_clipboard(&text_clone) {
-                            log::error!("Clipboard copy failed: {}", e);
+                    match copy_to_clipboard(&text_clone) {
+                        Ok(()) => {
+                            app.history
+                                .push(Message::system("Message copied to clipboard!".to_string()));
                         }
-                    });
-                    app.history
-                        .push(Message::system("Message copied to clipboard!".to_string()));
+                        Err(e) => {
+                            log::error!("Clipboard copy failed: {}", e);
+                            app.history.push(Message::system(format!(
+                                "Failed to copy to clipboard: {}. Make sure a clipboard utility (e.g. xclip/wl-clipboard on Linux, clip on Windows, pbcopy on macOS) is installed.",
+                                e
+                            )));
+                        }
+                    }
                 } else {
                     app.history.truncate(msg_idx);
                     app.input = tui_textarea::TextArea::from(text.lines().map(|s| s.to_string()));
@@ -627,12 +633,17 @@ pub(crate) async fn handle_key_event(
                 } else {
                     app.is_inputting_api_key = false;
                     app.api_key_input_stage = ApiKeyInputStage::None;
+                    app.pending_provider_id = None;
+                    app.pending_account_id = None;
+                    app.pending_gateway_id = None;
                 }
             } else {
                 let input_text = app.input.lines().join("\n");
                 if !input_text.trim().is_empty() {
                     if input_text.starts_with('/') {
                         handle_command(app, &input_text).await;
+                    } else if app.is_generating {
+                        // Ignore normal text submissions while generating to avoid parallel tasks
                     } else if !app.startup_ready {
                         app.startup_input_buffer.push(input_text.clone());
                         app.history
@@ -706,6 +717,7 @@ pub(crate) async fn handle_key_event(
             } else if app.is_inputting_api_key {
                 app.is_inputting_api_key = false;
                 app.api_key_input_stage = ApiKeyInputStage::None;
+                app.pending_provider_id = None;
                 app.pending_account_id = None;
                 app.pending_gateway_id = None;
             } else if app.is_generating {
@@ -825,15 +837,16 @@ pub(crate) async fn handle_key_event(
                     }
                     app.menu_state.select(Some(new_selected));
                 }
-            } else if app.input.lines().len() == 1 && app.input.lines()[0].is_empty()
-                || app.history_scroll > 0
-                || app.is_generating
-                || key.modifiers.contains(event::KeyModifiers::SHIFT)
-            {
-                app.history_scroll = app.history_scroll.saturating_sub(15);
-                app.auto_scroll = false;
             } else {
-                app.input.input(Event::Key(key));
+                let (cursor_row, _) = app.input.cursor();
+                if (app.input.lines().len() == 1 && app.input.lines()[0].is_empty())
+                    || (cursor_row == 0 && (app.history_scroll > 0 || app.is_generating || key.modifiers.contains(event::KeyModifiers::SHIFT)))
+                {
+                    app.history_scroll = app.history_scroll.saturating_sub(15);
+                    app.auto_scroll = false;
+                } else {
+                    app.input.input(Event::Key(key));
+                }
             }
         }
         KeyCode::Down => {
@@ -887,17 +900,19 @@ pub(crate) async fn handle_key_event(
                     }
                     app.menu_state.select(Some(new_selected));
                 }
-            } else if app.input.lines().len() == 1 && app.input.lines()[0].is_empty()
-                || app.history_scroll < app.max_scroll
-                || app.is_generating
-                || key.modifiers.contains(event::KeyModifiers::SHIFT)
-            {
-                app.history_scroll = app.history_scroll.saturating_add(15);
-                if app.history_scroll >= app.max_scroll {
-                    app.auto_scroll = true;
-                }
             } else {
-                app.input.input(Event::Key(key));
+                let (cursor_row, _) = app.input.cursor();
+                let lines_len = app.input.lines().len();
+                if (lines_len == 1 && app.input.lines()[0].is_empty())
+                    || (cursor_row == lines_len - 1 && (app.history_scroll < app.max_scroll || app.is_generating || key.modifiers.contains(event::KeyModifiers::SHIFT)))
+                {
+                    app.history_scroll = app.history_scroll.saturating_add(15);
+                    if app.history_scroll >= app.max_scroll {
+                        app.auto_scroll = true;
+                    }
+                } else {
+                    app.input.input(Event::Key(key));
+                }
             }
         }
         KeyCode::Right if app.show_model_menu => {
@@ -1002,7 +1017,10 @@ pub(crate) async fn handle_key_event(
         KeyCode::BackTab => {
             app.approval_mode = app.approval_mode.next();
             let info = match app.approval_mode {
-                ApprovalMode::YOLO => "YOLO -- commands will auto-approve",
+                ApprovalMode::YOLO => {
+                    app.orchestrator.exit_plan_mode(false);
+                    "YOLO -- commands will auto-approve"
+                }
                 ApprovalMode::Plan => {
                     // Mirror the UI state into the orchestrator: enter
                     // plan mode, force bash to read-only, reset
@@ -1014,7 +1032,10 @@ pub(crate) async fn handle_key_event(
                     "PLAN -- plan mode active: write tools hidden, bash read-only. \
                      Use exit_plan_mode (model) to unlock writes."
                 }
-                ApprovalMode::Shell => "SHELL -- shell commands shown first, auto-approved",
+                ApprovalMode::Shell => {
+                    app.orchestrator.exit_plan_mode(false);
+                    "SHELL -- shell commands shown first, auto-approved"
+                }
                 ApprovalMode::Normal => {
                     // Leaving Plan mode (either toward YOLO/Shell or
                     // back to Normal from a previous Plan): exit plan

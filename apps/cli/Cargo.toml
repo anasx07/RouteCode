@@ -1,6 +1,6 @@
 [package]
 name = "routecode-cli"
-version = "0.1.14"
+version = "0.1.15"
 edition = "2021"
 authors = ["SpeerX <anasrhnim07@gmail.com>"]
 description = "CLI application for RouteCode"
@@ -22,3 +22,5 @@ simplelog = "0.12"
 unicode-width = "0.1"
 reqwest = { version = "0.12", features = ["json"] }
 uuid = { version = "1.8", features = ["v4"] }
+arboard = "3.4"
+
