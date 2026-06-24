@@ -368,7 +368,12 @@ pub fn render_model_menu(f: &mut Frame, app: &mut App, _input_area: Rect) {
                 && row < layout[1].y + layout[1].height
             {
                 let idx = (row - layout[1].y) as usize + app.menu_state.offset();
-                if idx < items_len {
+                if idx < items_len
+                    && !matches!(
+                        app.filtered_models.get(idx),
+                        Some(ModelMenuItem::Header(_))
+                    )
+                {
                     app.menu_state.select(Some(idx));
                 }
             }

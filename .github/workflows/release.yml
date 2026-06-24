@@ -126,7 +126,7 @@ jobs:
   publish:
     name: Publish Release
     needs: [build-cli, build-desktop]
-    if: always() && (needs.build-cli.result == 'success' || needs.build-desktop.result == 'success')
+    if: always() && !cancelled() && (needs.build-cli.result == 'success' || needs.build-cli.result == 'failure' || needs.build-desktop.result == 'success' || needs.build-desktop.result == 'failure')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

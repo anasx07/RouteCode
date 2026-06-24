@@ -26,11 +26,20 @@ pub async fn run_app<B: ratatui::backend::Backend>(
     let mut last_tick = std::time::Instant::now();
     let tick_rate = std::time::Duration::from_millis(100);
     let render_rate = std::time::Duration::from_millis(16); // ~60 FPS for smooth rendering
+    let mut needs_draw = true;
 
     loop {
-        terminal.draw(|f| ui(f, &mut app))?;
+        if needs_draw || app.render_dirty {
+            terminal.draw(|f| ui(f, &mut app))?;
+            needs_draw = false;
+        }
 
-        let timeout = render_rate;
+        let time_to_next_tick = tick_rate.saturating_sub(last_tick.elapsed());
+        let timeout = if app.is_generating || app.logo_anim_frames > 0 {
+            render_rate.min(time_to_next_tick)
+        } else {
+            time_to_next_tick
+        };
 
         if event::poll(timeout)? {
             let mut events = Vec::new();
@@ -38,7 +47,18 @@ pub async fn run_app<B: ratatui::backend::Backend>(
                 events.push(event::read()?);
             }
 
-            let is_burst = events.len() > 1;
+            if !events.is_empty() {
+                needs_draw = true;
+            }
+
+            let is_burst = events
+                .iter()
+                .filter(|e| match e {
+                    Event::Key(key) => key.kind == KeyEventKind::Press,
+                    _ => false,
+                })
+                .count()
+                > 1;
 
             for event in events {
                 match event {
@@ -78,6 +98,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
                 }
             }
 
+            needs_draw = true;
             last_tick = std::time::Instant::now();
         }
 
@@ -559,28 +580,11 @@ fn render_confirmation_dialog(f: &mut Frame, message: &str) {
 }
 
 pub(crate) fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
-    use std::io::Write;
-    use std::process::{Command, Stdio};
-    let (prog, args): (&str, &[&str]) = if cfg!(target_os = "windows") {
-        ("clip", &[])
-    } else if cfg!(target_os = "macos") {
-        ("pbcopy", &[])
-    } else {
-        ("xclip", &["-selection", "clipboard"])
-    };
-    let mut child = Command::new(prog)
-        .args(args)
-        .stdin(Stdio::piped())
-        .spawn()?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(text.as_bytes())?;
-    }
-    let result = child.wait();
-    match result {
-        Ok(status) if status.success() => Ok(()),
-        Ok(_) => Err(std::io::Error::other("clipboard command failed")),
-        Err(e) => Err(e),
-    }
+    let mut clipboard = arboard::Clipboard::new()
+        .map_err(std::io::Error::other)?;
+    clipboard.set_text(text.to_string())
+        .map_err(std::io::Error::other)?;
+    Ok(())
 }
 
 fn render_user_msg_modal(f: &mut Frame, app: &mut App) {

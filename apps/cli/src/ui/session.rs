@@ -11,6 +11,85 @@ use ratatui::Frame;
 use routecode_sdk::core::{Message, Role};
 use unicode_width::UnicodeWidthStr;
 
+fn estimate_wrapped_line_height(line: &Line, calc_width: usize) -> usize {
+    let line_text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    if line_text.is_empty() {
+        return 1;
+    }
+
+    let mut height = 0;
+    let mut current_line_width = 0;
+    let limit_width = calc_width.max(1);
+
+    let mut words = Vec::new();
+    let mut current_word = String::new();
+    let mut is_space = false;
+
+    for c in line_text.chars() {
+        let char_is_space = c == ' ';
+        if char_is_space != is_space && !current_word.is_empty() {
+            words.push((current_word.clone(), is_space));
+            current_word.clear();
+        }
+        is_space = char_is_space;
+        current_word.push(c);
+    }
+    if !current_word.is_empty() {
+        words.push((current_word, is_space));
+    }
+
+    for (word, is_sp) in words {
+        let word_width = word.width();
+
+        if word_width == 0 {
+            continue;
+        }
+
+        if is_sp {
+            if current_line_width + word_width <= limit_width {
+                current_line_width += word_width;
+            } else {
+                let mut remaining_width = word_width;
+                if current_line_width > 0 {
+                    let first_chunk = limit_width.saturating_sub(current_line_width);
+                    remaining_width = remaining_width.saturating_sub(first_chunk);
+                    height += 1;
+                }
+                while remaining_width > limit_width {
+                    height += 1;
+                    remaining_width = remaining_width.saturating_sub(limit_width);
+                }
+                current_line_width = remaining_width;
+            }
+        } else {
+            if current_line_width + word_width <= limit_width {
+                current_line_width += word_width;
+            } else {
+                if current_line_width > 0 {
+                    height += 1;
+                }
+
+                if word_width > limit_width {
+                    let mut remaining_width = word_width;
+                    while remaining_width > limit_width {
+                        height += 1;
+                        remaining_width = remaining_width.saturating_sub(limit_width);
+                    }
+                    current_line_width = remaining_width;
+                } else {
+                    current_line_width = word_width;
+                }
+            }
+        }
+    }
+
+    if current_line_width > 0 || height == 0 {
+        height += 1;
+    }
+
+    height
+}
+
 pub fn ui_session(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
     let input_height = (app.input.lines().len() as u16 + 2).min(12);
     let chunks = Layout::default()
@@ -29,10 +108,11 @@ pub fn ui_session(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
 
     let hovered_msg_idx = crate::ui::compute_message_hover(app, chunks[0]);
 
+    let text_width = chunks[0].width.saturating_sub(1);
     let needs_rebuild = app.render_dirty
         || app.cached_text.is_none()
         || app.history.len() != app.cached_history_len
-        || chunks[0].width != app.cached_width
+        || text_width != app.cached_width
         || is_collapsed != app.cached_is_collapsed
         || thinking_hovered != app.cached_thinking_hovered
         || hovered_msg_idx != app.cached_hovered_msg_idx;
@@ -45,7 +125,7 @@ pub fn ui_session(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
         let mut lines = Vec::new();
         let mut total_height: usize = 0;
         let mut layout = Vec::new();
-        let available_width = chunks[0].width.max(1) as usize;
+        let available_width = text_width.max(1) as usize;
         let calc_width = (available_width as f32 * 0.95).floor().max(1.0) as usize;
 
         for (msg_idx, m) in app.history.iter().enumerate() {
@@ -59,12 +139,7 @@ pub fn ui_session(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
             );
 
             for line in msg_text.lines {
-                let line_width: usize = line.spans.iter().map(|s| s.content.width()).sum();
-                let wrapped_height = if line_width == 0 {
-                    1
-                } else {
-                    (line_width + calc_width - 1) / calc_width.max(1)
-                };
+                let wrapped_height = estimate_wrapped_line_height(&line, calc_width);
 
                 let is_thinking = line.spans.iter().any(|span| {
                     span.content.contains('\u{2502}')
@@ -87,7 +162,7 @@ pub fn ui_session(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
         total_height += 2;
 
         app.cached_history_len = app.history.len();
-        app.cached_width = chunks[0].width;
+        app.cached_width = text_width;
         app.cached_is_collapsed = is_collapsed;
         app.cached_thinking_hovered = thinking_hovered;
         app.cached_hovered_msg_idx = hovered_msg_idx;
@@ -113,12 +188,46 @@ pub fn ui_session(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
         }
     }
 
+    let history_layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Min(1),
+            Constraint::Length(1), // Scrollbar column
+        ])
+        .split(chunks[0]);
+
     f.render_widget(
         Paragraph::new(history_text)
             .wrap(Wrap { trim: false })
             .scroll((app.history_scroll, 0)),
-        chunks[0],
+        history_layout[0],
     );
+
+    // Scrollbar rendering
+    let viewport_height = history_layout[1].height as usize;
+    if viewport_height > 0 {
+        let mut scrollbar_lines = Vec::new();
+        
+        if max_scroll > 0 && total_height > viewport_height {
+            let thumb_height = ((viewport_height * viewport_height) / total_height).max(1);
+            let scrollable_track = viewport_height.saturating_sub(thumb_height);
+            let scroll_ratio = app.history_scroll as f64 / max_scroll as f64;
+            let thumb_pos = (scroll_ratio * scrollable_track as f64).round() as usize;
+
+            for r in 0..viewport_height {
+                if r >= thumb_pos && r < thumb_pos + thumb_height {
+                    scrollbar_lines.push(Line::from(Span::styled("█", Style::default().fg(COLOR_PRIMARY))));
+                } else {
+                    scrollbar_lines.push(Line::from(Span::styled("│", Style::default().fg(COLOR_DIM))));
+                }
+            }
+        } else {
+            for _ in 0..viewport_height {
+                scrollbar_lines.push(Line::from(Span::styled("│", Style::default().fg(COLOR_DIM))));
+            }
+        }
+        f.render_widget(Paragraph::new(scrollbar_lines), history_layout[1]);
+    }
 
     f.render_widget(
         Block::default().style(Style::default().bg(COLOR_INPUT_BG)),
