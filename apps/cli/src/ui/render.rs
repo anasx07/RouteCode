@@ -16,7 +16,9 @@ use super::menus::{
     render_settings_menu,
 };
 use super::streaming::handle_stream_chunks;
-use super::types::{ApprovalMode, Screen};
+use super::types::{
+    ActiveModal, ApprovalMode, Screen,
+};
 use super::welcome::ui_welcome;
 
 pub async fn run_app<B: ratatui::backend::Backend>(
@@ -35,7 +37,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
         }
 
         let time_to_next_tick = tick_rate.saturating_sub(last_tick.elapsed());
-        let timeout = if app.is_generating || app.logo_anim_frames > 0 {
+        let timeout = if app.session.is_generating || app.logo_anim_frames > 0 {
             render_rate.min(time_to_next_tick)
         } else {
             time_to_next_tick
@@ -65,7 +67,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
                     Event::Key(key) => {
                         if key.kind == KeyEventKind::Press {
                             match handle_key_event(&mut app, key, is_burst).await? {
-                                KeyEventResult::Exit => return Ok(app.pending_update_install),
+                                KeyEventResult::Exit => return Ok(app.update.install),
                                 KeyEventResult::Continue => {}
                             }
                         }
@@ -77,7 +79,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
                         handle_mouse_event(&mut app, mouse, terminal).await?;
                     }
                     Event::Resize(_, _) => {
-                        app.cached_text = None;
+                        app.cache.text = None;
                     }
                     _ => {}
                 }
@@ -89,11 +91,11 @@ pub async fn run_app<B: ratatui::backend::Backend>(
             app.logo_anim_frames = app.logo_anim_frames.saturating_sub(1);
 
             if app.screen == Screen::Session {
-                if let Some((start_time, _, _)) = app.mouse_down_start {
+                if let Some((start_time, _, _)) = app.mouse.down_start {
                     if start_time.elapsed() >= std::time::Duration::from_millis(400)
-                        && app.thinking_hover_rendered
+                        && app.session.thinking_hover_rendered
                     {
-                        app.temp_expand_thinking = true;
+                        app.session.temp_expand_thinking = true;
                     }
                 }
             }
@@ -102,7 +104,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
             last_tick = std::time::Instant::now();
         }
 
-        if app.pending_update_install {
+        if app.update.install {
             return Ok(true);
         }
         handle_stream_chunks(&mut app).await;
@@ -125,8 +127,8 @@ fn ui(f: &mut Frame, app: &mut App) {
         })
         .unwrap_or_else(|_| "workspace".to_string());
 
-    let mode_label = app.approval_mode.label();
-    let mode_style = match app.approval_mode {
+    let mode_label = app.session.approval_mode.label();
+    let mode_style = match app.session.approval_mode {
         ApprovalMode::Normal => Style::default().fg(COLOR_SECONDARY),
         ApprovalMode::Plan => Style::default()
             .fg(Color::Cyan)
@@ -139,25 +141,25 @@ fn ui(f: &mut Frame, app: &mut App) {
     let mode_indicator = format!("[{}]", mode_label);
 
     let mut header_left = Vec::new();
-    if app.approval_mode != ApprovalMode::Normal {
+    if app.session.approval_mode != ApprovalMode::Normal {
         header_left.push(Span::styled(mode_indicator, mode_style));
         header_left.push(Span::raw(" "));
     }
-    if !app.hide_cwd {
+    if !app.ui_settings.hide_cwd {
         header_left.push(Span::styled(
             format!("{} ", current_dir),
             Style::default().fg(COLOR_SECONDARY),
         ));
     }
 
-    let header_right_len = if app.hide_model_info { 0u16 } else { 25u16 };
+    let header_right_len = if app.ui_settings.hide_model_info { 0u16 } else { 25u16 };
     let header_layout = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Min(0), Constraint::Length(header_right_len)])
         .split(main_layout[0]);
     f.render_widget(Paragraph::new(Line::from(header_left)), header_layout[0]);
 
-    if !app.hide_model_info {
+    if !app.ui_settings.hide_model_info {
         let version = env!("CARGO_PKG_VERSION");
         let header_title = format!(" RouteCode v{} ", version);
         f.render_widget(
@@ -175,32 +177,22 @@ fn ui(f: &mut Frame, app: &mut App) {
         Screen::Welcome => ui_welcome(f, app, main_layout[1]),
         Screen::Session => super::session::ui_session(f, app, main_layout[1]),
     };
-    if app.show_menu {
-        render_menu(f, app, input_area);
-    } else if app.show_provider_menu {
-        render_provider_menu(f, app, input_area);
-    } else if app.show_model_menu {
-        render_model_menu(f, app, input_area);
-    } else if app.show_settings_menu {
-        render_settings_menu(f, app, input_area);
-    } else if app.is_inputting_api_key {
-        render_api_key_dialog(f, app);
-    } else if app.pending_clear {
-        render_confirmation_dialog(f, "Are you sure you want to clear all history? (y/n)");
-    } else if app.pending_exit {
-        render_confirmation_dialog(f, "Are you sure you want to exit RouteCode? (y/n)");
-    } else if app.pending_command_confirmation.is_some() {
-        render_command_confirmation_dialog(f, app);
-    } else if app.pending_plan_approval.is_some() {
-        render_plan_approval_dialog(f, app);
-    } else if app.pending_hook_trust.is_some() {
-        render_hook_trust_dialog(f, app);
-    } else if app.show_user_msg_modal.is_some() {
-        render_user_msg_modal(f, app);
-    } else if app.pending_update.is_some() {
-        render_update_modal(f, app);
+    match app.active_modal {
+        ActiveModal::CommandMenu => render_menu(f, app, input_area),
+        ActiveModal::ProviderMenu => render_provider_menu(f, app, input_area),
+        ActiveModal::ModelMenu => render_model_menu(f, app, input_area),
+        ActiveModal::SettingsMenu => render_settings_menu(f, app, input_area),
+        ActiveModal::ApiKeyInput => render_api_key_dialog(f, app),
+        ActiveModal::ClearConfirmation => render_confirmation_dialog(f, "Are you sure you want to clear all history? (y/n)"),
+        ActiveModal::ExitConfirmation => render_confirmation_dialog(f, "Are you sure you want to exit RouteCode? (y/n)"),
+        ActiveModal::CommandConfirmation => render_command_confirmation_dialog(f, app),
+        ActiveModal::PlanApproval => render_plan_approval_dialog(f, app),
+        ActiveModal::HookTrust => render_hook_trust_dialog(f, app),
+        ActiveModal::UserMessage => render_user_msg_modal(f, app),
+        ActiveModal::Update => render_update_modal(f, app),
+        ActiveModal::None => {}
     }
-    app.mouse_moved = false;
+    app.mouse.moved = false;
 }
 
 fn render_command_confirmation_dialog(f: &mut Frame, app: &mut App) {
@@ -231,7 +223,7 @@ fn render_command_confirmation_dialog(f: &mut Frame, app: &mut App) {
         .border_style(Style::default().fg(COLOR_PRIMARY))
         .style(Style::default().bg(COLOR_BG));
 
-    let (message, target, _) = app.pending_command_confirmation.as_ref().unwrap();
+    let (message, target, _) = app.cmd_confirmation.pending.as_ref().unwrap();
 
     let mut lines = vec![
         Line::from(vec![Span::styled(message, Style::default().fg(COLOR_TEXT))]),
@@ -244,7 +236,7 @@ fn render_command_confirmation_dialog(f: &mut Frame, app: &mut App) {
         Line::from(""),
     ];
 
-    if app.inputting_command_feedback {
+    if app.cmd_confirmation.inputting_feedback {
         lines.push(Line::from(vec![Span::styled(
             "Please type your feedback below and press Enter (Esc to cancel):",
             Style::default().fg(COLOR_SECONDARY),
@@ -293,7 +285,7 @@ fn render_command_confirmation_dialog(f: &mut Frame, app: &mut App) {
     f.render_widget(ratatui::widgets::Clear, inner_area);
     f.render_widget(paragraph, inner_area);
 
-    if app.inputting_command_feedback {
+    if app.cmd_confirmation.inputting_feedback {
         let input_rect = ratatui::layout::Rect {
             x: inner_area.x + 2,
             y: inner_area.y + 5,
@@ -347,7 +339,7 @@ fn render_plan_approval_dialog(f: &mut Frame, app: &mut App) {
         .split(inner);
 
     let (plan, plan_path, allowed_prompts, _sender) =
-        app.pending_plan_approval.as_ref().unwrap().clone();
+        app.plan_approval.pending.as_ref().unwrap().clone();
 
     let block = Block::default()
         .title(" Plan Approval Required ")
@@ -389,7 +381,7 @@ fn render_plan_approval_dialog(f: &mut Frame, app: &mut App) {
     let body = Paragraph::new(body_lines)
         .block(block)
         .wrap(ratatui::widgets::Wrap { trim: false })
-        .scroll((app.history_scroll, 0));
+        .scroll((app.session.history_scroll, 0));
     f.render_widget(ratatui::widgets::Clear, body_layout[0]);
     f.render_widget(body, body_layout[0]);
 
@@ -407,7 +399,7 @@ fn render_plan_approval_dialog(f: &mut Frame, app: &mut App) {
     ];
     let mut spans: Vec<Span> = Vec::new();
     for (i, (key, label, color)) in buttons.iter().enumerate() {
-        let style = if i == app.plan_approval_selected {
+        let style = if i == app.plan_approval.selected {
             Style::default().fg(*color).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(*color)
@@ -421,7 +413,7 @@ fn render_plan_approval_dialog(f: &mut Frame, app: &mut App) {
     f.render_widget(ratatui::widgets::Clear, body_layout[1]);
     f.render_widget(action, body_layout[1]);
 
-    if app.inputting_plan_feedback {
+    if app.plan_approval.inputting_feedback {
         // Reuse the input box below the action row by overlaying it
         let input_rect = ratatui::layout::Rect {
             x: body_layout[1].x + 2,
@@ -444,7 +436,7 @@ fn render_plan_approval_dialog(f: &mut Frame, app: &mut App) {
 fn render_hook_trust_dialog(f: &mut Frame, app: &mut App) {
     let area = f.size();
     let (signature, project_path, hooks) = {
-        let t = app.pending_hook_trust.as_ref();
+        let t = app.hook_trust.pending.as_ref();
         match t {
             Some(t) => (t.signature.clone(), t.project_path.clone(), t.hooks.clone()),
             None => (String::new(), String::new(), Vec::new()),
@@ -528,7 +520,7 @@ fn render_hook_trust_dialog(f: &mut Frame, app: &mut App) {
         if i > 0 {
             spans.push(Span::raw("   "));
         }
-        let style = if i == app.hook_trust_selected {
+        let style = if i == app.hook_trust.selected {
             Style::default().fg(*color).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(*color)
@@ -625,7 +617,7 @@ fn render_user_msg_modal(f: &mut Frame, app: &mut App) {
     ];
 
     for (idx, opt) in options.iter().enumerate() {
-        let is_selected = idx == app.user_msg_modal_selected;
+        let is_selected = idx == app.user_msg.selected;
         let prefix = if is_selected { " -> " } else { "   " };
         let style = if is_selected {
             Style::default()
@@ -652,7 +644,7 @@ fn render_user_msg_modal(f: &mut Frame, app: &mut App) {
 }
 
 fn render_update_modal(f: &mut Frame, app: &mut App) {
-    let version = app.pending_update.as_ref().unwrap();
+    let version = app.update.pending_version.as_ref().unwrap();
     let area = f.size();
 
     let modal_height = 12;
@@ -724,8 +716,8 @@ fn render_update_modal(f: &mut Frame, app: &mut App) {
         Line::from(""),
     ];
 
-    if !app.pending_update_changelog.is_empty() {
-        let changelog_lines: Vec<&str> = app.pending_update_changelog.lines().take(5).collect();
+    if !app.update.changelog.is_empty() {
+        let changelog_lines: Vec<&str> = app.update.changelog.lines().take(5).collect();
         for line in changelog_lines {
             let trimmed = if line.len() > 60 {
                 format!("{}...", &line[..57])
@@ -749,7 +741,7 @@ fn render_update_modal(f: &mut Frame, app: &mut App) {
         height: 1,
     };
 
-    let skip_style = if app.update_modal_selected == 0 {
+    let skip_style = if app.update.selected == 0 {
         Style::default()
             .fg(Color::Black)
             .bg(COLOR_TEXT)
@@ -757,7 +749,7 @@ fn render_update_modal(f: &mut Frame, app: &mut App) {
     } else {
         Style::default().fg(COLOR_DIM)
     };
-    let confirm_style = if app.update_modal_selected == 1 {
+    let confirm_style = if app.update.selected == 1 {
         Style::default()
             .fg(Color::Black)
             .bg(Color::Rgb(255, 179, 138))

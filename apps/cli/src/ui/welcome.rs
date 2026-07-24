@@ -99,7 +99,7 @@ pub fn ui_welcome(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
         let start_y = chunks[1].y;
         let end_y = start_y + logo_height;
 
-        let is_hovering = if let (Some(col), Some(row)) = (app.mouse_col, app.mouse_row) {
+        let is_hovering = if let (Some(col), Some(row)) = (app.mouse.col, app.mouse.row) {
             col >= start_x && col < end_x && row >= start_y && row < end_y
         } else {
             false
@@ -165,7 +165,7 @@ pub fn ui_welcome(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
         inner_input_area.y + app.input.cursor().0 as u16,
     );
 
-    let cleaned_model = clean_model_name(&app.current_model, &app.current_provider_id);
+    let cleaned_model = clean_model_name(&app.provider.current_model, &app.provider.current_provider_id);
     let provider_info = vec![
         Span::styled("Model ", Style::default().fg(COLOR_SECONDARY)),
         Span::styled(
@@ -175,7 +175,7 @@ pub fn ui_welcome(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(" • Provider ", Style::default().fg(COLOR_SECONDARY)),
-        Span::styled(&app.provider_name, Style::default().fg(COLOR_TEXT)),
+        Span::styled(&app.provider.provider_name, Style::default().fg(COLOR_TEXT)),
     ];
     f.render_widget(
         Paragraph::new(Line::from(provider_info)).alignment(ratatui::layout::Alignment::Center),
@@ -184,7 +184,7 @@ pub fn ui_welcome(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
 
     let spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     let frame = spinner[(app.tick_count % spinner.len() as u64) as usize];
-    let tip_text = if app.is_generating {
+    let tip_text = if app.session.is_generating {
         format!(" {} AI is working... ", frame)
     } else {
         "ctrl+p help | esc show exit prompt".to_string()
