@@ -371,16 +371,16 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    app.current_model = config.model;
+    app.provider.current_model = config.model;
 
     if let Some(resume_name) = cli.resume {
         match routecode_sdk::utils::storage::load_session(&resume_name) {
             Ok(session) => {
-                app.history = session.messages;
-                app.current_model = session.model;
+                app.session.history = session.messages;
+                app.provider.current_model = session.model;
                 let mut u = app.orchestrator.usage.lock().await;
                 *u = session.usage;
-                app.session_id = resume_name.clone();
+                app.session.id = resume_name.clone();
                 if let Ok(config) = routecode_sdk::utils::storage::load_session_config(&resume_name)
                 {
                     app.orchestrator.allow_session_commands.store(
@@ -394,7 +394,7 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             Err(e) => app
-                .history
+                .session.history
                 .push(routecode_sdk::core::Message::system(format!(
                     "Failed to resume session '{}': {}",
                     resume_name, e

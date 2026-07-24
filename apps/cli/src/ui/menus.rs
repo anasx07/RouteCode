@@ -1,7 +1,7 @@
 use crate::ui::components::{
     clean_model_name, draw_modal, COLOR_PRIMARY, COLOR_SECONDARY, COLOR_SUCCESS, COLOR_TEXT,
 };
-use crate::ui::{ApiKeyInputStage, App, ModelMenuItem, PROVIDERS};
+use crate::ui::{ActiveModal, ApiKeyInputStage, App, ModelMenuItem, PROVIDERS};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -10,14 +10,14 @@ use ratatui::Frame;
 use routecode_sdk::core::DynamicModelInfo;
 
 pub fn render_menu(f: &mut Frame, app: &mut App, _input_area: Rect) {
-    let height = (app.filtered_commands.len() + 6).min(15) as u16;
+    let height = (app.menu.filtered_commands.len() + 6).min(15) as u16;
     let body_area = draw_modal(
         f,
         "Commands",
         60,
         height,
-        app.mouse_col,
-        app.mouse_row,
+        app.mouse.col,
+        app.mouse.row,
         vec![
             Span::styled("Enter", Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(" select command"),
@@ -25,7 +25,7 @@ pub fn render_menu(f: &mut Frame, app: &mut App, _input_area: Rect) {
     );
 
     let items: Vec<ListItem> = app
-        .filtered_commands
+        .menu.filtered_commands
         .iter()
         .map(|cmd| {
             let total_width = body_area.width.saturating_sub(4);
@@ -48,27 +48,27 @@ pub fn render_menu(f: &mut Frame, app: &mut App, _input_area: Rect) {
         .highlight_style(Style::default().bg(COLOR_PRIMARY).fg(Color::Black))
         .highlight_symbol("");
 
-    let items_len = app.filtered_commands.len();
-    if app.mouse_moved {
-        if let (Some(col), Some(row)) = (app.mouse_col, app.mouse_row) {
+    let items_len = app.menu.filtered_commands.len();
+    if app.mouse.moved {
+        if let (Some(col), Some(row)) = (app.mouse.col, app.mouse.row) {
             if col >= body_area.x
                 && col < body_area.x + body_area.width
                 && row >= body_area.y
                 && row < body_area.y + body_area.height
             {
-                let idx = (row - body_area.y) as usize + app.menu_state.offset();
+                let idx = (row - body_area.y) as usize + app.menu.list_state.offset();
                 if idx < items_len {
-                    app.menu_state.select(Some(idx));
+                    app.menu.list_state.select(Some(idx));
                 }
             }
         }
     }
 
-    f.render_stateful_widget(list, body_area, &mut app.menu_state);
+    f.render_stateful_widget(list, body_area, &mut app.menu.list_state);
 }
 
 pub fn render_api_key_dialog(f: &mut Frame, app: &mut App) {
-    let provider_id = app.pending_provider_id.as_deref().unwrap_or("provider");
+    let provider_id = app.api_key.pending_provider_id.as_deref().unwrap_or("provider");
     let p_info = PROVIDERS.iter().find(|p| p.id == provider_id);
     let provider_name = p_info.map(|p| p.name).unwrap_or(provider_id);
 
@@ -78,8 +78,8 @@ pub fn render_api_key_dialog(f: &mut Frame, app: &mut App) {
         &title,
         60,
         10,
-        app.mouse_col,
-        app.mouse_row,
+        app.mouse.col,
+        app.mouse.row,
         vec![Span::styled(
             "Press Enter to save",
             Style::default().add_modifier(Modifier::BOLD),
@@ -95,7 +95,7 @@ pub fn render_api_key_dialog(f: &mut Frame, app: &mut App) {
         ])
         .split(body_area);
 
-    let (prompt, placeholder) = match app.api_key_input_stage {
+    let (prompt, placeholder) = match app.api_key.stage {
         ApiKeyInputStage::CloudflareAccountId => {
             ("Enter Cloudflare Account ID:".to_string(), " Account ID...")
         }
@@ -121,22 +121,22 @@ pub fn render_api_key_dialog(f: &mut Frame, app: &mut App) {
 
     f.render_widget(Paragraph::new(prompt), layout[0]);
 
-    app.api_key_input.set_placeholder_text(placeholder);
-    app.api_key_input.set_block(
+    app.api_key.input.set_placeholder_text(placeholder);
+    app.api_key.input.set_block(
         Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(COLOR_SECONDARY)),
     );
-    if app.api_key_input_stage == ApiKeyInputStage::ApiKey
-        || app.api_key_input_stage == ApiKeyInputStage::CloudflareApiKey
+    if app.api_key.stage == ApiKeyInputStage::ApiKey
+        || app.api_key.stage == ApiKeyInputStage::CloudflareApiKey
     {
-        app.api_key_input.set_mask_char('\u{2022}');
+        app.api_key.input.set_mask_char('\u{2022}');
     } else {
-        app.api_key_input.set_mask_char('\0');
+        app.api_key.input.set_mask_char('\0');
     }
-    f.render_widget(app.api_key_input.widget(), layout[2]);
+    f.render_widget(app.api_key.input.widget(), layout[2]);
 
-    let (row, col) = app.api_key_input.cursor();
+    let (row, col) = app.api_key.input.cursor();
     f.set_cursor(layout[2].x + 1 + col as u16, layout[2].y + 1 + row as u16);
 }
 
@@ -147,8 +147,8 @@ pub fn render_provider_menu(f: &mut Frame, app: &mut App, _input_area: Rect) {
         "AI Providers",
         60,
         height,
-        app.mouse_col,
-        app.mouse_row,
+        app.mouse.col,
+        app.mouse.row,
         vec![
             Span::styled("Enter", Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(" configure API key"),
@@ -214,27 +214,27 @@ pub fn render_provider_menu(f: &mut Frame, app: &mut App, _input_area: Rect) {
         .highlight_symbol("");
 
     let items_len = PROVIDERS.len();
-    if app.mouse_moved {
-        if let (Some(col), Some(row)) = (app.mouse_col, app.mouse_row) {
+    if app.mouse.moved {
+        if let (Some(col), Some(row)) = (app.mouse.col, app.mouse.row) {
             if col >= body_area.x
                 && col < body_area.x + body_area.width
                 && row >= body_area.y
                 && row < body_area.y + body_area.height
             {
-                let idx = (row - body_area.y) as usize + app.menu_state.offset();
+                let idx = (row - body_area.y) as usize + app.menu.list_state.offset();
                 if idx < items_len {
-                    app.menu_state.select(Some(idx));
+                    app.menu.list_state.select(Some(idx));
                 }
             }
         }
-        app.mouse_moved = false;
+        app.mouse.moved = false;
     }
 
-    f.render_stateful_widget(list, body_area, &mut app.menu_state);
+    f.render_stateful_widget(list, body_area, &mut app.menu.list_state);
 }
 
 pub fn render_model_menu(f: &mut Frame, app: &mut App, _input_area: Rect) {
-    let height = (app.filtered_models.len() + 7).min(18) as u16;
+    let height = (app.model_search.filtered_models.len() + 7).min(18) as u16;
     let mut footer = vec![
         Span::styled(
             "Connect provider ",
@@ -246,7 +246,7 @@ pub fn render_model_menu(f: &mut Frame, app: &mut App, _input_area: Rect) {
         Span::styled("ctrl+f", Style::default().fg(COLOR_SECONDARY)),
     ];
 
-    if app.is_fetching_models {
+    if app.model_search.is_fetching {
         let spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
         let frame = spinner[(app.tick_count % spinner.len() as u64) as usize];
         footer.push(Span::raw("  "));
@@ -263,8 +263,8 @@ pub fn render_model_menu(f: &mut Frame, app: &mut App, _input_area: Rect) {
         "Select model",
         70,
         height,
-        app.mouse_col,
-        app.mouse_row,
+        app.mouse.col,
+        app.mouse.row,
         footer,
     );
 
@@ -274,7 +274,7 @@ pub fn render_model_menu(f: &mut Frame, app: &mut App, _input_area: Rect) {
         .split(body_area);
 
     let search_text = app
-        .model_search_input
+        .model_search.search_input
         .lines()
         .first()
         .cloned()
@@ -289,8 +289,8 @@ pub fn render_model_menu(f: &mut Frame, app: &mut App, _input_area: Rect) {
     };
     f.render_widget(search_para, layout[0]);
 
-    if app.show_model_menu && !app.is_inputting_api_key {
-        let (row, col) = app.model_search_input.cursor();
+    if app.active_modal == ActiveModal::ModelMenu {
+        let (row, col) = app.model_search.search_input.cursor();
         f.set_cursor(layout[0].x + col as u16, layout[0].y + row as u16);
     }
 
@@ -315,7 +315,7 @@ pub fn render_model_menu(f: &mut Frame, app: &mut App, _input_area: Rect) {
     };
 
     let items: Vec<ListItem> = app
-        .filtered_models
+        .model_search.filtered_models
         .iter()
         .map(|item| match item {
             ModelMenuItem::Header(title) => ListItem::new(Line::from(vec![Span::styled(
@@ -359,41 +359,41 @@ pub fn render_model_menu(f: &mut Frame, app: &mut App, _input_area: Rect) {
         .highlight_style(Style::default().bg(COLOR_PRIMARY).fg(Color::Black))
         .highlight_symbol("");
 
-    let items_len = app.filtered_models.len();
-    if app.mouse_moved {
-        if let (Some(col), Some(row)) = (app.mouse_col, app.mouse_row) {
+    let items_len = app.model_search.filtered_models.len();
+    if app.mouse.moved {
+        if let (Some(col), Some(row)) = (app.mouse.col, app.mouse.row) {
             if col >= layout[1].x
                 && col < layout[1].x + layout[1].width
                 && row >= layout[1].y
                 && row < layout[1].y + layout[1].height
             {
-                let idx = (row - layout[1].y) as usize + app.menu_state.offset();
+                let idx = (row - layout[1].y) as usize + app.menu.list_state.offset();
                 if idx < items_len
                     && !matches!(
-                        app.filtered_models.get(idx),
+                        app.model_search.filtered_models.get(idx),
                         Some(ModelMenuItem::Header(_))
                     )
                 {
-                    app.menu_state.select(Some(idx));
+                    app.menu.list_state.select(Some(idx));
                 }
             }
         }
     }
 
-    f.render_stateful_widget(list, layout[1], &mut app.menu_state);
+    f.render_stateful_widget(list, layout[1], &mut app.menu.list_state);
 }
 
 use crate::ui::SettingsMenuItem;
 
 pub fn render_settings_menu(f: &mut Frame, app: &mut App, _input_area: Rect) {
-    let height = (app.settings_items.len() + 6).min(15) as u16;
+    let height = (app.menu.settings_items.len() + 6).min(15) as u16;
     let body_area = draw_modal(
         f,
         "Settings",
         60,
         height,
-        app.mouse_col,
-        app.mouse_row,
+        app.mouse.col,
+        app.mouse.row,
         vec![
             Span::styled("Enter", Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(" toggle setting"),
@@ -401,7 +401,7 @@ pub fn render_settings_menu(f: &mut Frame, app: &mut App, _input_area: Rect) {
     );
 
     let items: Vec<ListItem> = app
-        .settings_items
+        .menu.settings_items
         .iter()
         .map(|item| match item {
             SettingsMenuItem::Header(title) => ListItem::new(Line::from(vec![Span::styled(
@@ -437,26 +437,26 @@ pub fn render_settings_menu(f: &mut Frame, app: &mut App, _input_area: Rect) {
         .highlight_style(Style::default().bg(COLOR_PRIMARY).fg(Color::Black))
         .highlight_symbol("");
 
-    let items_len = app.settings_items.len();
-    if app.mouse_moved {
-        if let (Some(col), Some(row)) = (app.mouse_col, app.mouse_row) {
+    let items_len = app.menu.settings_items.len();
+    if app.mouse.moved {
+        if let (Some(col), Some(row)) = (app.mouse.col, app.mouse.row) {
             if col >= body_area.x
                 && col < body_area.x + body_area.width
                 && row >= body_area.y
                 && row < body_area.y + body_area.height
             {
-                let idx = (row - body_area.y) as usize + app.menu_state.offset();
+                let idx = (row - body_area.y) as usize + app.menu.list_state.offset();
                 if idx < items_len
                     && !matches!(
-                        app.settings_items.get(idx),
+                        app.menu.settings_items.get(idx),
                         Some(SettingsMenuItem::Header(_))
                     )
                 {
-                    app.menu_state.select(Some(idx));
+                    app.menu.list_state.select(Some(idx));
                 }
             }
         }
     }
 
-    f.render_stateful_widget(list, body_area, &mut app.menu_state);
+    f.render_stateful_widget(list, body_area, &mut app.menu.list_state);
 }

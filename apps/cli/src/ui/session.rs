@@ -103,32 +103,32 @@ pub fn ui_session(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
 
     // Compute thinking hover at render time using actual frame dimensions
     let thinking_hovered = crate::ui::compute_thinking_hover(app, f.size());
-    app.thinking_hover_rendered = thinking_hovered;
-    let is_collapsed = app.collapse_thinking && !app.temp_expand_thinking;
+    app.session.thinking_hover_rendered = thinking_hovered;
+    let is_collapsed = app.session.collapse_thinking && !app.session.temp_expand_thinking;
 
     let hovered_msg_idx = crate::ui::compute_message_hover(app, chunks[0]);
 
     let text_width = chunks[0].width.saturating_sub(1);
     let needs_rebuild = app.render_dirty
-        || app.cached_text.is_none()
-        || app.history.len() != app.cached_history_len
-        || text_width != app.cached_width
-        || is_collapsed != app.cached_is_collapsed
-        || thinking_hovered != app.cached_thinking_hovered
-        || hovered_msg_idx != app.cached_hovered_msg_idx;
+        || app.cache.text.is_none()
+        || app.session.history.len() != app.cache.history_len
+        || text_width != app.cache.width
+        || is_collapsed != app.cache.is_collapsed
+        || thinking_hovered != app.cache.thinking_hovered
+        || hovered_msg_idx != app.cache.hovered_msg_idx;
 
-    let throttle_ok = app.last_cache_update.elapsed() >= std::time::Duration::from_millis(200);
+    let throttle_ok = app.cache.last_update.elapsed() >= std::time::Duration::from_millis(200);
 
-    if needs_rebuild && (throttle_ok || !app.is_generating) {
+    if needs_rebuild && (throttle_ok || !app.session.is_generating) {
         app.render_dirty = false;
-        app.last_cache_update = std::time::Instant::now();
+        app.cache.last_update = std::time::Instant::now();
         let mut lines = Vec::new();
         let mut total_height: usize = 0;
         let mut layout = Vec::new();
         let available_width = text_width.max(1) as usize;
         let calc_width = (available_width as f32 * 0.95).floor().max(1.0) as usize;
 
-        for (msg_idx, m) in app.history.iter().enumerate() {
+        for (msg_idx, m) in app.session.history.iter().enumerate() {
             let msg_slice = std::slice::from_ref(m);
             let msg_text = render_history(
                 msg_slice,
@@ -157,34 +157,34 @@ pub fn ui_session(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
         }
 
         let history = Text::from(lines);
-        app.cached_layout = layout;
+        app.cache.layout = layout;
         // Safety buffer
         total_height += 2;
 
-        app.cached_history_len = app.history.len();
-        app.cached_width = text_width;
-        app.cached_is_collapsed = is_collapsed;
-        app.cached_thinking_hovered = thinking_hovered;
-        app.cached_hovered_msg_idx = hovered_msg_idx;
-        app.cached_total_height = total_height;
-        app.cached_text = Some(history);
+        app.cache.history_len = app.session.history.len();
+        app.cache.width = text_width;
+        app.cache.is_collapsed = is_collapsed;
+        app.cache.thinking_hovered = thinking_hovered;
+        app.cache.hovered_msg_idx = hovered_msg_idx;
+        app.cache.total_height = total_height;
+        app.cache.text = Some(history);
     }
 
-    let history_text = app.cached_text.as_ref().unwrap().clone();
-    let total_height = app.cached_total_height;
+    let history_text = app.cache.text.as_ref().unwrap().clone();
+    let total_height = app.cache.total_height;
 
     let max_scroll = total_height
         .saturating_sub(chunks[0].height as usize)
         .min(u16::MAX as usize) as u16;
-    app.max_scroll = max_scroll;
+    app.session.max_scroll = max_scroll;
 
-    if app.auto_scroll {
-        app.history_scroll = max_scroll;
+    if app.session.auto_scroll {
+        app.session.history_scroll = max_scroll;
     } else {
         // Only re-enable auto-scroll if the user manually scrolls to the bottom of long content
-        if app.history_scroll >= max_scroll && max_scroll > 0 {
-            app.auto_scroll = true;
-            app.history_scroll = max_scroll;
+        if app.session.history_scroll >= max_scroll && max_scroll > 0 {
+            app.session.auto_scroll = true;
+            app.session.history_scroll = max_scroll;
         }
     }
 
@@ -199,7 +199,7 @@ pub fn ui_session(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
     f.render_widget(
         Paragraph::new(history_text)
             .wrap(Wrap { trim: false })
-            .scroll((app.history_scroll, 0)),
+            .scroll((app.session.history_scroll, 0)),
         history_layout[0],
     );
 
@@ -211,7 +211,7 @@ pub fn ui_session(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
         if max_scroll > 0 && total_height > viewport_height {
             let thumb_height = ((viewport_height * viewport_height) / total_height).max(1);
             let scrollable_track = viewport_height.saturating_sub(thumb_height);
-            let scroll_ratio = app.history_scroll as f64 / max_scroll as f64;
+            let scroll_ratio = app.session.history_scroll as f64 / max_scroll as f64;
             let thumb_pos = (scroll_ratio * scrollable_track as f64).round() as usize;
 
             for r in 0..viewport_height {
@@ -251,8 +251,8 @@ pub fn ui_session(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
     let spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     let frame = spinner[(app.tick_count % spinner.len() as u64) as usize];
 
-    let generating_text = if app.is_generating {
-        if let Some(tool) = &app.active_tool {
+    let generating_text = if app.session.is_generating {
+        if let Some(tool) = &app.session.active_tool {
             format!(" {} [Running {}...] ", frame, tool)
         } else {
             format!(" {} [Thinking...] ", frame)
@@ -261,7 +261,7 @@ pub fn ui_session(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
         "".to_string()
     };
 
-    let cleaned_model = clean_model_name(&app.current_model, &app.current_provider_id);
+    let cleaned_model = clean_model_name(&app.provider.current_model, &app.provider.current_provider_id);
 
     let config_thinking = crate::ui::try_lock_config(app)
         .map(|c| c.thinking_level.clone())
@@ -277,12 +277,12 @@ pub fn ui_session(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Min(0),
-            Constraint::Length(app.provider_name.len() as u16 + 2),
+            Constraint::Length(app.provider.provider_name.len() as u16 + 2),
         ])
         .split(chunks[2]);
 
     let mut left_spans: Vec<Span> = Vec::new();
-    if !app.hide_model_info {
+    if !app.ui_settings.hide_model_info {
         left_spans.push(Span::styled(
             format!(" {} ", cleaned_model),
             Style::default()
@@ -296,7 +296,7 @@ pub fn ui_session(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
                 .add_modifier(Modifier::BOLD),
         ));
     }
-    if let Some(qir) = app.qir_retry_status {
+    if let Some(qir) = app.session.qir_retry_status {
         let (color, label) = if qir.is_recovered() {
             (COLOR_SUCCESS, format!(" ∞ {} ", qir.label()))
         } else {
@@ -307,17 +307,17 @@ pub fn ui_session(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ));
     }
-    if !app.hide_context_summary {
+    if !app.ui_settings.hide_context_summary {
         let mut summary = format!(
             " • Tokens: {} • Cost: ${:.4}",
-            app.usage.total_tokens, app.usage.total_cost
+            app.session.usage.total_tokens, app.session.usage.total_cost
         );
-        if app.usage.qir_attempts > 0 {
-            summary.push_str(&format!(" • Retries: {}", app.usage.qir_attempts));
+        if app.session.usage.qir_attempts > 0 {
+            summary.push_str(&format!(" • Retries: {}", app.session.usage.qir_attempts));
         }
         left_spans.push(Span::styled(summary, Style::default().fg(COLOR_SECONDARY)));
         left_spans.push(Span::styled(
-            format!(" • Scroll: {}/{} ", app.history_scroll, app.max_scroll),
+            format!(" • Scroll: {}/{} ", app.session.history_scroll, app.session.max_scroll),
             Style::default()
                 .fg(COLOR_SECONDARY)
                 .add_modifier(Modifier::DIM),
@@ -327,7 +327,7 @@ pub fn ui_session(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
         generating_text,
         Style::default().fg(COLOR_SYSTEM),
     ));
-    if !app.hide_context_summary {
+    if !app.ui_settings.hide_context_summary {
         left_spans.push(Span::styled(
             " • ctrl+o toggle thinking • ctrl+p help ",
             Style::default()
@@ -338,7 +338,7 @@ pub fn ui_session(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
     let left_status = Line::from(left_spans);
 
     let right_status = Paragraph::new(Span::styled(
-        format!(" {} ", app.provider_name),
+        format!(" {} ", app.provider.provider_name),
         Style::default()
             .fg(COLOR_SECONDARY)
             .add_modifier(Modifier::BOLD),

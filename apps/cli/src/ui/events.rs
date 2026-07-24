@@ -9,7 +9,7 @@ use super::app::{apply_settings_toggle, compute_message_hover, compute_thinking_
 use super::logic::{handle_command, handle_model_search};
 use super::render::copy_to_clipboard;
 use super::types::{
-    ApiKeyInputStage, ApprovalMode, ModelMenuItem, Screen, SettingsMenuItem, PROVIDERS,
+    ActiveModal, ApiKeyInputStage, ApprovalMode, ModelMenuItem, Screen, SettingsMenuItem, PROVIDERS,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,85 +23,93 @@ pub(crate) async fn handle_key_event(
     key: event::KeyEvent,
     is_burst: bool,
 ) -> io::Result<KeyEventResult> {
-    if app.pending_update.is_some() {
+    if app.active_modal == ActiveModal::Update {
         match key.code {
             KeyCode::Right | KeyCode::Char('l') | KeyCode::Tab => {
-                app.update_modal_selected = if app.update_modal_selected == 0 { 1 } else { 0 };
+                app.update.selected = if app.update.selected == 0 { 1 } else { 0 };
             }
             KeyCode::Left | KeyCode::Char('h') => {
-                app.update_modal_selected = if app.update_modal_selected == 1 { 0 } else { 1 };
+                app.update.selected = if app.update.selected == 1 { 0 } else { 1 };
             }
             KeyCode::Enter => {
-                if app.update_modal_selected == 1 {
-                    app.pending_update_install = true;
+                if app.update.selected == 1 {
+                    app.update.install = true;
                     return Ok(KeyEventResult::Exit);
                 } else {
-                    app.pending_update = None;
+                    app.update.pending_version = None;
+                    app.active_modal = ActiveModal::None;
                 }
             }
             KeyCode::Esc => {
-                app.pending_update = None;
+                app.update.pending_version = None;
+                app.active_modal = ActiveModal::None;
             }
             _ => {}
         }
         return Ok(KeyEventResult::Continue);
     }
-    if let Some(msg_idx) = app.show_user_msg_modal {
-        match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                app.user_msg_modal_selected = if app.user_msg_modal_selected == 0 {
-                    1
-                } else {
-                    0
-                };
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                app.user_msg_modal_selected = if app.user_msg_modal_selected == 1 {
-                    0
-                } else {
-                    1
-                };
-            }
-            KeyCode::Enter => {
-                let text = app.history[msg_idx]
-                    .content
-                    .as_ref()
-                    .map(|s| s.to_string())
-                    .unwrap_or_default();
-                if app.user_msg_modal_selected == 0 {
-                    let text_clone = text.clone();
-                    match copy_to_clipboard(&text_clone) {
-                        Ok(()) => {
-                            app.history
-                                .push(Message::system("Message copied to clipboard!".to_string()));
+    if app.active_modal == ActiveModal::UserMessage {
+        if let Some(msg_idx) = app.user_msg.msg_idx {
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    app.user_msg.selected = if app.user_msg.selected == 0 {
+                        1
+                    } else {
+                        0
+                    };
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    app.user_msg.selected = if app.user_msg.selected == 1 {
+                        0
+                    } else {
+                        1
+                    };
+                }
+                KeyCode::Enter => {
+                    let text = app.session.history[msg_idx]
+                        .content
+                        .as_ref()
+                        .map(|s| s.to_string())
+                        .unwrap_or_default();
+                    if app.user_msg.selected == 0 {
+                        let text_clone = text.clone();
+                        match copy_to_clipboard(&text_clone) {
+                            Ok(()) => {
+                                app.session.history
+                                    .push(Message::system("Message copied to clipboard!".to_string()));
+                            }
+                            Err(e) => {
+                                log::error!("Clipboard copy failed: {}", e);
+                                app.session.history.push(Message::system(format!(
+                                    "Failed to copy to clipboard: {}. Make sure a clipboard utility (e.g. xclip/wl-clipboard on Linux, clip on Windows, pbcopy on macOS) is installed.",
+                                    e
+                                )));
+                            }
                         }
-                        Err(e) => {
-                            log::error!("Clipboard copy failed: {}", e);
-                            app.history.push(Message::system(format!(
-                                "Failed to copy to clipboard: {}. Make sure a clipboard utility (e.g. xclip/wl-clipboard on Linux, clip on Windows, pbcopy on macOS) is installed.",
-                                e
-                            )));
-                        }
+                    } else {
+                        app.session.history.truncate(msg_idx);
+                        app.input = tui_textarea::TextArea::from(text.lines().map(|s| s.to_string()));
+                        app.input.move_cursor(tui_textarea::CursorMove::End);
                     }
-                } else {
-                    app.history.truncate(msg_idx);
-                    app.input = tui_textarea::TextArea::from(text.lines().map(|s| s.to_string()));
-                    app.input.move_cursor(tui_textarea::CursorMove::End);
+                    app.user_msg.msg_idx = None;
+                    app.active_modal = ActiveModal::None;
                 }
-                app.show_user_msg_modal = None;
+                KeyCode::Esc => {
+                    app.user_msg.msg_idx = None;
+                    app.active_modal = ActiveModal::None;
+                }
+                _ => {}
             }
-            KeyCode::Esc => {
-                app.show_user_msg_modal = None;
-            }
-            _ => {}
+        } else {
+            app.active_modal = ActiveModal::None;
         }
         return Ok(KeyEventResult::Continue);
     }
-    if app.pending_command_confirmation.is_some() {
-        if app.inputting_command_feedback {
+    if app.active_modal == ActiveModal::CommandConfirmation {
+        if app.cmd_confirmation.inputting_feedback {
             match key.code {
                 KeyCode::Esc => {
-                    app.inputting_command_feedback = false;
+                    app.cmd_confirmation.inputting_feedback = false;
                     app.input.delete_line_by_head();
                     while app.input.cursor() != (0, 0) {
                         app.input.move_cursor(tui_textarea::CursorMove::Head);
@@ -111,7 +119,7 @@ pub(crate) async fn handle_key_event(
                         .set_placeholder_text(" Ask anything... \"How do I use this?\"");
                 }
                 KeyCode::Enter => {
-                    if let Some((_, _, tx_mutex)) = app.pending_command_confirmation.take() {
+                    if let Some((_, _, tx_mutex)) = app.cmd_confirmation.pending.take() {
                         let lines = app.input.lines().to_vec();
                         app.input.delete_line_by_head();
                         while app.input.cursor() != (0, 0) {
@@ -133,7 +141,8 @@ pub(crate) async fn handle_key_event(
                             let _ = tx.send(ConfirmationResponse::Feedback(feedback));
                         }
                     }
-                    app.inputting_command_feedback = false;
+                    app.cmd_confirmation.inputting_feedback = false;
+                    app.active_modal = ActiveModal::None;
                 }
                 _ => {
                     app.input.input(key);
@@ -142,29 +151,31 @@ pub(crate) async fn handle_key_event(
         } else {
             match key.code {
                 KeyCode::Char('y') | KeyCode::Char('Y') => {
-                    if let Some((_, _, tx_mutex)) = app.pending_command_confirmation.take() {
+                    if let Some((_, _, tx_mutex)) = app.cmd_confirmation.pending.take() {
                         let mut tx_opt = tx_mutex.lock().await;
                         if let Some(tx) = tx_opt.take() {
                             let _ = tx.send(ConfirmationResponse::AllowOnce);
                         }
                     }
+                    app.active_modal = ActiveModal::None;
                 }
                 KeyCode::Char('s') | KeyCode::Char('S') => {
                     let mut config =
-                        routecode_sdk::utils::storage::load_session_config(&app.session_id)
+                        routecode_sdk::utils::storage::load_session_config(&app.session.id)
                             .unwrap_or_default();
                     config.allow_all_commands = true;
                     let _ = routecode_sdk::utils::storage::save_session_config(
-                        &app.session_id,
+                        &app.session.id,
                         &config,
                     );
 
-                    if let Some((_, _, tx_mutex)) = app.pending_command_confirmation.take() {
+                    if let Some((_, _, tx_mutex)) = app.cmd_confirmation.pending.take() {
                         let mut tx_opt = tx_mutex.lock().await;
                         if let Some(tx) = tx_opt.take() {
                             let _ = tx.send(ConfirmationResponse::AllowSession);
                         }
                     }
+                    app.active_modal = ActiveModal::None;
                 }
                 KeyCode::Char('w') | KeyCode::Char('W') => {
                     let mut config =
@@ -172,23 +183,25 @@ pub(crate) async fn handle_key_event(
                     config.allow_all_outside_access = true;
                     let _ = routecode_sdk::utils::storage::save_workspace_config(&config);
 
-                    if let Some((_, _, tx_mutex)) = app.pending_command_confirmation.take() {
+                    if let Some((_, _, tx_mutex)) = app.cmd_confirmation.pending.take() {
                         let mut tx_opt = tx_mutex.lock().await;
                         if let Some(tx) = tx_opt.take() {
                             let _ = tx.send(ConfirmationResponse::AllowWorkspace);
                         }
                     }
+                    app.active_modal = ActiveModal::None;
                 }
                 KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Esc => {
-                    if let Some((_, _, tx_mutex)) = app.pending_command_confirmation.take() {
+                    if let Some((_, _, tx_mutex)) = app.cmd_confirmation.pending.take() {
                         let mut tx_opt = tx_mutex.lock().await;
                         if let Some(tx) = tx_opt.take() {
                             let _ = tx.send(ConfirmationResponse::Deny);
                         }
                     }
+                    app.active_modal = ActiveModal::None;
                 }
                 KeyCode::Char('f') | KeyCode::Char('F') => {
-                    app.inputting_command_feedback = true;
+                    app.cmd_confirmation.inputting_feedback = true;
                     app.input
                         .set_placeholder_text(" Tell agent (e.g. 'don't run without backup')...");
                 }
@@ -197,12 +210,12 @@ pub(crate) async fn handle_key_event(
         }
         return Ok(KeyEventResult::Continue);
     }
-    if app.pending_plan_approval.is_some() {
+    if app.active_modal == ActiveModal::PlanApproval {
         use routecode_sdk::agents::types::PlanApprovalResponse;
-        if app.inputting_plan_feedback {
+        if app.plan_approval.inputting_feedback {
             match key.code {
                 KeyCode::Esc => {
-                    app.inputting_plan_feedback = false;
+                    app.plan_approval.inputting_feedback = false;
                     app.input.delete_line_by_head();
                     while app.input.cursor() != (0, 0) {
                         app.input.move_cursor(tui_textarea::CursorMove::Head);
@@ -212,7 +225,7 @@ pub(crate) async fn handle_key_event(
                         .set_placeholder_text(" Ask anything... \"How do I use this?\"");
                 }
                 KeyCode::Enter => {
-                    if let Some((_, _, _, tx_mutex)) = app.pending_plan_approval.take() {
+                    if let Some((_, _, _, tx_mutex)) = app.plan_approval.pending.take() {
                         let lines = app.input.lines().to_vec();
                         app.input.delete_line_by_head();
                         while app.input.cursor() != (0, 0) {
@@ -232,7 +245,8 @@ pub(crate) async fn handle_key_event(
                             let _ = s.send(PlanApprovalResponse::Feedback(feedback));
                         }
                     }
-                    app.inputting_plan_feedback = false;
+                    app.plan_approval.inputting_feedback = false;
+                    app.active_modal = ActiveModal::None;
                 }
                 _ => {
                     app.input.input(key);
@@ -241,52 +255,53 @@ pub(crate) async fn handle_key_event(
         } else {
             match key.code {
                 KeyCode::Char('a') | KeyCode::Char('A') => {
-                    if let Some((_, _, _, tx_mutex)) = app.pending_plan_approval.take() {
+                    if let Some((_, _, _, tx_mutex)) = app.plan_approval.pending.take() {
                         let mut tx_opt = tx_mutex.lock().await;
                         if let Some(s) = tx_opt.take() {
                             let _ = s.send(PlanApprovalResponse::ApproveAndUnlock);
                         }
                     }
+                    app.active_modal = ActiveModal::None;
                 }
                 KeyCode::Char('o') | KeyCode::Char('O') => {
-                    if let Some((_, _, _, tx_mutex)) = app.pending_plan_approval.take() {
+                    if let Some((_, _, _, tx_mutex)) = app.plan_approval.pending.take() {
                         let mut tx_opt = tx_mutex.lock().await;
                         if let Some(s) = tx_opt.take() {
                             let _ = s.send(PlanApprovalResponse::ApproveOnce);
                         }
                     }
+                    app.active_modal = ActiveModal::None;
                 }
                 KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Esc => {
-                    if let Some((_, _, _, tx_mutex)) = app.pending_plan_approval.take() {
+                    if let Some((_, _, _, tx_mutex)) = app.plan_approval.pending.take() {
                         let mut tx_opt = tx_mutex.lock().await;
                         if let Some(s) = tx_opt.take() {
                             let _ = s.send(PlanApprovalResponse::Deny);
                         }
                     }
+                    app.active_modal = ActiveModal::None;
                 }
                 KeyCode::Char('f') | KeyCode::Char('F') => {
-                    app.inputting_plan_feedback = true;
+                    app.plan_approval.inputting_feedback = true;
                     app.input
                         .set_placeholder_text(" Tell agent how to revise the plan...");
                 }
                 KeyCode::Left | KeyCode::Char('h') => {
-                    if app.plan_approval_selected > 0 {
-                        app.plan_approval_selected -= 1;
+                    if app.plan_approval.selected > 0 {
+                        app.plan_approval.selected -= 1;
                     }
                 }
                 KeyCode::Right | KeyCode::Char('l') => {
-                    if app.plan_approval_selected < 3 {
-                        app.plan_approval_selected += 1;
+                    if app.plan_approval.selected < 3 {
+                        app.plan_approval.selected += 1;
                     }
                 }
                 KeyCode::Enter => {
                     // Activate the currently highlighted button
-                    let which = app.plan_approval_selected;
+                    let which = app.plan_approval.selected;
                     match which {
                         2 => {
-                            // Feedback path: re-stash the sender (it
-                            // was NOT taken) and enter feedback mode.
-                            app.inputting_plan_feedback = true;
+                            app.plan_approval.inputting_feedback = true;
                             app.input
                                 .set_placeholder_text(
                                     " Tell agent how to revise the plan...",
@@ -294,7 +309,7 @@ pub(crate) async fn handle_key_event(
                         }
                         _ => {
                             if let Some((_, _, _, tx_mutex)) =
-                                app.pending_plan_approval.take()
+                                app.plan_approval.pending.take()
                             {
                                 let mut tx_opt = tx_mutex.lock().await;
                                 if let Some(s) = tx_opt.take() {
@@ -306,6 +321,7 @@ pub(crate) async fn handle_key_event(
                                     let _ = s.send(resp);
                                 }
                             }
+                            app.active_modal = ActiveModal::None;
                         }
                     }
                 }
@@ -314,75 +330,75 @@ pub(crate) async fn handle_key_event(
         }
         return Ok(KeyEventResult::Continue);
     }
-
-    if app.pending_hook_trust.is_some() {
+    if app.active_modal == ActiveModal::HookTrust {
         use routecode_sdk::agents::types::HookTrustResponse;
         match key.code {
             KeyCode::Char('t') | KeyCode::Char('T') | KeyCode::Enter => {
-                if let Some(state) = app.pending_hook_trust.take() {
+                if let Some(state) = app.hook_trust.pending.take() {
                     let mut tx_opt = state.tx.lock().await;
                     if let Some(s) = tx_opt.take() {
                         let _ = s.send(HookTrustResponse::Trust);
                     }
                 }
+                app.active_modal = ActiveModal::None;
             }
             KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Esc => {
-                if let Some(state) = app.pending_hook_trust.take() {
+                if let Some(state) = app.hook_trust.pending.take() {
                     let mut tx_opt = state.tx.lock().await;
                     if let Some(s) = tx_opt.take() {
                         let _ = s.send(HookTrustResponse::Deny);
                     }
                 }
+                app.active_modal = ActiveModal::None;
             }
             KeyCode::Left | KeyCode::Char('h') => {
-                if app.hook_trust_selected > 0 {
-                    app.hook_trust_selected -= 1;
+                if app.hook_trust.selected > 0 {
+                    app.hook_trust.selected -= 1;
                 }
             }
             KeyCode::Right | KeyCode::Char('l') => {
-                if app.hook_trust_selected < 1 {
-                    app.hook_trust_selected += 1;
+                if app.hook_trust.selected < 1 {
+                    app.hook_trust.selected += 1;
                 }
             }
             _ => {}
         }
         return Ok(KeyEventResult::Continue);
     }
-
-    if app.pending_clear {
+    if app.active_modal == ActiveModal::ClearConfirmation {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-                app.history.clear();
+                app.session.history.clear();
                 app.screen = Screen::Welcome;
-                app.history_scroll = 0;
-                app.pending_clear = false;
+                app.session.history_scroll = 0;
+                app.active_modal = ActiveModal::None;
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                app.pending_clear = false;
+                app.active_modal = ActiveModal::None;
             }
             _ => {}
         }
         return Ok(KeyEventResult::Continue);
     }
-    if app.pending_exit {
+    if app.active_modal == ActiveModal::ExitConfirmation {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
                 app.tasks.abort_all();
-                app.is_generating = false;
-                app.active_tool = None;
-                if !app.history.is_empty() {
+                app.session.is_generating = false;
+                app.session.active_tool = None;
+                if !app.session.history.is_empty() {
                     let session = routecode_sdk::utils::storage::Session {
-                        messages: app.history.clone(),
-                        model: app.current_model.clone(),
+                        messages: app.session.history.clone(),
+                        model: app.provider.current_model.clone(),
                         usage: app.orchestrator.usage.lock().await.clone(),
                         timestamp: chrono::Utc::now().timestamp(),
                     };
-                    let _ = routecode_sdk::utils::storage::save_session(&app.session_id, &session);
+                    let _ = routecode_sdk::utils::storage::save_session(&app.session.id, &session);
                 }
                 return Ok(KeyEventResult::Exit);
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                app.pending_exit = false;
+                app.active_modal = ActiveModal::None;
             }
             _ => {}
         }
@@ -390,28 +406,28 @@ pub(crate) async fn handle_key_event(
     }
     match key.code {
         KeyCode::Char('p') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
-            app.show_menu = true;
-            app.menu_state.select(Some(0));
+            app.active_modal = ActiveModal::CommandMenu;
+            app.menu.list_state.select(Some(0));
             app.update_filtered_commands();
         }
         KeyCode::Char('a') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
-            if app.show_model_menu {
-                app.show_model_menu = false;
+            if app.active_modal == ActiveModal::ModelMenu {
+                app.active_modal = ActiveModal::None;
             }
-            app.show_provider_menu = true;
-            app.menu_state.select(Some(0));
+            app.active_modal = ActiveModal::ProviderMenu;
+            app.menu.list_state.select(Some(0));
         }
         KeyCode::Char('c') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
-            if app.is_generating {
+            if app.session.is_generating {
                 app.tasks.abort_all();
-                app.is_generating = false;
-                app.active_tool = None;
+                app.session.is_generating = false;
+                app.session.active_tool = None;
             }
         }
         KeyCode::Char('l') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
-            app.history.clear();
+            app.session.history.clear();
             app.screen = Screen::Welcome;
-            app.history_scroll = 0;
+            app.session.history_scroll = 0;
         }
         KeyCode::Enter
             if key.modifiers.contains(event::KeyModifiers::SHIFT)
@@ -434,42 +450,41 @@ pub(crate) async fn handle_key_event(
 
             if !should_send {
                 app.input.insert_newline();
-            } else if app.show_menu {
-                if let Some(selected) = app.menu_state.selected() {
-                    if let Some(cmd) = app.filtered_commands.get(selected) {
+            } else if app.active_modal == ActiveModal::CommandMenu {
+                if let Some(selected) = app.menu.list_state.selected() {
+                    if let Some(cmd) = app.menu.filtered_commands.get(selected) {
                         let name = cmd.name.to_string();
-                        app.show_menu = false;
+                        app.active_modal = ActiveModal::None;
                         app.input = TextArea::default();
                         handle_command(app, &name).await;
                     }
                 }
-            } else if app.show_provider_menu {
-                if let Some(selected) = app.menu_state.selected() {
+            } else if app.active_modal == ActiveModal::ProviderMenu {
+                if let Some(selected) = app.menu.list_state.selected() {
                     if let Some(p) = PROVIDERS.get(selected) {
-                        app.pending_provider_id = Some(p.id.to_string());
-                        app.is_inputting_api_key = true;
-                        app.api_key_input = TextArea::default();
-                        app.show_provider_menu = false;
+                        app.api_key.pending_provider_id = Some(p.id.to_string());
+                        app.active_modal = ActiveModal::ApiKeyInput;
+                        app.api_key.input = TextArea::default();
                         if p.id == "cloudflare-workers" || p.id == "cloudflare-gateway" {
-                            app.api_key_input_stage = ApiKeyInputStage::CloudflareAccountId;
+                            app.api_key.stage = ApiKeyInputStage::CloudflareAccountId;
                         } else {
-                            app.api_key_input_stage = ApiKeyInputStage::ApiKey;
+                            app.api_key.stage = ApiKeyInputStage::ApiKey;
                         }
                     }
                 }
-            } else if app.show_settings_menu {
-                if let Some(selected) = app.menu_state.selected() {
+            } else if app.active_modal == ActiveModal::SettingsMenu {
+                if let Some(selected) = app.menu.list_state.selected() {
                     if let Some(SettingsMenuItem::Option { key, val: _, .. }) =
-                        app.settings_items.get(selected)
+                        app.menu.settings_items.get(selected)
                     {
                         let key = key.clone();
                         apply_settings_toggle(app, &key).await;
                     }
                 }
-            } else if app.show_model_menu {
-                if let Some(selected) = app.menu_state.selected() {
+            } else if app.active_modal == ActiveModal::ModelMenu {
+                if let Some(selected) = app.menu.list_state.selected() {
                     if let Some(ModelMenuItem::Model(model_info)) =
-                        app.filtered_models.get(selected)
+                        app.model_search.filtered_models.get(selected)
                     {
                         let model_info = model_info.clone();
                         let provider_id = &model_info.provider_id;
@@ -498,7 +513,7 @@ pub(crate) async fn handle_key_event(
                             if let Err(e) = routecode_sdk::utils::storage::save_config(&config) {
                                 log::error!("Failed to save config: {}", e);
                             }
-                            if app.provider_name.to_lowercase() != *provider_id {
+                            if app.provider.provider_name.to_lowercase() != *provider_id {
                                 let vertex_project = config.vertex_project.clone();
                                 let vertex_location = config.vertex_location.clone();
                                 drop(config);
@@ -512,40 +527,40 @@ pub(crate) async fn handle_key_event(
                                 } else {
                                     routecode_sdk::agents::resolve_provider(provider_id, key)
                                 };
-                                app.provider_name = provider.name().to_string();
-                                app.current_provider_id = provider_id.clone();
+                                app.provider.provider_name = provider.name().to_string();
+                                app.provider.current_provider_id = provider_id.clone();
                                 app.orchestrator.change_provider(provider).await;
                             } else {
                                 drop(config);
                             }
-                            app.current_model = model_name.clone();
-                            app.history.push(Message::system(format!(
+                            app.provider.current_model = model_name.clone();
+                            app.session.history.push(Message::system(format!(
                                 "Switched to {} on {}",
-                                model_name, app.provider_name
+                                model_name, app.provider.provider_name
                             )));
-                            app.show_model_menu = false;
+                            app.active_modal = ActiveModal::None;
                         } else {
-                            app.history.push(Message::system(format!(
+                            app.session.history.push(Message::system(format!(
                                 "Error: No API key for {}",
                                 provider_id
                             )));
                         }
                     }
                 }
-            } else if app.is_inputting_api_key {
-                let input_value = app.api_key_input.lines().join("\n").trim().to_string();
+            } else if app.active_modal == ActiveModal::ApiKeyInput {
+                let input_value = app.api_key.input.lines().join("\n").trim().to_string();
                 if !input_value.is_empty() {
-                    match app.api_key_input_stage {
+                    match app.api_key.stage {
                         ApiKeyInputStage::ApiKey => {
-                            if let Some(provider_id) = app.pending_provider_id.clone() {
+                            if let Some(provider_id) = app.api_key.pending_provider_id.clone() {
                                 if provider_id == "vertex" {
-                                    app.pending_account_id = Some(input_value);
-                                    app.api_key_input_stage = ApiKeyInputStage::VertexProject;
-                                    app.api_key_input = TextArea::default();
-                                    app.api_key_input
+                                    app.api_key.pending_account_id = Some(input_value);
+                                    app.api_key.stage = ApiKeyInputStage::VertexProject;
+                                    app.api_key.input = TextArea::default();
+                                    app.api_key.input
                                         .set_placeholder_text(" Google Cloud Project ID...");
                                 } else {
-                                    app.pending_provider_id.take();
+                                    app.api_key.pending_provider_id.take();
                                     let mut config = app.orchestrator.config.lock().await;
                                     config.api_keys.insert(provider_id, input_value);
                                     if let Err(e) =
@@ -553,27 +568,27 @@ pub(crate) async fn handle_key_event(
                                     {
                                         log::error!("Failed to save config: {}", e);
                                     }
-                                    app.history.push(Message::system("API Key saved"));
-                                    app.is_inputting_api_key = false;
-                                    app.api_key_input_stage = ApiKeyInputStage::None;
+                                    app.session.history.push(Message::system("API Key saved"));
+                                    app.active_modal = ActiveModal::None;
+                                    app.api_key.stage = ApiKeyInputStage::None;
                                 }
                             } else {
-                                app.is_inputting_api_key = false;
-                                app.api_key_input_stage = ApiKeyInputStage::None;
+                                app.active_modal = ActiveModal::None;
+                                app.api_key.stage = ApiKeyInputStage::None;
                             }
                         }
                         ApiKeyInputStage::VertexProject => {
-                            app.pending_gateway_id = Some(input_value);
-                            app.api_key_input_stage = ApiKeyInputStage::VertexLocation;
-                            app.api_key_input = TextArea::default();
-                            app.api_key_input
+                            app.api_key.pending_gateway_id = Some(input_value);
+                            app.api_key.stage = ApiKeyInputStage::VertexLocation;
+                            app.api_key.input = TextArea::default();
+                            app.api_key.input
                                 .set_placeholder_text(" Location (e.g. us-central1)...");
                         }
                         ApiKeyInputStage::VertexLocation => {
-                            if let Some(provider_id) = app.pending_provider_id.take() {
+                            if let Some(provider_id) = app.api_key.pending_provider_id.take() {
                                 let location = input_value;
-                                let api_key = app.pending_account_id.take().unwrap_or_default();
-                                let project = app.pending_gateway_id.take().unwrap_or_default();
+                                let api_key = app.api_key.pending_account_id.take().unwrap_or_default();
+                                let project = app.api_key.pending_gateway_id.take().unwrap_or_default();
                                 let mut config = app.orchestrator.config.lock().await;
                                 config.vertex_project = project;
                                 config.vertex_location = location;
@@ -582,32 +597,32 @@ pub(crate) async fn handle_key_event(
                                 {
                                     log::error!("Failed to save config: {}", e);
                                 }
-                                app.history
+                                app.session.history
                                     .push(Message::system("Vertex AI credentials saved"));
                             }
-                            app.is_inputting_api_key = false;
-                            app.api_key_input_stage = ApiKeyInputStage::None;
+                            app.active_modal = ActiveModal::None;
+                            app.api_key.stage = ApiKeyInputStage::None;
                         }
                         ApiKeyInputStage::CloudflareAccountId => {
-                            app.pending_account_id = Some(input_value);
-                            app.api_key_input = TextArea::default();
-                            if app.pending_provider_id.as_deref() == Some("cloudflare-gateway") {
-                                app.api_key_input_stage = ApiKeyInputStage::CloudflareGatewayId;
+                            app.api_key.pending_account_id = Some(input_value);
+                            app.api_key.input = TextArea::default();
+                            if app.api_key.pending_provider_id.as_deref() == Some("cloudflare-gateway") {
+                                app.api_key.stage = ApiKeyInputStage::CloudflareGatewayId;
                             } else {
-                                app.api_key_input_stage = ApiKeyInputStage::CloudflareApiKey;
+                                app.api_key.stage = ApiKeyInputStage::CloudflareApiKey;
                             }
                         }
                         ApiKeyInputStage::CloudflareGatewayId => {
-                            app.pending_gateway_id = Some(input_value);
-                            app.api_key_input = TextArea::default();
-                            app.api_key_input_stage = ApiKeyInputStage::CloudflareApiKey;
+                            app.api_key.pending_gateway_id = Some(input_value);
+                            app.api_key.input = TextArea::default();
+                            app.api_key.stage = ApiKeyInputStage::CloudflareApiKey;
                         }
                         ApiKeyInputStage::CloudflareApiKey => {
-                            if let Some(provider_id) = app.pending_provider_id.take() {
-                                let account_id = app.pending_account_id.take().unwrap_or_default();
+                            if let Some(provider_id) = app.api_key.pending_provider_id.take() {
+                                let account_id = app.api_key.pending_account_id.take().unwrap_or_default();
                                 let final_key = if provider_id == "cloudflare-gateway" {
                                     let gateway_id =
-                                        app.pending_gateway_id.take().unwrap_or_default();
+                                        app.api_key.pending_gateway_id.take().unwrap_or_default();
                                     format!("{}:{}:{}", account_id, gateway_id, input_value)
                                 } else {
                                     format!("{}:{}", account_id, input_value)
@@ -618,39 +633,39 @@ pub(crate) async fn handle_key_event(
                                 {
                                     log::error!("Failed to save config: {}", e);
                                 }
-                                app.history.push(Message::system(format!(
+                                app.session.history.push(Message::system(format!(
                                     "Credentials saved for {}",
                                     provider_id
                                 )));
                             }
-                            app.is_inputting_api_key = false;
-                            app.api_key_input_stage = ApiKeyInputStage::None;
+                            app.active_modal = ActiveModal::None;
+                            app.api_key.stage = ApiKeyInputStage::None;
                         }
                         _ => {
-                            app.is_inputting_api_key = false;
+                            app.active_modal = ActiveModal::None;
                         }
                     }
                 } else {
-                    app.is_inputting_api_key = false;
-                    app.api_key_input_stage = ApiKeyInputStage::None;
-                    app.pending_provider_id = None;
-                    app.pending_account_id = None;
-                    app.pending_gateway_id = None;
+                    app.active_modal = ActiveModal::None;
+                    app.api_key.stage = ApiKeyInputStage::None;
+                    app.api_key.pending_provider_id = None;
+                    app.api_key.pending_account_id = None;
+                    app.api_key.pending_gateway_id = None;
                 }
             } else {
                 let input_text = app.input.lines().join("\n");
                 if !input_text.trim().is_empty() {
                     if input_text.starts_with('/') {
                         handle_command(app, &input_text).await;
-                    } else if app.is_generating {
+                    } else if app.session.is_generating {
                         // Ignore normal text submissions while generating to avoid parallel tasks
-                    } else if !app.startup_ready {
-                        app.startup_input_buffer.push(input_text.clone());
-                        app.history
+                    } else if !app.session.startup_ready {
+                        app.session.startup_input_buffer.push(input_text.clone());
+                        app.session.history
                             .push(Message::system(format!("Queued: {}", input_text)));
                         app.input = TextArea::default();
                     } else {
-                        let provider_id = &app.current_provider_id;
+                        let provider_id = &app.provider.current_provider_id;
                         let env_key =
                             format!("{}_API_KEY", provider_id.to_uppercase().replace("-", "_"));
                         let mut api_key = std::env::var(&env_key).ok();
@@ -668,31 +683,31 @@ pub(crate) async fn handle_key_event(
                         let has_valid_key = api_key.is_some_and(|k| !k.trim().is_empty());
 
                         if !has_valid_key && super::types::provider_requires_api_key(provider_id) {
-                            app.history.push(Message::system(format!(
+                            app.session.history.push(Message::system(format!(
                                 "No API key found for {}. Please enter it to continue.",
                                 provider_id
                             )));
-                            app.show_provider_menu = true;
+                            app.active_modal = ActiveModal::ProviderMenu;
                             if let Some(pos) = PROVIDERS.iter().position(|p| p.id == *provider_id) {
-                                app.menu_state.select(Some(pos));
+                                app.menu.list_state.select(Some(pos));
                             } else {
-                                app.menu_state.select(Some(0));
+                                app.menu.list_state.select(Some(0));
                             }
                             app.input = TextArea::default();
                             return Ok(KeyEventResult::Continue);
                         }
 
-                        app.history.push(Message::user(input_text.clone()));
-                        app.prompt_history.push(input_text.clone());
-                        app.prompt_history.truncate(100);
-                        app.prompt_history_index = None;
+                        app.session.history.push(Message::user(input_text.clone()));
+                        app.session.prompt_history.push(input_text.clone());
+                        app.session.prompt_history.truncate(100);
+                        app.session.prompt_history_index = None;
                         app.input = TextArea::default();
                         app.screen = Screen::Session;
-                        app.is_generating = true;
-                        app.auto_scroll = true;
+                        app.session.is_generating = true;
+                        app.session.auto_scroll = true;
                         let orchestrator = app.orchestrator.clone();
-                        let mut history = app.history.clone();
-                        let model = app.current_model.clone();
+                        let mut history = app.session.history.clone();
+                        let model = app.provider.current_model.clone();
                         let tx = app.tx.clone();
                         app.tasks.spawn(async move {
                             if let Err(e) =
@@ -706,33 +721,31 @@ pub(crate) async fn handle_key_event(
             }
         }
         KeyCode::Esc => {
-            if app.show_menu {
-                app.show_menu = false;
-            } else if app.show_provider_menu {
-                app.show_provider_menu = false;
-            } else if app.show_model_menu {
-                app.show_model_menu = false;
-            } else if app.show_settings_menu {
-                app.show_settings_menu = false;
-            } else if app.is_inputting_api_key {
-                app.is_inputting_api_key = false;
-                app.api_key_input_stage = ApiKeyInputStage::None;
-                app.pending_provider_id = None;
-                app.pending_account_id = None;
-                app.pending_gateway_id = None;
-            } else if app.is_generating {
+            if app.active_modal == ActiveModal::CommandMenu
+                || app.active_modal == ActiveModal::ProviderMenu
+                || app.active_modal == ActiveModal::ModelMenu
+                || app.active_modal == ActiveModal::SettingsMenu
+            {
+                app.active_modal = ActiveModal::None;
+            } else if app.active_modal == ActiveModal::ApiKeyInput {
+                app.active_modal = ActiveModal::None;
+                app.api_key.stage = ApiKeyInputStage::None;
+                app.api_key.pending_provider_id = None;
+                app.api_key.pending_account_id = None;
+                app.api_key.pending_gateway_id = None;
+            } else if app.session.is_generating {
                 app.tasks.abort_all();
-                app.is_generating = false;
-                app.active_tool = None;
+                app.session.is_generating = false;
+                app.session.active_tool = None;
             } else {
-                app.pending_exit = true;
+                app.active_modal = ActiveModal::ExitConfirmation;
             }
         }
         KeyCode::Char('t') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
-            app.auto_scroll = !app.auto_scroll;
-            app.history.push(Message::system(format!(
+            app.session.auto_scroll = !app.session.auto_scroll;
+            app.session.history.push(Message::system(format!(
                 "Auto-scroll {}",
-                if app.auto_scroll {
+                if app.session.auto_scroll {
                     "enabled"
                 } else {
                     "disabled"
@@ -740,20 +753,20 @@ pub(crate) async fn handle_key_event(
             )));
         }
         KeyCode::Char('o') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
-            app.collapse_thinking = !app.collapse_thinking;
+            app.session.collapse_thinking = !app.session.collapse_thinking;
         }
         KeyCode::End => {
-            app.auto_scroll = true;
-            app.history_scroll = app.max_scroll;
+            app.session.auto_scroll = true;
+            app.session.history_scroll = app.session.max_scroll;
         }
         KeyCode::Up if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
             let (row, _) = app.input.cursor();
             if row == 0
                 && app.input.lines().len() == 1
                 && app.input.lines()[0].is_empty()
-                && !app.prompt_history.is_empty()
+                && !app.session.prompt_history.is_empty()
             {
-                let idx = match app.prompt_history_index {
+                let idx = match app.session.prompt_history_index {
                     Some(i) => {
                         if i == 0 {
                             0
@@ -761,10 +774,10 @@ pub(crate) async fn handle_key_event(
                             i - 1
                         }
                     }
-                    None => app.prompt_history.len() - 1,
+                    None => app.session.prompt_history.len() - 1,
                 };
-                app.prompt_history_index = Some(idx);
-                let prev = app.prompt_history[idx].clone();
+                app.session.prompt_history_index = Some(idx);
+                let prev = app.session.prompt_history[idx].clone();
                 app.input = TextArea::from(prev.lines().map(|s| s.to_string()));
                 app.input.move_cursor(tui_textarea::CursorMove::End);
             }
@@ -772,45 +785,43 @@ pub(crate) async fn handle_key_event(
         KeyCode::Down if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
             let (row, _) = app.input.cursor();
             let lines_len = app.input.lines().len();
-            if row >= lines_len - 1 && app.prompt_history_index.is_some() {
-                let idx = app.prompt_history_index.unwrap();
-                if idx >= app.prompt_history.len() - 1 {
-                    app.prompt_history_index = None;
+            if row >= lines_len - 1 && app.session.prompt_history_index.is_some() {
+                let idx = app.session.prompt_history_index.unwrap();
+                if idx >= app.session.prompt_history.len() - 1 {
+                    app.session.prompt_history_index = None;
                     app.input = TextArea::default();
                 } else {
                     let new_idx = idx + 1;
-                    app.prompt_history_index = Some(new_idx);
-                    let next = app.prompt_history[new_idx].clone();
+                    app.session.prompt_history_index = Some(new_idx);
+                    let next = app.session.prompt_history[new_idx].clone();
                     app.input = TextArea::from(next.lines().map(|s| s.to_string()));
                     app.input.move_cursor(tui_textarea::CursorMove::End);
                 }
             }
         }
         KeyCode::Up => {
-            if app.show_menu
-                || app.show_provider_menu
-                || app.show_model_menu
-                || app.show_settings_menu
+            if app.active_modal == ActiveModal::CommandMenu
+                || app.active_modal == ActiveModal::ProviderMenu
+                || app.active_modal == ActiveModal::ModelMenu
+                || app.active_modal == ActiveModal::SettingsMenu
             {
-                let items_len = if app.show_menu {
-                    app.filtered_commands.len()
-                } else if app.show_provider_menu {
-                    PROVIDERS.len()
-                } else if app.show_settings_menu {
-                    app.settings_items.len()
-                } else {
-                    app.filtered_models.len()
+                let items_len = match app.active_modal {
+                    ActiveModal::CommandMenu => app.menu.filtered_commands.len(),
+                    ActiveModal::ProviderMenu => PROVIDERS.len(),
+                    ActiveModal::SettingsMenu => app.menu.settings_items.len(),
+                    ActiveModal::ModelMenu => app.model_search.filtered_models.len(),
+                    _ => 0,
                 };
                 if items_len > 0 {
-                    let selected = app.menu_state.selected().unwrap_or(0);
+                    let selected = app.menu.list_state.selected().unwrap_or(0);
                     let mut new_selected = if selected == 0 {
                         items_len - 1
                     } else {
                         selected - 1
                     };
-                    if app.show_model_menu {
+                    if app.active_modal == ActiveModal::ModelMenu {
                         while let Some(ModelMenuItem::Header(_)) =
-                            app.filtered_models.get(new_selected)
+                            app.model_search.filtered_models.get(new_selected)
                         {
                             new_selected = if new_selected == 0 {
                                 items_len - 1
@@ -821,9 +832,9 @@ pub(crate) async fn handle_key_event(
                                 break;
                             }
                         }
-                    } else if app.show_settings_menu {
+                    } else if app.active_modal == ActiveModal::SettingsMenu {
                         while let Some(SettingsMenuItem::Header(_)) =
-                            app.settings_items.get(new_selected)
+                            app.menu.settings_items.get(new_selected)
                         {
                             new_selected = if new_selected == 0 {
                                 items_len - 1
@@ -835,45 +846,43 @@ pub(crate) async fn handle_key_event(
                             }
                         }
                     }
-                    app.menu_state.select(Some(new_selected));
+                    app.menu.list_state.select(Some(new_selected));
                 }
             } else {
                 let (cursor_row, _) = app.input.cursor();
                 if (app.input.lines().len() == 1 && app.input.lines()[0].is_empty())
-                    || (cursor_row == 0 && (app.history_scroll > 0 || app.is_generating || key.modifiers.contains(event::KeyModifiers::SHIFT)))
+                    || (cursor_row == 0 && (app.session.history_scroll > 0 || app.session.is_generating || key.modifiers.contains(event::KeyModifiers::SHIFT)))
                 {
-                    app.history_scroll = app.history_scroll.saturating_sub(15);
-                    app.auto_scroll = false;
+                    app.session.history_scroll = app.session.history_scroll.saturating_sub(15);
+                    app.session.auto_scroll = false;
                 } else {
                     app.input.input(Event::Key(key));
                 }
             }
         }
         KeyCode::Down => {
-            if app.show_menu
-                || app.show_provider_menu
-                || app.show_model_menu
-                || app.show_settings_menu
+            if app.active_modal == ActiveModal::CommandMenu
+                || app.active_modal == ActiveModal::ProviderMenu
+                || app.active_modal == ActiveModal::ModelMenu
+                || app.active_modal == ActiveModal::SettingsMenu
             {
-                let items_len = if app.show_menu {
-                    app.filtered_commands.len()
-                } else if app.show_provider_menu {
-                    PROVIDERS.len()
-                } else if app.show_settings_menu {
-                    app.settings_items.len()
-                } else {
-                    app.filtered_models.len()
+                let items_len = match app.active_modal {
+                    ActiveModal::CommandMenu => app.menu.filtered_commands.len(),
+                    ActiveModal::ProviderMenu => PROVIDERS.len(),
+                    ActiveModal::SettingsMenu => app.menu.settings_items.len(),
+                    ActiveModal::ModelMenu => app.model_search.filtered_models.len(),
+                    _ => 0,
                 };
                 if items_len > 0 {
-                    let selected = app.menu_state.selected().unwrap_or(0);
+                    let selected = app.menu.list_state.selected().unwrap_or(0);
                     let mut new_selected = if selected >= items_len - 1 {
                         0
                     } else {
                         selected + 1
                     };
-                    if app.show_model_menu {
+                    if app.active_modal == ActiveModal::ModelMenu {
                         while let Some(ModelMenuItem::Header(_)) =
-                            app.filtered_models.get(new_selected)
+                            app.model_search.filtered_models.get(new_selected)
                         {
                             new_selected = if new_selected >= items_len - 1 {
                                 0
@@ -884,9 +893,9 @@ pub(crate) async fn handle_key_event(
                                 break;
                             }
                         }
-                    } else if app.show_settings_menu {
+                    } else if app.active_modal == ActiveModal::SettingsMenu {
                         while let Some(SettingsMenuItem::Header(_)) =
-                            app.settings_items.get(new_selected)
+                            app.menu.settings_items.get(new_selected)
                         {
                             new_selected = if new_selected >= items_len - 1 {
                                 0
@@ -898,37 +907,37 @@ pub(crate) async fn handle_key_event(
                             }
                         }
                     }
-                    app.menu_state.select(Some(new_selected));
+                    app.menu.list_state.select(Some(new_selected));
                 }
             } else {
                 let (cursor_row, _) = app.input.cursor();
                 let lines_len = app.input.lines().len();
                 if (lines_len == 1 && app.input.lines()[0].is_empty())
-                    || (cursor_row == lines_len - 1 && (app.history_scroll < app.max_scroll || app.is_generating || key.modifiers.contains(event::KeyModifiers::SHIFT)))
+                    || (cursor_row == lines_len - 1 && (app.session.history_scroll < app.session.max_scroll || app.session.is_generating || key.modifiers.contains(event::KeyModifiers::SHIFT)))
                 {
-                    app.history_scroll = app.history_scroll.saturating_add(15);
-                    if app.history_scroll >= app.max_scroll {
-                        app.auto_scroll = true;
+                    app.session.history_scroll = app.session.history_scroll.saturating_add(15);
+                    if app.session.history_scroll >= app.session.max_scroll {
+                        app.session.auto_scroll = true;
                     }
                 } else {
                     app.input.input(Event::Key(key));
                 }
             }
         }
-        KeyCode::Right if app.show_model_menu => {
-            let len = app.filtered_models.len();
+        KeyCode::Right if app.active_modal == ActiveModal::ModelMenu => {
+            let len = app.model_search.filtered_models.len();
             if len > 0 {
-                let current = app.menu_state.selected().unwrap_or(0);
+                let current = app.menu.list_state.selected().unwrap_or(0);
                 let mut next_header_idx = None;
                 for i in (current + 1)..len {
-                    if let Some(ModelMenuItem::Header(_)) = app.filtered_models.get(i) {
+                    if let Some(ModelMenuItem::Header(_)) = app.model_search.filtered_models.get(i) {
                         next_header_idx = Some(i);
                         break;
                     }
                 }
                 if next_header_idx.is_none() {
                     for i in 0..current {
-                        if let Some(ModelMenuItem::Header(_)) = app.filtered_models.get(i) {
+                        if let Some(ModelMenuItem::Header(_)) = app.model_search.filtered_models.get(i) {
                             next_header_idx = Some(i);
                             break;
                         }
@@ -936,22 +945,22 @@ pub(crate) async fn handle_key_event(
                 }
                 if let Some(h_idx) = next_header_idx {
                     let mut target = (h_idx + 1) % len;
-                    while let Some(ModelMenuItem::Header(_)) = app.filtered_models.get(target) {
+                    while let Some(ModelMenuItem::Header(_)) = app.model_search.filtered_models.get(target) {
                         target = (target + 1) % len;
                         if target == h_idx {
                             break;
                         }
                     }
-                    app.menu_state.select(Some(target));
+                    app.menu.list_state.select(Some(target));
                 }
             }
         }
-        KeyCode::Left if app.show_model_menu => {
-            let len = app.filtered_models.len();
+        KeyCode::Left if app.active_modal == ActiveModal::ModelMenu => {
+            let len = app.model_search.filtered_models.len();
             if len > 0 {
-                let current = app.menu_state.selected().unwrap_or(0);
+                let current = app.menu.list_state.selected().unwrap_or(0);
                 let mut headers = Vec::new();
-                for (i, item) in app.filtered_models.iter().enumerate() {
+                for (i, item) in app.model_search.filtered_models.iter().enumerate() {
                     if let ModelMenuItem::Header(_) = item {
                         headers.push(i);
                     }
@@ -974,21 +983,21 @@ pub(crate) async fn handle_key_event(
                         None => *headers.last().unwrap(),
                     };
                     let mut target = (target_header_idx + 1) % len;
-                    while let Some(ModelMenuItem::Header(_)) = app.filtered_models.get(target) {
+                    while let Some(ModelMenuItem::Header(_)) = app.model_search.filtered_models.get(target) {
                         target = (target + 1) % len;
                         if target == target_header_idx {
                             break;
                         }
                     }
-                    app.menu_state.select(Some(target));
+                    app.menu.list_state.select(Some(target));
                 }
             }
         }
         KeyCode::Char('f')
-            if key.modifiers.contains(event::KeyModifiers::CONTROL) && app.show_model_menu =>
+            if key.modifiers.contains(event::KeyModifiers::CONTROL) && app.active_modal == ActiveModal::ModelMenu =>
         {
-            if let Some(selected) = app.menu_state.selected() {
-                if let Some(ModelMenuItem::Model(model_info)) = app.filtered_models.get(selected) {
+            if let Some(selected) = app.menu.list_state.selected() {
+                if let Some(ModelMenuItem::Model(model_info)) = app.model_search.filtered_models.get(selected) {
                     let model_info = model_info.clone();
                     let mut config = app.orchestrator.config.lock().await;
                     if config.favorites.iter().any(|m| {
@@ -997,13 +1006,13 @@ pub(crate) async fn handle_key_event(
                         config.favorites.retain(|m| {
                             m.name != model_info.name || m.provider_id != model_info.provider_id
                         });
-                        app.history.push(Message::system(format!(
+                        app.session.history.push(Message::system(format!(
                             "Removed {} from favorites",
                             model_info.name
                         )));
                     } else {
                         config.favorites.push(model_info.clone());
-                        app.history.push(Message::system(format!(
+                        app.session.history.push(Message::system(format!(
                             "Added {} to favorites",
                             model_info.name
                         )));
@@ -1015,8 +1024,8 @@ pub(crate) async fn handle_key_event(
             }
         }
         KeyCode::BackTab => {
-            app.approval_mode = app.approval_mode.next();
-            let info = match app.approval_mode {
+            app.session.approval_mode = app.session.approval_mode.next();
+            let info = match app.session.approval_mode {
                 ApprovalMode::YOLO => {
                     app.orchestrator.exit_plan_mode(false);
                     "YOLO -- commands will auto-approve"
@@ -1044,16 +1053,16 @@ pub(crate) async fn handle_key_event(
                     "Normal mode -- confirm each tool call"
                 }
             };
-            app.history.push(Message::system(format!("Mode: {}", info)));
+            app.session.history.push(Message::system(format!("Mode: {}", info)));
         }
         _ => {
             let event = Event::Key(key);
-            if app.is_inputting_api_key {
-                app.api_key_input.input(event);
-            } else if app.show_model_menu {
-                if app.model_search_input.input(event) {
+            if app.active_modal == ActiveModal::ApiKeyInput {
+                app.api_key.input.input(event);
+            } else if app.active_modal == ActiveModal::ModelMenu {
+                if app.model_search.search_input.input(event) {
                     let search = app
-                        .model_search_input
+                        .model_search.search_input
                         .lines()
                         .first()
                         .map(|l| l.trim().to_lowercase())
@@ -1074,185 +1083,197 @@ pub(crate) async fn handle_mouse_event<B: ratatui::backend::Backend>(
     mouse: event::MouseEvent,
     terminal: &mut Terminal<B>,
 ) -> io::Result<()> {
-    app.mouse_events_count += 1;
+    app.mouse.events_count += 1;
     // Always store current mouse position for render-time hover detection
-    app.mouse_row = Some(mouse.row);
-    app.mouse_col = Some(mouse.column);
+    app.mouse.row = Some(mouse.row);
+    app.mouse.col = Some(mouse.column);
     match mouse.kind {
         MouseEventKind::Moved => {
-            app.mouse_moved = true;
+            app.mouse.moved = true;
         }
         MouseEventKind::ScrollUp => {
-            if app.show_menu
-                || app.show_provider_menu
-                || app.show_model_menu
-                || app.show_settings_menu
+            if app.active_modal == ActiveModal::CommandMenu
+                || app.active_modal == ActiveModal::ProviderMenu
+                || app.active_modal == ActiveModal::ModelMenu
+                || app.active_modal == ActiveModal::SettingsMenu
             {
-                let mut current = app.menu_state.selected().unwrap_or(0);
+                let mut current = app.menu.list_state.selected().unwrap_or(0);
                 current = current.saturating_sub(3);
-                if app.show_model_menu {
+                if app.active_modal == ActiveModal::ModelMenu {
                     while current > 0
                         && matches!(
-                            app.filtered_models.get(current),
+                            app.model_search.filtered_models.get(current),
                             Some(ModelMenuItem::Header(_))
                         )
                     {
                         current -= 1;
                     }
-                } else if app.show_settings_menu {
+                } else if app.active_modal == ActiveModal::SettingsMenu {
                     while current > 0
                         && matches!(
-                            app.settings_items.get(current),
+                            app.menu.settings_items.get(current),
                             Some(SettingsMenuItem::Header(_))
                         )
                     {
                         current -= 1;
                     }
                 }
-                app.menu_state.select(Some(current));
+                app.menu.list_state.select(Some(current));
             } else {
-                app.history_scroll = app.history_scroll.saturating_sub(15);
-                app.auto_scroll = false;
+                app.session.history_scroll = app.session.history_scroll.saturating_sub(15);
+                app.session.auto_scroll = false;
             }
         }
         MouseEventKind::ScrollDown => {
-            if app.show_menu
-                || app.show_provider_menu
-                || app.show_model_menu
-                || app.show_settings_menu
+            if app.active_modal == ActiveModal::CommandMenu
+                || app.active_modal == ActiveModal::ProviderMenu
+                || app.active_modal == ActiveModal::ModelMenu
+                || app.active_modal == ActiveModal::SettingsMenu
             {
-                let current = app.menu_state.selected().unwrap_or(0);
-                let max = if app.show_menu {
-                    app.filtered_commands.len()
-                } else if app.show_provider_menu {
-                    PROVIDERS.len()
-                } else if app.show_settings_menu {
-                    app.settings_items.len()
-                } else {
-                    app.filtered_models.len()
+                let current = app.menu.list_state.selected().unwrap_or(0);
+                let max = match app.active_modal {
+                    ActiveModal::CommandMenu => app.menu.filtered_commands.len(),
+                    ActiveModal::ProviderMenu => PROVIDERS.len(),
+                    ActiveModal::SettingsMenu => app.menu.settings_items.len(),
+                    ActiveModal::ModelMenu => app.model_search.filtered_models.len(),
+                    _ => 0,
                 };
                 let mut next = current.saturating_add(3).min(max.saturating_sub(1));
-                if app.show_model_menu {
+                if app.active_modal == ActiveModal::ModelMenu {
                     while next < max - 1
                         && matches!(
-                            app.filtered_models.get(next),
+                            app.model_search.filtered_models.get(next),
                             Some(ModelMenuItem::Header(_))
                         )
                     {
                         next += 1;
                     }
-                } else if app.show_settings_menu {
+                } else if app.active_modal == ActiveModal::SettingsMenu {
                     while next < max - 1
                         && matches!(
-                            app.settings_items.get(next),
+                            app.menu.settings_items.get(next),
                             Some(SettingsMenuItem::Header(_))
                         )
                     {
                         next += 1;
                     }
                 }
-                app.menu_state.select(Some(next));
+                app.menu.list_state.select(Some(next));
             } else {
-                app.history_scroll = app.history_scroll.saturating_add(15);
-                if app.history_scroll >= app.max_scroll {
-                    app.auto_scroll = true;
+                app.session.history_scroll = app.session.history_scroll.saturating_add(15);
+                if app.session.history_scroll >= app.session.max_scroll {
+                    app.session.auto_scroll = true;
                 }
             }
         }
         MouseEventKind::Down(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left) => {
-            if let Some(msg_idx) = app.show_user_msg_modal {
-                if let Ok(size) = terminal.size() {
-                    let width = (size.width as f32 * 0.40) as u16;
-                    let height = 8;
-                    let modal_x = (size.width.saturating_sub(width)) / 2;
-                    let modal_y = (size.height.saturating_sub(height)) / 2;
+            if app.active_modal == ActiveModal::UserMessage {
+                if let Some(msg_idx) = app.user_msg.msg_idx {
+                    if let Ok(size) = terminal.size() {
+                        let width = (size.width as f32 * 0.40) as u16;
+                        let height = 8;
+                        let modal_x = (size.width.saturating_sub(width)) / 2;
+                        let modal_y = (size.height.saturating_sub(height)) / 2;
 
-                    let is_outside = mouse.column < modal_x
-                        || mouse.column >= modal_x + width
-                        || mouse.row < modal_y
-                        || mouse.row >= modal_y + height;
+                        let is_outside = mouse.column < modal_x
+                            || mouse.column >= modal_x + width
+                            || mouse.row < modal_y
+                            || mouse.row >= modal_y + height;
 
-                    if is_outside {
-                        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
-                            app.show_user_msg_modal = None;
-                        }
-                    } else if matches!(mouse.kind, MouseEventKind::Up(MouseButton::Left)) {
-                        let click_row = mouse.row;
-                        if click_row == modal_y + 2 {
-                            app.user_msg_modal_selected = 0;
-                            let text = app.history[msg_idx]
-                                .content
-                                .as_ref()
-                                .map(|s| s.to_string())
-                                .unwrap_or_default();
-                            let text_clone = text.clone();
-                            tokio::task::spawn_blocking(move || {
-                                if let Err(e) = copy_to_clipboard(&text_clone) {
-                                    log::error!("Clipboard copy failed: {}", e);
-                                }
-                            });
-                            app.history
-                                .push(Message::system("Message copied to clipboard!".to_string()));
-                            app.show_user_msg_modal = None;
-                        } else if click_row == modal_y + 3 {
-                            app.user_msg_modal_selected = 1;
-                            let text = app.history[msg_idx]
-                                .content
-                                .as_ref()
-                                .map(|s| s.to_string())
-                                .unwrap_or_default();
-                            app.history.truncate(msg_idx);
-                            app.input =
-                                tui_textarea::TextArea::from(text.lines().map(|s| s.to_string()));
-                            app.input.move_cursor(tui_textarea::CursorMove::End);
-                            app.show_user_msg_modal = None;
-                        }
-                    }
-                }
-            } else if app.pending_update.is_some() {
-                if let Ok(size) = terminal.size() {
-                    let width = (size.width as f32 * 0.50) as u16;
-                    let height = 8;
-                    let modal_x = (size.width.saturating_sub(width)) / 2;
-                    let modal_y = (size.height.saturating_sub(height)) / 2;
-
-                    let is_outside = mouse.column < modal_x
-                        || mouse.column >= modal_x + width
-                        || mouse.row < modal_y
-                        || mouse.row >= modal_y + height;
-
-                    if is_outside {
-                        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
-                            app.pending_update = None;
-                        }
-                    } else if matches!(mouse.kind, MouseEventKind::Up(MouseButton::Left))
-                        && mouse.row == modal_y + height.saturating_sub(2)
-                    {
-                        if mouse.column >= modal_x + width.saturating_sub(25)
-                            && mouse.column < modal_x + width.saturating_sub(15)
-                        {
-                            app.pending_update = None;
-                        } else if mouse.column >= modal_x + width.saturating_sub(15)
-                            && mouse.column < modal_x + width
-                        {
-                            app.pending_update_install = true;
+                        if is_outside {
+                            if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+                                app.user_msg.msg_idx = None;
+                                app.active_modal = ActiveModal::None;
+                            }
+                        } else if matches!(mouse.kind, MouseEventKind::Up(MouseButton::Left)) {
+                            let click_row = mouse.row;
+                            if click_row == modal_y + 2 {
+                                app.user_msg.selected = 0;
+                                let text = app.session.history[msg_idx]
+                                    .content
+                                    .as_ref()
+                                    .map(|s| s.to_string())
+                                    .unwrap_or_default();
+                                let text_clone = text.clone();
+                                tokio::task::spawn_blocking(move || {
+                                    if let Err(e) = copy_to_clipboard(&text_clone) {
+                                        log::error!("Clipboard copy failed: {}", e);
+                                    }
+                                });
+                                app.session.history
+                                    .push(Message::system("Message copied to clipboard!".to_string()));
+                                app.user_msg.msg_idx = None;
+                                app.active_modal = ActiveModal::None;
+                            } else if click_row == modal_y + 3 {
+                                app.user_msg.selected = 1;
+                                let text = app.session.history[msg_idx]
+                                    .content
+                                    .as_ref()
+                                    .map(|s| s.to_string())
+                                    .unwrap_or_default();
+                                app.session.history.truncate(msg_idx);
+                                app.input =
+                                    tui_textarea::TextArea::from(text.lines().map(|s| s.to_string()));
+                                app.input.move_cursor(tui_textarea::CursorMove::End);
+                                app.user_msg.msg_idx = None;
+                                app.active_modal = ActiveModal::None;
+                            }
                         }
                     }
                 }
-            } else if app.show_menu
-                || app.show_provider_menu
-                || app.show_model_menu
-                || app.show_settings_menu
+            } else if app.active_modal == ActiveModal::Update {
+                if app.update.pending_version.is_some() {
+                    if let Ok(size) = terminal.size() {
+                        let width = (size.width as f32 * 0.50) as u16;
+                        let height = 8;
+                        let modal_x = (size.width.saturating_sub(width)) / 2;
+                        let modal_y = (size.height.saturating_sub(height)) / 2;
+
+                        let is_outside = mouse.column < modal_x
+                            || mouse.column >= modal_x + width
+                            || mouse.row < modal_y
+                            || mouse.row >= modal_y + height;
+
+                        if is_outside {
+                            if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+                                app.update.pending_version = None;
+                                app.active_modal = ActiveModal::None;
+                            }
+                        } else if matches!(mouse.kind, MouseEventKind::Up(MouseButton::Left))
+                            && mouse.row == modal_y + height.saturating_sub(2)
+                        {
+                            if mouse.column >= modal_x + width.saturating_sub(25)
+                                && mouse.column < modal_x + width.saturating_sub(15)
+                            {
+                                app.update.pending_version = None;
+                                app.active_modal = ActiveModal::None;
+                            } else if mouse.column >= modal_x + width.saturating_sub(15)
+                                && mouse.column < modal_x + width
+                            {
+                                app.update.install = true;
+                            }
+                        }
+                    }
+                }
+            } else if app.active_modal == ActiveModal::CommandMenu
+                || app.active_modal == ActiveModal::ProviderMenu
+                || app.active_modal == ActiveModal::ModelMenu
+                || app.active_modal == ActiveModal::SettingsMenu
             {
                 if let Ok(size) = terminal.size() {
-                    let (width, height) = if app.show_menu {
-                        (60, (app.filtered_commands.len() + 6).min(15) as u16)
-                    } else if app.show_provider_menu {
-                        (60, (PROVIDERS.len() + 6).min(15) as u16)
-                    } else if app.show_settings_menu {
-                        (60, (app.settings_items.len() + 6).min(15) as u16)
-                    } else {
-                        (70, (app.filtered_models.len() + 7).min(18) as u16)
+                    let (width, height) = match app.active_modal {
+                        ActiveModal::CommandMenu => {
+                            (60, (app.menu.filtered_commands.len() + 6).min(15) as u16)
+                        }
+                        ActiveModal::ProviderMenu => {
+                            (60, (PROVIDERS.len() + 6).min(15) as u16)
+                        }
+                        ActiveModal::SettingsMenu => {
+                            (60, (app.menu.settings_items.len() + 6).min(15) as u16)
+                        }
+                        _ => {
+                            (70, (app.model_search.filtered_models.len() + 7).min(18) as u16)
+                        }
                     };
                     let modal_x = (size.width.saturating_sub(width)) / 2;
                     let modal_y = (size.height.saturating_sub(height)) / 2;
@@ -1270,18 +1291,15 @@ pub(crate) async fn handle_mouse_event<B: ratatui::backend::Backend>(
                         && mouse.column < modal_x + width - 1;
 
                     if is_outside || is_esc {
-                        app.show_menu = false;
-                        app.show_provider_menu = false;
-                        app.show_model_menu = false;
-                        app.show_settings_menu = false;
+                        app.active_modal = ActiveModal::None;
                     } else if is_inside_list
                         && matches!(mouse.kind, MouseEventKind::Up(MouseButton::Left))
-                        && app.show_settings_menu
+                        && app.active_modal == ActiveModal::SettingsMenu
                     {
-                        let idx = (mouse.row - (modal_y + 2)) as usize + app.menu_state.offset();
-                        if idx < app.settings_items.len() {
+                        let idx = (mouse.row - (modal_y + 2)) as usize + app.menu.list_state.offset();
+                        if idx < app.menu.settings_items.len() {
                             if let Some(SettingsMenuItem::Option { key, val: _, .. }) =
-                                app.settings_items.get(idx)
+                                app.menu.settings_items.get(idx)
                             {
                                 let key = key.clone();
                                 apply_settings_toggle(app, &key).await;
@@ -1290,13 +1308,14 @@ pub(crate) async fn handle_mouse_event<B: ratatui::backend::Backend>(
                     }
                 }
             } else if app.screen == Screen::Session {
-                let has_thinking = app.history.iter().any(|m| m.thought.is_some());
+                let has_thinking = app.session.history.iter().any(|m| m.thought.is_some());
                 if matches!(mouse.kind, MouseEventKind::Up(MouseButton::Left)) {
                     if let Ok(size) = terminal.size() {
                         if let Some(msg_idx) = compute_message_hover(app, size) {
-                            if app.history[msg_idx].role == Role::User {
-                                app.show_user_msg_modal = Some(msg_idx);
-                                app.user_msg_modal_selected = 0;
+                            if app.session.history[msg_idx].role == Role::User {
+                                app.user_msg.msg_idx = Some(msg_idx);
+                                app.user_msg.selected = 0;
+                                app.active_modal = ActiveModal::UserMessage;
                                 return Ok(());
                             }
                         }
@@ -1305,11 +1324,11 @@ pub(crate) async fn handle_mouse_event<B: ratatui::backend::Backend>(
 
                 if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
                     let in_cooldown = app
-                        .last_toggle_time
+                        .session.last_toggle_time
                         .is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(400));
 
                     if !in_cooldown && has_thinking {
-                        let is_double_click = if let Some((last_time, col, row)) = app.last_click_up
+                        let is_double_click = if let Some((last_time, col, row)) = app.mouse.last_click_up
                         {
                             let col_diff = (col as i32 - mouse.column as i32).abs();
                             let row_diff = (row as i32 - mouse.row as i32).abs();
@@ -1321,27 +1340,27 @@ pub(crate) async fn handle_mouse_event<B: ratatui::backend::Backend>(
                         };
 
                         if is_double_click {
-                            app.collapse_thinking = !app.collapse_thinking;
-                            app.last_click_up = None;
-                            app.mouse_down_start = None;
-                            app.last_toggle_time = Some(std::time::Instant::now());
+                            app.session.collapse_thinking = !app.session.collapse_thinking;
+                            app.mouse.last_click_up = None;
+                            app.mouse.down_start = None;
+                            app.session.last_toggle_time = Some(std::time::Instant::now());
                         } else if let Ok(size) = terminal.size() {
                             // Compute hover FRESH with current mouse position
                             let hover = compute_thinking_hover(app, size);
                             if hover {
-                                app.last_click_up =
+                                app.mouse.last_click_up =
                                     Some((std::time::Instant::now(), mouse.column, mouse.row));
-                                app.mouse_down_start =
+                                app.mouse.down_start =
                                     Some((std::time::Instant::now(), mouse.column, mouse.row));
                             } else {
-                                app.last_click_up = None;
+                                app.mouse.last_click_up = None;
                             }
                         }
                     }
                 }
                 if matches!(mouse.kind, MouseEventKind::Up(MouseButton::Left)) {
-                    app.mouse_down_start = None;
-                    app.temp_expand_thinking = false;
+                    app.mouse.down_start = None;
+                    app.session.temp_expand_thinking = false;
                 }
             } else if app.screen == Screen::Welcome
                 && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
@@ -1403,26 +1422,28 @@ mod tests {
         ));
         let mut app = App::new(orchestrator, "Mock".to_string(), "gpt-4o".to_string());
 
-        app.history.push(Message::user("First message".to_string()));
-        app.history.push(Message::assistant(
+        app.session.history.push(Message::user("First message".to_string()));
+        app.session.history.push(Message::assistant(
             Some("Assistant reply".into()),
             None,
             None,
         ));
-        app.history
+        app.session.history
             .push(Message::user("Second message".to_string()));
 
-        app.show_user_msg_modal = Some(2);
-        app.user_msg_modal_selected = 1;
+        app.user_msg.msg_idx = Some(2);
+        app.user_msg.selected = 1;
+        app.active_modal = ActiveModal::UserMessage;
 
         let enter_key = event::KeyEvent::new(event::KeyCode::Enter, event::KeyModifiers::empty());
         let res = handle_key_event(&mut app, enter_key, false).await.unwrap();
 
         assert_eq!(res, KeyEventResult::Continue);
-        assert_eq!(app.show_user_msg_modal, None);
-        assert_eq!(app.history.len(), 2);
-        assert_eq!(app.history[0].role, Role::User);
-        assert_eq!(app.history[1].role, Role::Assistant);
+        assert_eq!(app.user_msg.msg_idx, None);
+        assert_eq!(app.active_modal, ActiveModal::None);
+        assert_eq!(app.session.history.len(), 2);
+        assert_eq!(app.session.history[0].role, Role::User);
+        assert_eq!(app.session.history[1].role, Role::Assistant);
         assert_eq!(app.input.lines()[0], "Second message");
     }
 
@@ -1435,24 +1456,27 @@ mod tests {
         ));
         let mut app = App::new(orchestrator, "Mock".to_string(), "gpt-4o".to_string());
 
-        app.pending_update = Some("v1.15.4".to_string());
-        app.update_modal_selected = 1;
+        app.update.pending_version = Some("v1.15.4".to_string());
+        app.update.selected = 1;
+        app.active_modal = ActiveModal::Update;
 
         let left_key = event::KeyEvent::new(event::KeyCode::Left, event::KeyModifiers::empty());
         let res = handle_key_event(&mut app, left_key, false).await.unwrap();
         assert_eq!(res, KeyEventResult::Continue);
-        assert_eq!(app.update_modal_selected, 0);
+        assert_eq!(app.update.selected, 0);
 
         let enter_key = event::KeyEvent::new(event::KeyCode::Enter, event::KeyModifiers::empty());
         let res = handle_key_event(&mut app, enter_key, false).await.unwrap();
         assert_eq!(res, KeyEventResult::Continue);
-        assert_eq!(app.pending_update, None);
-        assert!(!app.pending_update_install);
+        assert_eq!(app.update.pending_version, None);
+        assert_eq!(app.active_modal, ActiveModal::None);
+        assert!(!app.update.install);
 
-        app.pending_update = Some("v1.15.4".to_string());
-        app.update_modal_selected = 1;
+        app.update.pending_version = Some("v1.15.4".to_string());
+        app.update.selected = 1;
+        app.active_modal = ActiveModal::Update;
         let res = handle_key_event(&mut app, enter_key, false).await.unwrap();
         assert_eq!(res, KeyEventResult::Exit);
-        assert!(app.pending_update_install);
+        assert!(app.update.install);
     }
 }

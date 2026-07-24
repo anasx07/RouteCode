@@ -4,7 +4,7 @@ use routecode_sdk::core::{Message, Role};
 use tui_textarea::TextArea;
 
 use super::app::App;
-use super::types::{format_error_for_display, parse_qir_status, ApprovalMode, Screen};
+use super::types::{format_error_for_display, parse_qir_status, ActiveModal, ApprovalMode, Screen};
 
 pub(crate) async fn handle_stream_chunks(app: &mut App) {
     let max_per_frame: u32 = 50;
@@ -21,7 +21,7 @@ pub(crate) async fn handle_stream_chunks(app: &mut App) {
         }
         match chunk {
             StreamChunk::Text { content } => {
-                if let Some(last) = app.history.last_mut() {
+                if let Some(last) = app.session.history.last_mut() {
                     if last.role == Role::Assistant {
                         let mut current = last
                             .content
@@ -31,14 +31,14 @@ pub(crate) async fn handle_stream_chunks(app: &mut App) {
                         current.push_str(&content);
                         last.content = Some(std::sync::Arc::from(current));
                     } else {
-                        app.history.push(Message::assistant(
+                        app.session.history.push(Message::assistant(
                             Some(std::sync::Arc::from(content)),
                             None,
                             None,
                         ));
                     }
                 } else {
-                    app.history.push(Message::assistant(
+                    app.session.history.push(Message::assistant(
                         Some(std::sync::Arc::from(content)),
                         None,
                         None,
@@ -46,7 +46,7 @@ pub(crate) async fn handle_stream_chunks(app: &mut App) {
                 }
             }
             StreamChunk::Thought { content } => {
-                if let Some(last) = app.history.last_mut() {
+                if let Some(last) = app.session.history.last_mut() {
                     if last.role == Role::Assistant {
                         let mut current = last
                             .thought
@@ -56,14 +56,14 @@ pub(crate) async fn handle_stream_chunks(app: &mut App) {
                         current.push_str(&content);
                         last.thought = Some(std::sync::Arc::from(current));
                     } else {
-                        app.history.push(Message::assistant(
+                        app.session.history.push(Message::assistant(
                             None,
                             Some(std::sync::Arc::from(content)),
                             None,
                         ));
                     }
                 } else {
-                    app.history.push(Message::assistant(
+                    app.session.history.push(Message::assistant(
                         None,
                         Some(std::sync::Arc::from(content)),
                         None,
@@ -71,8 +71,8 @@ pub(crate) async fn handle_stream_chunks(app: &mut App) {
                 }
             }
             StreamChunk::ToolCall { tool_call } => {
-                app.active_tool = Some(tool_call.function.name.clone());
-                if let Some(last) = app.history.last_mut() {
+                app.session.active_tool = Some(tool_call.function.name.clone());
+                if let Some(last) = app.session.history.last_mut() {
                     if last.role == Role::Assistant {
                         let mut calls = last.tool_calls.clone().unwrap_or_default();
                         if let Some(idx) = tool_call.index {
@@ -91,11 +91,11 @@ pub(crate) async fn handle_stream_chunks(app: &mut App) {
                         }
                         last.tool_calls = Some(calls);
                     } else {
-                        app.history
+                        app.session.history
                             .push(Message::assistant(None, None, Some(vec![tool_call])));
                     }
                 } else {
-                    app.history
+                    app.session.history
                         .push(Message::assistant(None, None, Some(vec![tool_call])));
                 }
             }
@@ -104,14 +104,14 @@ pub(crate) async fn handle_stream_chunks(app: &mut App) {
                 content,
                 tool_call_id,
             } => {
-                app.active_tool = None;
-                app.history.push(Message::tool(tool_call_id, name, content));
+                app.session.active_tool = None;
+                app.session.history.push(Message::tool(tool_call_id, name, content));
             }
             StreamChunk::Status { content } => {
                 if let Some(qir) = parse_qir_status(&content) {
-                    app.qir_retry_status = Some(qir);
+                    app.session.qir_retry_status = Some(qir);
                 }
-                app.history
+                app.session.history
                     .push(Message::system(format!("[QIR] {}", content)));
             }
             StreamChunk::SessionStats {
@@ -119,23 +119,23 @@ pub(crate) async fn handle_stream_chunks(app: &mut App) {
                 total_cost,
                 qir_attempts,
             } => {
-                app.usage.total_tokens = total_tokens;
-                app.usage.total_cost = total_cost;
-                app.usage.qir_attempts = qir_attempts;
+                app.session.usage.total_tokens = total_tokens;
+                app.session.usage.total_cost = total_cost;
+                app.session.usage.qir_attempts = qir_attempts;
             }
             StreamChunk::Done => {
-                app.is_generating = false;
-                app.active_tool = None;
-                app.qir_retry_status = None;
-                if !app.history.is_empty() {
+                app.session.is_generating = false;
+                app.session.active_tool = None;
+                app.session.qir_retry_status = None;
+                if !app.session.history.is_empty() {
                     let session = routecode_sdk::utils::storage::Session {
-                        messages: app.history.clone(),
-                        model: app.current_model.clone(),
+                        messages: app.session.history.clone(),
+                        model: app.provider.current_model.clone(),
                         usage: app.orchestrator.usage.lock().await.clone(),
                         timestamp: chrono::Utc::now().timestamp(),
                     };
                     if let Err(e) =
-                        routecode_sdk::utils::storage::save_session(&app.session_id, &session)
+                        routecode_sdk::utils::storage::save_session(&app.session.id, &session)
                     {
                         log::error!("Failed to auto-save session: {}", e);
                     }
@@ -143,16 +143,16 @@ pub(crate) async fn handle_stream_chunks(app: &mut App) {
             }
             StreamChunk::Error { content } => {
                 let display = format_error_for_display(&content);
-                app.history
+                app.session.history
                     .push(Message::system(format!("Error: {}", display)));
-                app.is_generating = false;
-                app.active_tool = None;
-                app.qir_retry_status = None;
+                app.session.is_generating = false;
+                app.session.active_tool = None;
+                app.session.qir_retry_status = None;
             }
             StreamChunk::Models { models } => {
-                app.all_available_models.extend(models);
+                app.model_search.all_available_models.extend(models);
                 let search = app
-                    .model_search_input
+                    .model_search.search_input
                     .lines()
                     .first()
                     .map(|l| l.trim().to_lowercase())
@@ -160,21 +160,21 @@ pub(crate) async fn handle_stream_chunks(app: &mut App) {
                 super::logic::handle_model_search(app, &search, false).await;
             }
             StreamChunk::ModelsDone => {
-                app.is_fetching_models = false;
-                if !app.startup_ready {
-                    app.startup_ready = true;
-                    let buffered = app.startup_input_buffer.drain(..).collect::<Vec<_>>();
+                app.model_search.is_fetching = false;
+                if !app.session.startup_ready {
+                    app.session.startup_ready = true;
+                    let buffered = app.session.startup_input_buffer.drain(..).collect::<Vec<_>>();
                     for msg in buffered {
-                        app.history.push(Message::user(msg));
+                        app.session.history.push(Message::user(msg));
                         app.screen = Screen::Session;
-                        app.prompt_history.truncate(100);
-                        app.prompt_history_index = None;
+                        app.session.prompt_history.truncate(100);
+                        app.session.prompt_history_index = None;
                         app.input = TextArea::default();
-                        app.is_generating = true;
-                        app.auto_scroll = true;
+                        app.session.is_generating = true;
+                        app.session.auto_scroll = true;
                         let orchestrator = app.orchestrator.clone();
-                        let mut history = app.history.clone();
-                        let model = app.current_model.clone();
+                        let mut history = app.session.history.clone();
+                        let model = app.provider.current_model.clone();
                         let tx = app.tx.clone();
                         app.tasks.spawn(async move {
                             if let Err(e) =
@@ -187,14 +187,14 @@ pub(crate) async fn handle_stream_chunks(app: &mut App) {
                 }
             }
             StreamChunk::FinalHistory { history } => {
-                app.history = history;
+                app.session.history = history;
             }
             StreamChunk::RequestConfirmation {
                 message,
                 target,
                 warning: _,
                 tx,
-            } => match app.approval_mode {
+            } => match app.session.approval_mode {
                 ApprovalMode::YOLO | ApprovalMode::Shell => {
                     if let Some(sender) = tx {
                         let mut tx_opt = sender.lock().await;
@@ -213,7 +213,8 @@ pub(crate) async fn handle_stream_chunks(app: &mut App) {
                 }
                 ApprovalMode::Normal => {
                     if let Some(sender) = tx {
-                        app.pending_command_confirmation = Some((message, target, sender));
+                        app.cmd_confirmation.pending = Some((message, target, sender));
+                        app.active_modal = ActiveModal::CommandConfirmation;
                     } else {
                         log::error!("RequestConfirmation received without a response channel");
                     }
@@ -226,7 +227,7 @@ pub(crate) async fn handle_stream_chunks(app: &mut App) {
                 tx,
             } => {
                 use routecode_sdk::agents::types::PlanApprovalResponse;
-                match app.approval_mode {
+                match app.session.approval_mode {
                     ApprovalMode::YOLO | ApprovalMode::Shell => {
                         if let Some(sender) = tx {
                             let mut tx_opt = sender.lock().await;
@@ -252,9 +253,10 @@ pub(crate) async fn handle_stream_chunks(app: &mut App) {
                                 .into_iter()
                                 .map(|p| (p.tool, p.prompt))
                                 .collect();
-                            app.pending_plan_approval =
+                            app.plan_approval.pending =
                                 Some((plan, plan_path, prompts, sender));
-                            app.plan_approval_selected = 0;
+                            app.plan_approval.selected = 0;
+                            app.active_modal = ActiveModal::PlanApproval;
                         } else {
                             log::error!(
                                 "RequestPlanApproval received without a response channel"
@@ -268,14 +270,15 @@ pub(crate) async fn handle_stream_chunks(app: &mut App) {
                 changelog,
                 published_at,
             } => {
-                app.pending_update = Some(version);
-                app.pending_update_changelog = changelog;
-                app.pending_update_published_at = published_at;
-                app.update_modal_selected = 1;
+                app.update.pending_version = Some(version);
+                app.update.changelog = changelog;
+                app.update.published_at = published_at;
+                app.update.selected = 1;
+                app.active_modal = ActiveModal::Update;
             }
             StreamChunk::HookProgress { event, name } => {
-                app.active_tool = Some(format!("hook:{}", name));
-                app.history
+                app.session.active_tool = Some(format!("hook:{}", name));
+                app.session.history
                     .push(Message::system(format!("[hook] {}:{}", event, name)));
             }
             StreamChunk::HookResult {
@@ -286,18 +289,18 @@ pub(crate) async fn handle_stream_chunks(app: &mut App) {
                 additional_context,
                 system_message,
             } => {
-                app.active_tool = None;
+                app.session.active_tool = None;
                 if let Some(ctx) = additional_context.as_deref() {
-                    app.history
+                    app.session.history
                         .push(Message::system(format!("[hook:{}] context: {}", name, ctx)));
                 }
                 if let Some(msg) = system_message.as_deref() {
-                    app.history
+                    app.session.history
                         .push(Message::system(format!("[hook:{}] {}", name, msg)));
                 }
                 if let Some(d) = decision.as_deref() {
                     let r = reason.as_deref().unwrap_or("");
-                    app.history
+                    app.session.history
                         .push(Message::system(format!("[hook:{}] {} {}", name, d, r)));
                 }
                 let _ = (event, name);
@@ -309,12 +312,12 @@ pub(crate) async fn handle_stream_chunks(app: &mut App) {
                 tx,
             } => {
                 use routecode_sdk::agents::types::HookTrustResponse;
-                match app.approval_mode {
+                match app.session.approval_mode {
                     ApprovalMode::YOLO | ApprovalMode::Shell => {
                         if let Some(sender) = tx {
                             let mut tx_opt = sender.lock().await;
                             if let Some(s) = tx_opt.take() {
-                                let _ = s.send(HookTrustResponse::Trust);
+                                  let _ = s.send(HookTrustResponse::Trust);
                             }
                         }
                     }
@@ -330,7 +333,7 @@ pub(crate) async fn handle_stream_chunks(app: &mut App) {
                     }
                     ApprovalMode::Normal => {
                         if let Some(sender) = tx {
-                            app.pending_hook_trust = Some(
+                            app.hook_trust.pending = Some(
                                 super::types::PendingHookTrust {
                                     signature: project_signature,
                                     project_path,
@@ -338,6 +341,7 @@ pub(crate) async fn handle_stream_chunks(app: &mut App) {
                                     tx: sender,
                                 },
                             );
+                            app.active_modal = ActiveModal::HookTrust;
                         } else {
                             log::error!(
                                 "RequestHookTrust received without a response channel"
@@ -347,19 +351,19 @@ pub(crate) async fn handle_stream_chunks(app: &mut App) {
                 }
             }
             StreamChunk::CompactProgress { status } => {
-                app.active_tool = Some(format!("compact: {}", status));
-                app.history
+                app.session.active_tool = Some(format!("compact: {}", status));
+                app.session.history
                     .push(Message::system(format!("[compact] {}", status)));
             }
             StreamChunk::CompactResult { pre_tokens, post_tokens } => {
-                app.active_tool = None;
-                app.history.push(Message::system(format!(
+                app.session.active_tool = None;
+                app.session.history.push(Message::system(format!(
                     "[compact] Conversation compacted: tokens reduced from {} to {}",
                     pre_tokens, post_tokens
                 )));
             }
             StreamChunk::ContextWarning { message } => {
-                app.history.push(Message::system(format!(
+                app.session.history.push(Message::system(format!(
                     "⚠️ WARNING: {}", message
                 )));
             }

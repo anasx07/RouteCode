@@ -215,6 +215,24 @@ pub enum Screen {
     Session,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActiveModal {
+    None,
+    CommandMenu,
+    ProviderMenu,
+    ModelMenu,
+    SettingsMenu,
+    ApiKeyInput,
+    ClearConfirmation,
+    ExitConfirmation,
+    CommandConfirmation,
+    PlanApproval,
+    HookTrust,
+    UserMessage,
+    Update,
+}
+
+
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum ApiKeyInputStage {
     None,
